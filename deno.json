@@ -44,6 +44,8 @@
     "dev:worker-poll": "deno run --allow-env --env --allow-net --watch apps/worker-poll/src/index.ts",
     "start:worker-poll": "deno run --allow-env --allow-net apps/worker-poll/src/index.ts",
     "dev:worker-enrich": "deno run --allow-env --env --allow-net --watch apps/worker-enrich/src/index.ts",
-    "start:worker-enrich": "deno run --allow-env --allow-net apps/worker-enrich/src/index.ts"
+    "start:worker-enrich": "deno run --allow-env --allow-net apps/worker-enrich/src/index.ts",
+    "build:worker-poll": "deno compile --allow-env --allow-net --output=dist/worker-poll apps/worker-poll/src/index.ts",
+    "build:worker-enrich": "deno compile --allow-env --allow-net --output=dist/worker-enrich apps/worker-enrich/src/index.ts"
   }
 }

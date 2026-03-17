@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SOUNDCHARTS_CREDENTIALS } from "./config.ts";
+import { warn } from "@shared/logger.ts";
 
 // ─── Soundcharts response schema ──────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ export async function fetchAudioFeaturesByIsrc(
   const parsed = SoundchartsSongSchema.safeParse(json);
 
   if (!parsed.success) {
-    console.warn(
+    warn(
       `Unexpected Soundcharts response shape for ISRC ${isrc}:`,
       parsed.error.message,
     );

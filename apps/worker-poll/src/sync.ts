@@ -6,6 +6,7 @@ import type {
   TrackFeaturesRecord,
 } from "@shared/schemas";
 import { getCurrentlyPlayingTrack } from "./spotify.ts";
+import { info } from "@shared/logger.ts";
 import {
   createItem,
   readItems,
@@ -126,7 +127,7 @@ export async function syncCurrentlyPlaying(): Promise<void> {
   const snapshot = await getCurrentlyPlayingTrack();
 
   if (!snapshot) {
-    console.log("No currently playing track.");
+    info("No currently playing track.");
     return;
   }
 
@@ -158,7 +159,7 @@ export async function syncCurrentlyPlaying(): Promise<void> {
     );
 
     if (incremented) {
-      console.log(`Incremented replay_count for track ${snapshot.track.id}`);
+      info(`Incremented replay_count for track ${snapshot.track.id}`);
     }
   }
 
@@ -172,13 +173,14 @@ export async function syncCurrentlyPlaying(): Promise<void> {
     });
 
     lastTrackId = snapshot.track.id;
-    console.log(`Inserted listening history for track ${snapshot.track.id}`);
+    info(`Inserted listening history for track ${snapshot.track.id}`);
   }
 
   lastTrackId = snapshot.track.id;
   lastProgressMs = snapshot.progressMs;
 
-  console.log(
+  info(
     `Synced current listening: ${snapshot.track.name} (${snapshot.track.id})`,
+    `${snapshot.isPlaying ? "- [playing]" : "- [paused]"}`,
   );
 }

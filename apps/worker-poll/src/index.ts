@@ -1,11 +1,17 @@
 import { runPoller } from "./poller.ts";
+import { info, error } from "@shared/logger.ts";
 
 if (import.meta.main) {
+  // lightweight health check mode for container healthprobes
+  if (Deno.args.includes("--health")) {
+    console.log("ok");
+    Deno.exit(0);
+  }
   const ac = new AbortController();
   const { signal } = ac;
 
   const onSignal = () => {
-    console.log("worker-poll: shutdown signal received");
+    info("worker-poll: shutdown signal received");
     ac.abort();
     if (Deno.build.os === "windows") {
       Deno.removeSignalListener("SIGINT", onSignal);
@@ -34,5 +40,10 @@ if (import.meta.main) {
     Deno.addSignalListener("SIGTERM", onSignal);
   }
 
-  await runPoller(signal);
+  try {
+    await runPoller(signal);
+  } catch (err) {
+    error("Unhandled error in runPoller:", err);
+    throw err;
+  }
 }

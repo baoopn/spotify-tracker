@@ -16,19 +16,21 @@ function sleep(ms: number, signal?: AbortSignal) {
   });
 }
 
+import { info, error } from "@shared/logger.ts";
+
 export async function runPoller(signal?: AbortSignal): Promise<void> {
-  console.log(`worker-poll started. Poll interval: ${POLL_INTERVAL_MS}ms`);
+  info(`worker-poll started. Poll interval: ${POLL_INTERVAL_MS}ms`);
 
   while (!signal?.aborted) {
     try {
       await syncCurrentlyPlaying();
-    } catch (error) {
-      console.error("Poll cycle failed:", error);
+    } catch (err) {
+      error("Poll cycle failed:", err);
     }
 
     if (signal?.aborted) break;
     await sleep(POLL_INTERVAL_MS, signal);
   }
 
-  console.log("worker-poll: exiting cleanly");
+  info("worker-poll: exiting cleanly");
 }

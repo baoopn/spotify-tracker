@@ -16,8 +16,16 @@ function sleep(ms: number, signal?: AbortSignal) {
   });
 }
 
+import { info, error } from "@shared/logger.ts";
+
 if (import.meta.main) {
-  console.log(
+  // lightweight health check mode for container healthprobes
+  if (Deno.args.includes("--health")) {
+    console.log("ok");
+    Deno.exit(0);
+  }
+
+  info(
     `worker-enrich started. Interval: ${ENRICH_INTERVAL_MS / 1000}s, ` +
       `Soundcharts credential sets: ${SOUNDCHARTS_CREDENTIALS.length}`,
   );
@@ -26,7 +34,7 @@ if (import.meta.main) {
   const { signal } = ac;
 
   const onSignal = () => {
-    console.log("worker-enrich: shutdown signal received");
+    info("worker-enrich: shutdown signal received");
     ac.abort();
     if (Deno.build.os === "windows") {
       Deno.removeSignalListener("SIGINT", onSignal);
@@ -59,13 +67,13 @@ if (import.meta.main) {
       try {
         await runEnrichCycle();
       } catch (err) {
-        console.error("Enrich cycle failed:", err);
+        error("Enrich cycle failed:", err);
       }
 
       if (signal.aborted) break;
       await sleep(ENRICH_INTERVAL_MS, signal);
     }
 
-    console.log("worker-enrich: exiting cleanly");
+    info("worker-enrich: exiting cleanly");
   })();
 }

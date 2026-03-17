@@ -4,6 +4,7 @@ import {
   fetchAudioFeaturesByIsrc,
   type SoundchartsSongResult,
 } from "./soundcharts.ts";
+import { info, warn, error } from "@shared/logger.ts";
 
 // Shape returned by Directus when track_id relation is expanded.
 type TrackFeaturesWithTrack = Omit<TrackFeaturesRecord, "track_id"> & {
@@ -18,16 +19,16 @@ export async function runEnrichCycle(): Promise<void> {
   });
 
   if (records.length === 0) {
-    console.log("No unenriched track_features found.");
+    info("No unenriched track_features found.");
     return;
   }
 
-  console.log(`Enriching ${records.length} record(s)…`);
+  info(`Enriching ${records.length} record(s)…`);
 
   for (const record of records) {
     const recordId = record.id;
     if (!recordId) {
-      console.warn("Skipping record with no id.");
+      warn("Skipping record with no id.");
       continue;
     }
 
@@ -37,7 +38,7 @@ export async function runEnrichCycle(): Promise<void> {
       (typeof record.track_id === "object" ? record.track_id?.isrc : null);
 
     if (!isrc) {
-      console.warn(`track_features[${recordId}]: no ISRC available, skipping.`);
+      warn(`track_features[${recordId}]: no ISRC available, skipping.`);
       continue;
     }
 
@@ -46,7 +47,7 @@ export async function runEnrichCycle(): Promise<void> {
         await fetchAudioFeaturesByIsrc(isrc);
 
       if (result === null) {
-        console.warn(
+        warn(
           `track_features[${recordId}]: ISRC ${isrc} not found on Soundcharts, skipping.`,
         );
         continue;
@@ -71,9 +72,9 @@ export async function runEnrichCycle(): Promise<void> {
         enriched_at: new Date().toISOString(),
       });
 
-      console.log(`track_features[${recordId}] enriched (ISRC: ${isrc}).`);
+      info(`track_features[${recordId}] enriched (ISRC: ${isrc}).`);
     } catch (err) {
-      console.error(`track_features[${recordId}] enrichment failed:`, err);
+      error(`track_features[${recordId}] enrichment failed:`, err);
     }
   }
 }

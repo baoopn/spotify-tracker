@@ -128,6 +128,12 @@ export async function syncCurrentlyPlaying(): Promise<void> {
 
   if (!snapshot) {
     info("No currently playing track.");
+    // If Spotify no longer returns the current track (long pause), forget
+    // the lastTrackId so the next resumed play will be recorded as a new
+    // listening_history entry. Short pauses where Spotify still returns the
+    // track id will keep `lastTrackId` intact and continue the same entry.
+    lastTrackId = null;
+    lastProgressMs = null;
     return;
   }
 

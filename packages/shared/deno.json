@@ -1,0 +1,6 @@
+{
+	"name": "@baoopn/shared",
+	"exports": {
+		"./schemas": "./schemas.ts"
+	}
+}

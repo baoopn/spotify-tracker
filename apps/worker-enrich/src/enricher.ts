@@ -13,9 +13,11 @@ type TrackFeaturesWithTrack = Omit<TrackFeaturesRecord, "track_id"> & {
 
 export async function runEnrichCycle(): Promise<void> {
   const records = await readItems<TrackFeaturesWithTrack>("track_features", {
+    // Primary filter to avoid returning already-enriched rows, but still
+    // defensively check `enriched` at runtime to avoid races or stale data.
     filter: { enriched: { _eq: false } },
     limit: -1,
-    fields: ["id", "isrc", "track_id.id", "track_id.isrc"],
+    fields: ["id", "isrc", "enriched", "track_id.id", "track_id.isrc"],
   });
 
   if (records.length === 0) {
@@ -29,6 +31,13 @@ export async function runEnrichCycle(): Promise<void> {
     const recordId = record.id;
     if (!recordId) {
       warn("Skipping record with no id.");
+      continue;
+    }
+
+    // Defensive guard: if the record has already been enriched (concurrent
+    // worker or manual update), skip it.
+    if (record.enriched) {
+      info(`track_features[${recordId}] already enriched; skipping.`);
       continue;
     }
 
@@ -46,9 +55,31 @@ export async function runEnrichCycle(): Promise<void> {
       const result: SoundchartsSongResult | null =
         await fetchAudioFeaturesByIsrc(isrc);
 
-      if (result === null) {
+      if (result === null || !result.audio) {
+        // No audio features available — mark as enriched with empty feature set
         warn(
-          `track_features[${recordId}]: ISRC ${isrc} not found on Soundcharts, skipping.`,
+          `track_features[${recordId}]: ISRC ${isrc} not found or no audio features; marking enriched with empty features.`,
+        );
+
+        await updateItem<TrackFeaturesRecord>("track_features", recordId, {
+          acousticness: null,
+          danceability: null,
+          energy: null,
+          instrumentalness: null,
+          key: null,
+          liveness: null,
+          loudness: null,
+          mode: null,
+          speechiness: null,
+          tempo: null,
+          valence: null,
+          genres: null,
+          enriched: true,
+          enriched_at: new Date().toISOString(),
+        } as unknown as Partial<TrackFeaturesRecord>);
+
+        info(
+          `track_features[${recordId}] marked enriched (no audio features).`,
         );
         continue;
       }

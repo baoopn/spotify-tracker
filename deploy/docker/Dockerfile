@@ -49,7 +49,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
  && mkdir -p /tz && cp "$(go env GOROOT)/lib/time/zoneinfo.zip" /tz/zoneinfo.zip
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/static-debian12:nonroot
+# debug-nonroot = distroless static + a static busybox shell, still non-root.
+# The shell lets Coolify's web terminal and scheduled tasks (which exec via
+# `sh -c`) run operational commands such as the one-off importer.
+FROM gcr.io/distroless/static-debian12:debug-nonroot
 
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="spotify-tracker" \

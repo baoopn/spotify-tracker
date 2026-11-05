@@ -54,6 +54,12 @@ Rollback: re-run an older successful `Release & deploy` run, or set
    `EMAIL_SMTP_*`, `EMAIL_FROM`, `ALERT_EMAIL_TO`, and optionally
    `POLL_INTERVAL_MS`, `ENRICH_INTERVAL_MS`, `SOUNDCHARTS_RPS`.
    If Cloudflare proxies the domain, set `CLIENT_IP_HEADER=CF-Connecting-IP`.
+   **Moving a domain from another server:** Traefik requests the Let's
+   Encrypt certificate when the app first deploys. If DNS still points
+   elsewhere at that moment the request fails and, with Cloudflare SSL mode
+   *Full (strict)*, visitors get **526** after the DNS switch. Fix: switch
+   DNS, then **Restart** the application in Coolify — Traefik retries and the
+   certificate is issued within a minute (verified 2026-11-05).
 5. **Spotify.** Add `https://<domain>/admin/api/spotify/callback` to the
    app's Redirect URIs in the Spotify Developer Dashboard.
 6. **Backups.** Enable scheduled backups for the `postgres` service in Coolify

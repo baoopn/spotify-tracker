@@ -17,6 +17,7 @@ type Artist struct {
 	Name        string `json:"name"`
 	URI         string `json:"uri,omitempty"`
 	ExternalURL string `json:"external_url,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
 }
 
 // Album is a Spotify album.

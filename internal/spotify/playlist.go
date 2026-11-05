@@ -1,17 +1,10 @@
 package spotify
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
-	"github.com/baoopn/spotify-tracker/internal/observability"
 )
 
 type playlistResponse struct {
@@ -46,45 +39,13 @@ type playlistResponse struct {
 // Development Mode apps, or private playlists without the scope) are returned
 // with Available=false and no error.
 func (m *Manager) Playlist(ctx context.Context, id string) (domain.Playlist, error) {
-	out := domain.Playlist{ID: id}
-	for attempt := 0; attempt < 2; attempt++ {
-		tok, _, err := m.AccessToken(ctx, attempt > 0)
-		if err != nil {
-			return out, err
-		}
-		u := m.oauth.api() + "/playlists/" + url.PathEscape(id) + "?market=from_token&additional_types=track"
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		if err != nil {
-			return out, err
-		}
-		req.Header.Set("Authorization", "Bearer "+tok)
-		resp, err := m.oauth.client().Do(req)
-		if err != nil {
-			return out, fmt.Errorf("spotify: get playlist: %w", err)
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		_ = resp.Body.Close()
-		observability.UpstreamRequests.WithLabelValues("spotify", strconv.Itoa(resp.StatusCode)).Inc()
-
-		switch resp.StatusCode {
-		case http.StatusOK:
-			var pr playlistResponse
-			if err := json.Unmarshal(body, &pr); err != nil {
-				return out, fmt.Errorf("spotify: decode playlist: %w", err)
-			}
-			return playlistFromResponse(pr), nil
-		case http.StatusUnauthorized:
-			continue
-		case http.StatusForbidden, http.StatusNotFound:
-			out.Available = false
-			return out, nil
-		case http.StatusTooManyRequests:
-			return out, rateLimitFrom(&http.Response{Header: resp.Header, Body: io.NopCloser(bytes.NewReader(body))})
-		default:
-			return out, fmt.Errorf("spotify: get playlist failed (%d): %s", resp.StatusCode, truncate(body))
-		}
+	var pr playlistResponse
+	found, err := m.getJSON(ctx, "playlist "+id,
+		"/playlists/"+url.PathEscape(id)+"?market=from_token&additional_types=track", &pr)
+	if err != nil || !found {
+		return domain.Playlist{ID: id}, err
 	}
-	return out, fmt.Errorf("spotify: unauthorized fetching playlist %s", id)
+	return playlistFromResponse(pr), nil
 }
 
 func playlistFromResponse(pr playlistResponse) domain.Playlist {

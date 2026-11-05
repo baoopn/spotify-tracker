@@ -226,7 +226,7 @@ func (q *Queries) AdminArtists(ctx context.Context, search, sort, order string, 
 	}
 	args = append(args, limit, offset)
 	rows, err := q.db.Query(ctx, `
-		SELECT a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, ''),
+		SELECT a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, ''), COALESCE(a.image_url, ''),
 			COALESCE(s.plays, 0) AS plays, COALESCE(s.tracks, 0) AS tracks, s.last_played`+base+
 		fmt.Sprintf(` ORDER BY %s %s NULLS LAST, a.id LIMIT $%d OFFSET $%d`, sortCol, dir, len(args)-1, len(args)), args...)
 	if err != nil {
@@ -234,7 +234,7 @@ func (q *Queries) AdminArtists(ctx context.Context, search, sort, order string, 
 	}
 	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (ArtistRow, error) {
 		var a ArtistRow
-		err := r.Scan(&a.Artist.ID, &a.Artist.Name, &a.Artist.URI, &a.Artist.ExternalURL, &a.Plays, &a.Tracks, &a.LastPlayed)
+		err := r.Scan(&a.Artist.ID, &a.Artist.Name, &a.Artist.URI, &a.Artist.ExternalURL, &a.Artist.ImageURL, &a.Plays, &a.Tracks, &a.LastPlayed)
 		return a, err
 	})
 	if out == nil {

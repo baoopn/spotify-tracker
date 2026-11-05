@@ -39,7 +39,8 @@ origin). Its backend lives under **`/admin/api`**. All bodies are JSON
 ### Shared shapes
 
 ```ts
-type Artist = { id: string; name: string; uri?: string; external_url?: string }
+type Artist = { id: string; name: string; uri?: string; external_url?: string;
+                image_url?: string }  // profile image (i.scdn.co), filled in the background
 type Album  = { id: string; name: string; release_date?: string; cover_image_url?: string; uri?: string; external_url?: string }
 type TrackView = { id: string; name: string; uri?: string; isrc?: string; duration_ms: number; explicit: boolean;
                    external_url?: string; album?: Album; artists: Artist[] }

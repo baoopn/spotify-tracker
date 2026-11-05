@@ -30,6 +30,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/admin"
 	"github.com/baoopn/spotify-tracker/internal/alerts"
 	"github.com/baoopn/spotify-tracker/internal/analytics"
+	"github.com/baoopn/spotify-tracker/internal/artistimages"
 	"github.com/baoopn/spotify-tracker/internal/config"
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
@@ -95,6 +96,7 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return c.alerts.Run(gctx, time.Hour) })
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
 	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
+	g.Go(func() error { return c.images.Run(gctx) })
 	g.Go(func() error { return serveGRPC(gctx, c.grpc, c.health, cfg.GRPCAddr, log) })
 
 	err = g.Wait()
@@ -110,6 +112,7 @@ type components struct {
 	health    *health.Server
 	alerts    *alerts.Checker
 	analytics *analytics.Recorder
+	images    *artistimages.Refresher
 }
 
 // wire builds every service and server from config and connections.
@@ -156,6 +159,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		health:    hs,
 		alerts:    checker,
 		analytics: recorder,
+		images:    artistimages.New(st, mgr, log),
 	}, nil
 }
 

@@ -36,8 +36,9 @@ x-app-env: &app-env
 x-web: &web
   image: node:22-alpine
   restart: unless-stopped
-  # pnpm via corepack; install is a no-op when node_modules is current.
-  command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && exec pnpm exec vite dev --host 0.0.0.0 --port 5173 --strictPort"]
+  # pnpm via corepack; install is a no-op when node_modules is current. The
+  # store lives outside the bind-mounted sources (never in the repo).
+  command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile --store-dir /pnpm-store && exec pnpm exec vite dev --host 0.0.0.0 --port 5173 --strictPort"]
   depends_on:
     api: { condition: service_healthy }
 

@@ -48,3 +48,6 @@ tmp/
 # Tool scan outputs (ruflo security scans)
 .claude/security-scans/
 web/*/.claude/
+
+# pnpm store created by the dev containers
+.pnpm-store/

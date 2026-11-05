@@ -1,0 +1,57 @@
+{
+	"name": "spotify-tracker-admin",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.1.1",
+	"engines": {
+		"node": ">=22"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.ts",
+		"#lib/*": "./src/lib/*"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build && node scripts/csp-hashes.mjs",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && node scripts/check-contrast.mjs && node --no-warnings scripts/check-time.mjs",
+		"check:time": "node --no-warnings scripts/check-time.mjs",
+		"check:contrast": "node scripts/check-contrast.mjs",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"lint": "prettier --check . && eslint . --max-warnings 0",
+		"format": "prettier --write ."
+	},
+	"dependencies": {
+		"@clerk/clerk-js": "6.42.3",
+		"@clerk/ui": "1.42.4",
+		"react": "19.3.1",
+		"react-dom": "19.3.1"
+	},
+	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"@fontsource-variable/inter": "5.3.0",
+		"@fontsource-variable/jetbrains-mono": "5.3.0",
+		"@fontsource-variable/outfit": "5.3.0",
+		"@lucide/svelte": "1.69.0",
+		"@sveltejs/adapter-static": "4.0.1",
+		"@sveltejs/kit": "3.1.1",
+		"@sveltejs/vite-plugin-svelte": "7.3.1",
+		"@tailwindcss/vite": "4.3.4",
+		"@types/node": "22.20.5",
+		"eslint": "10.14.0",
+		"eslint-config-prettier": "10.1.8",
+		"eslint-plugin-svelte": "3.24.0",
+		"globals": "17.14.0",
+		"prettier": "3.9.10",
+		"prettier-plugin-svelte": "4.1.1",
+		"prettier-plugin-tailwindcss": "0.8.1",
+		"svelte": "5.57.3",
+		"svelte-check": "4.7.8",
+		"tailwindcss": "4.3.4",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.72.1",
+		"vite": "8.3.6"
+	}
+}

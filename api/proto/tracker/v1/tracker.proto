@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package tracker.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/baoopn/spotify-tracker/gen/tracker/v1;trackerv1";
+
+// IngestService is called by the poller worker to record Spotify playback
+// snapshots. The API server owns all playback / history business rules.
+service IngestService {
+  // RecordPlayback persists a "currently playing" snapshot: upserts the
+  // catalog (artists, album, track), updates the current playback state,
+  // appends listening history / increments replay counts and schedules
+  // enrichment for new tracks.
+  rpc RecordPlayback(RecordPlaybackRequest) returns (RecordPlaybackResponse);
+
+  // ClearPlayback marks that nothing is currently playing.
+  rpc ClearPlayback(ClearPlaybackRequest) returns (ClearPlaybackResponse);
+}
+
+// EnrichmentService is called by the enricher worker.
+service EnrichmentService {
+  // ListPendingTracks returns tracks whose audio features are due for
+  // (re)enrichment.
+  rpc ListPendingTracks(ListPendingTracksRequest) returns (ListPendingTracksResponse);
+
+  // SubmitTrackFeatures stores the enrichment result for a track. Idempotent.
+  rpc SubmitTrackFeatures(SubmitTrackFeaturesRequest) returns (SubmitTrackFeaturesResponse);
+
+  // ReportEnrichmentFailure records a transient failure so the track is
+  // retried later with exponential backoff.
+  rpc ReportEnrichmentFailure(ReportEnrichmentFailureRequest) returns (ReportEnrichmentFailureResponse);
+}
+
+// SpotifyService hands out short-lived Spotify access tokens. The API owns
+// the client secret and the (encrypted) refresh token; workers never see them.
+service SpotifyService {
+  rpc GetAccessToken(GetAccessTokenRequest) returns (GetAccessTokenResponse);
+}
+
+message GetAccessTokenRequest {
+  // Bypass the cache, e.g. after Spotify answered 401.
+  bool force_refresh = 1;
+}
+
+message GetAccessTokenResponse {
+  string access_token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message Artist {
+  string id = 1;
+  string name = 2;
+  string uri = 3;
+  string external_url = 4;
+}
+
+message Album {
+  string id = 1;
+  string name = 2;
+  string release_date = 3;
+  string cover_image_url = 4;
+  string uri = 5;
+  string external_url = 6;
+}
+
+message Track {
+  string id = 1;
+  string name = 2;
+  string uri = 3;
+  string isrc = 4;
+  int32 duration_ms = 5;
+  bool explicit = 6;
+  string external_url = 7;
+}
+
+message Playback {
+  Track track = 1;
+  Album album = 2;
+  // Artists in Spotify credit order.
+  repeated Artist artists = 3;
+  bool is_playing = 4;
+  // Unset when Spotify does not report progress.
+  optional int32 progress_ms = 5;
+  // Spotify's snapshot timestamp (used as history played_at).
+  google.protobuf.Timestamp played_at = 6;
+  // When the poller fetched the snapshot.
+  google.protobuf.Timestamp fetched_at = 7;
+  // What the track is played from (playlist, album, artist, show), if any.
+  PlaybackContext context = 8;
+}
+
+message PlaybackContext {
+  // "playlist", "album", "artist", "show", "collection" …
+  string type = 1;
+  // Spotify URI, e.g. spotify:playlist:37i9dQZF1DXcBWIGoYBM5M.
+  string uri = 2;
+  string external_url = 3;
+}
+
+message RecordPlaybackRequest {
+  Playback playback = 1;
+}
+
+message RecordPlaybackResponse {
+  // True when a new listening_history row was created.
+  bool history_created = 1;
+  // True when the replay count of the latest history row was incremented.
+  bool replay_incremented = 2;
+  // True when this track was seen for the first time and queued for enrichment.
+  bool enrichment_queued = 3;
+}
+
+message ClearPlaybackRequest {
+  google.protobuf.Timestamp fetched_at = 1;
+}
+
+message ClearPlaybackResponse {}
+
+message PendingTrack {
+  string track_id = 1;
+  string isrc = 2;
+  int32 attempts = 3;
+}
+
+message ListPendingTracksRequest {
+  int32 limit = 1;
+}
+
+message ListPendingTracksResponse {
+  repeated PendingTrack tracks = 1;
+}
+
+message Genre {
+  string root = 1;
+  repeated string sub = 2;
+}
+
+message AudioFeatures {
+  optional double acousticness = 1;
+  optional double danceability = 2;
+  optional double energy = 3;
+  optional double instrumentalness = 4;
+  optional int32 key = 5;
+  optional double liveness = 6;
+  optional double loudness = 7;
+  optional int32 mode = 8;
+  optional double speechiness = 9;
+  optional double tempo = 10;
+  optional int32 time_signature = 11;
+  optional double valence = 12;
+}
+
+message SubmitTrackFeaturesRequest {
+  string track_id = 1;
+  // When false the provider has no data for this ISRC; the track is marked
+  // as unavailable and never retried.
+  bool found = 2;
+  AudioFeatures features = 3;
+  repeated Genre genres = 4;
+  // Data provider name, e.g. "soundcharts".
+  string source = 5;
+}
+
+message SubmitTrackFeaturesResponse {}
+
+message ReportEnrichmentFailureRequest {
+  string track_id = 1;
+  string error = 2;
+}
+
+message ReportEnrichmentFailureResponse {
+  // True when the track exceeded the max attempts and was given up on.
+  bool exhausted = 1;
+}

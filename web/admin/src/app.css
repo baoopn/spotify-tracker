@@ -1,0 +1,426 @@
+@import 'tailwindcss';
+@import './lib/theme/tokens.css';
+
+/* `dark:` follows the resolved theme attribute, not the OS media query. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * "Liner notes" (docs/design-direction.md): cream paper, navy ink, flat pastel
+ * spot inks. Colours come only from lib/theme/tokens.css; components use the
+ * utilities mapped below (bg-paper, text-ink, bg-spot-mint, border-rule, ...).
+ */
+
+@theme inline {
+	--color-*: initial;
+	/* paper / ink / spots */
+	--color-paper: var(--paper);
+	--color-paper-2: var(--paper-2);
+	--color-paper-3: var(--paper-3);
+	--color-paper-4: var(--paper-4);
+	--color-ink: var(--ink);
+	--color-ink-soft: var(--ink-soft);
+	--color-rule: var(--rule);
+	--color-rule-strong: var(--rule-strong);
+	--color-spot-peach: var(--spot-peach);
+	--color-spot-mint: var(--spot-mint);
+	--color-spot-lilac: var(--spot-lilac);
+	--color-spot-butter: var(--spot-butter);
+	--color-spot-sky: var(--spot-sky);
+	--color-spot-rose: var(--spot-rose);
+	--color-spot-now: var(--spot-now);
+	--color-spot-select: var(--spot-select);
+	--color-spot-chart: var(--spot-chart);
+	--color-on-spot: var(--on-spot);
+	/* semantic names (aliases of the above) */
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-surface-2: var(--surface-2);
+	--color-surface-3: var(--surface-3);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-fg: var(--text);
+	--color-muted: var(--muted);
+	--color-accent: var(--accent);
+	--color-accent-soft: var(--accent-soft);
+	--color-accent-ink: var(--accent-ink);
+	--color-primary: var(--primary);
+	--color-primary-fg: var(--primary-fg);
+	--color-ok: var(--ok);
+	--color-warn: var(--warn);
+	--color-danger: var(--danger);
+	--color-info: var(--info);
+	--color-brand: var(--brand);
+	--color-brand-fg: var(--brand-fg);
+	--color-brand-border: var(--brand-border);
+
+	--font-sans: 'Inter Variable', var(--baoopn-font-body);
+	--font-display: 'Outfit Variable', var(--baoopn-font-display);
+	--font-mono: 'JetBrains Mono Variable', var(--baoopn-font-mono);
+	--radius-brand: var(--baoopn-radius);
+
+	/* No blurred shadows anywhere: depth is a print offset. */
+	--shadow-*: initial;
+	--shadow-print: var(--print-shadow);
+	--shadow-print-spot: var(--print-shadow-spot);
+
+	--ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* ---------- base ---------- */
+@layer base {
+	html {
+		background: var(--paper);
+		color: var(--ink);
+		font-family: var(--font-sans);
+		font-size: 100%;
+		line-height: 1.5;
+		-webkit-font-smoothing: antialiased;
+		text-rendering: optimizeLegibility;
+	}
+
+	body {
+		min-height: 100dvh;
+		background: var(--paper);
+	}
+
+	/* Paper grain: a fixed, non-interactive noise layer. */
+	body::before {
+		content: '';
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		pointer-events: none;
+		background-image: url('./lib/assets/paper-grain.svg');
+		background-size: 240px 240px;
+		opacity: var(--grain-opacity);
+		mix-blend-mode: multiply;
+	}
+	[data-theme='dark'] body::before {
+		filter: invert(1);
+		mix-blend-mode: screen;
+	}
+	@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+		body::before {
+			display: none;
+		}
+	}
+
+	h1,
+	h2,
+	h3 {
+		font-family: var(--font-display);
+		letter-spacing: -0.02em;
+		text-wrap: balance;
+	}
+
+	::selection {
+		background: var(--spot-select);
+		color: var(--on-spot);
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--ink);
+		outline-offset: 2px;
+	}
+
+	a,
+	button,
+	[role='button'],
+	summary,
+	label[for],
+	select {
+		cursor: pointer;
+	}
+
+	input::placeholder,
+	textarea::placeholder {
+		color: var(--ink-soft);
+		opacity: 0.8;
+	}
+
+	table,
+	.num {
+		font-variant-numeric: tabular-nums;
+	}
+}
+
+/* ---------- components ---------- */
+@layer components {
+	/* Mono small-caps credit label: "NOW PLAYING", "PLAYS", "LAST PLAYED". */
+	.eyebrow {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ink-soft);
+	}
+	.num {
+		font-family: var(--font-mono);
+	}
+
+	/* A plain sheet: hairline-bordered container on paper, no shadow. */
+	.card {
+		background: var(--paper-2);
+		border: 1px solid var(--rule);
+		border-radius: var(--baoopn-radius);
+	}
+	/* A printed card: ink border with a solid offset, for the few things that matter. */
+	.card-print {
+		background: var(--paper-2);
+		border: 1px solid var(--ink);
+		border-radius: var(--baoopn-radius);
+		box-shadow: var(--print-shadow);
+	}
+	/* Editorial columns separated by hairline rules (lg+). */
+	@media (min-width: 1024px) {
+		.ruled-cols > * {
+			padding-right: 1.5rem;
+		}
+		.ruled-cols > * + * {
+			border-left: 1px solid var(--rule);
+			padding-left: 1.5rem;
+		}
+		.ruled-cols > *:last-child {
+			padding-right: 0;
+		}
+	}
+	.rule-t {
+		border-top: 1px solid var(--rule);
+	}
+
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		min-height: 2.5rem;
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
+		border: 1px solid transparent;
+		font-size: 0.875rem;
+		font-weight: 600;
+		line-height: 1.2;
+		white-space: nowrap;
+		transition:
+			transform 160ms var(--ease-out),
+			box-shadow 160ms var(--ease-out),
+			background-color 160ms var(--ease-out),
+			color 160ms var(--ease-out);
+	}
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.btn-primary {
+		background: var(--ink);
+		color: var(--paper);
+		border-color: var(--ink);
+		box-shadow: 2px 2px 0 var(--spot-now);
+	}
+	.btn-primary:not(:disabled):hover {
+		box-shadow: 3px 3px 0 var(--spot-now);
+		transform: translate(-1px, -1px);
+	}
+	.btn-secondary {
+		background: var(--paper-2);
+		color: var(--ink);
+		border-color: var(--ink);
+	}
+	.btn-secondary:not(:disabled):hover {
+		box-shadow: var(--print-shadow);
+		transform: translate(-1px, -1px);
+	}
+	.btn-primary:not(:disabled):active,
+	.btn-secondary:not(:disabled):active,
+	.btn-danger:not(:disabled):active {
+		box-shadow: none;
+		transform: translate(2px, 2px);
+	}
+	.btn-ghost {
+		background: transparent;
+		color: var(--ink);
+	}
+	.btn-ghost:not(:disabled):hover {
+		background: var(--paper-3);
+	}
+	.btn-danger {
+		background: var(--spot-rose);
+		color: var(--on-spot);
+		border-color: var(--on-spot);
+	}
+	.btn-danger:not(:disabled):hover {
+		box-shadow: var(--print-shadow);
+		transform: translate(-1px, -1px);
+	}
+	.btn-sm {
+		min-height: 2.25rem;
+		padding: 0.35rem 0.75rem;
+		font-size: 0.8125rem;
+	}
+	.btn-icon {
+		padding: 0.5rem;
+		min-width: 2.5rem;
+	}
+	@media (pointer: coarse) {
+		.btn,
+		.btn-sm {
+			min-height: 44px;
+		}
+		.btn-icon {
+			min-width: 44px;
+		}
+	}
+
+	.input {
+		width: 100%;
+		min-height: 2.75rem;
+		padding: 0.55rem 0.85rem;
+		border-radius: 8px;
+		border: 1px solid var(--rule-strong);
+		background: var(--paper-2);
+		color: var(--ink);
+		font-size: 1rem;
+		transition: border-color 160ms var(--ease-out);
+	}
+	.input:hover {
+		border-color: var(--ink-soft);
+	}
+	.input:focus-visible {
+		outline: 2px solid var(--ink);
+		outline-offset: 2px;
+		border-color: var(--ink);
+	}
+	.input[aria-invalid='true'] {
+		border-color: var(--danger);
+	}
+	.label {
+		display: block;
+		margin-bottom: 0.4rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--ink);
+	}
+	.hint {
+		margin-top: 0.35rem;
+		font-size: 0.8125rem;
+		color: var(--ink-soft);
+	}
+	.field-error {
+		margin-top: 0.35rem;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--danger);
+	}
+
+	/* Tag / scope chip: flat spot wash, ink text. */
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.15rem 0.6rem;
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		background: var(--spot-select);
+		color: var(--on-spot);
+	}
+
+	/* Brand pair (navy/cream) for brand + version chips and neutral badges. */
+	.brand-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.15rem 0.6rem;
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		background: var(--brand);
+		color: var(--brand-fg);
+		border: 1px solid var(--brand-border);
+	}
+
+	/* Flat spot-ink pulse, no shimmer. */
+	.skeleton {
+		background: var(--paper-4);
+		border-radius: 6px;
+		animation: ink-pulse 1.6s ease-in-out infinite;
+	}
+
+	/* Ruled tracklist table. */
+	.data-table {
+		width: 100%;
+		border-collapse: separate;
+		border-spacing: 0;
+		font-size: 0.9375rem;
+	}
+	.data-table th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: var(--paper);
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ink-soft);
+		text-align: left;
+		padding: 0.75rem 1rem;
+		border-bottom: 1px solid var(--ink);
+		white-space: nowrap;
+	}
+	.data-table td {
+		height: 3.5rem;
+		padding: 0.5rem 1rem;
+		border-bottom: 1px solid var(--rule);
+		vertical-align: middle;
+	}
+	.data-table tbody tr:last-child td {
+		border-bottom: 0;
+	}
+	.data-table tbody tr {
+		transition: background-color 160ms var(--ease-out);
+	}
+	.data-table tbody tr:hover {
+		background: var(--paper-3);
+	}
+	.data-table tbody tr.row-link {
+		cursor: pointer;
+	}
+	.data-table .tl-index {
+		width: 3.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--ink-soft);
+	}
+	.data-table td.num,
+	.data-table th.num {
+		text-align: right;
+	}
+}
+
+@keyframes ink-pulse {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+	.btn:not(:disabled):hover,
+	.btn:not(:disabled):active {
+		transform: none;
+	}
+}

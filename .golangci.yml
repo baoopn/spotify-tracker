@@ -1,0 +1,45 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+  settings:
+    staticcheck:
+      checks: ["all", "-QF1008", "-ST1000", "-ST1003"]
+    gosec:
+      excludes:
+        - G115 # integer overflow conversions are bounded by API contracts here
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+  exclusions:
+    generated: strict
+    paths:
+      - gen/
+    rules:
+      - path: _test\.go
+        linters: [gosec, noctx]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/baoopn/spotify-tracker

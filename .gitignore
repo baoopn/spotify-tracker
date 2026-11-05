@@ -1,68 +1,50 @@
+# OS / editors
 .DS_Store
 Thumbs.db
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-# Node
-node_modules/
-npm/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# Deno cache / local state
-.deno/
-deno-cache/
-deno_dir/
-
-# Deno generated / cache folders used in some setups
-.v8/
-
-# Build outputs
-dist/
-build/
-.build/
-out/
-public/build/
-
-# SvelteKit
-.svelte-kit/
-/.vercel/
-/.netlify/
-
-# Coverage and reports
-coverage/
-.nyc_output/
-coverage-final.json
-
-# IDEs and editors
-.vscode/
 .idea/
-*.suo
-*.user
-*.userosscache
-*.sln
+.vscode/
 *.swp
 
-# Environment variables and secrets
+# Go
+/bin/
+/dist/
+coverage.out
+*.test
+
+# Admin SPA
+web/admin/node_modules/
+web/admin/.svelte-kit/
+web/admin/build/*
+!web/admin/build/.gitkeep
+
+# Public site
+web/public/node_modules/
+web/public/.svelte-kit/
+web/public/build/*
+!web/public/build/.gitkeep
+
+# Environment & secrets
 .env
 .env.*
-env.local
 !.env.example
 
-# Directus / temporary
-.directus/
-directus/.cache
+# Local data
+backups/
 tmp/
-.cache/
+*.log
 
-# Misc
-*.bak
-*.tmp
-*.seed
-*.pid
+# Ruflo runtime state (config is committed, data is not)
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.claude-flow/metrics/
+.swarm/
+.hive-mind/
+.claude/settings.local.json
+
+# Local deployment secrets (prod env, Clerk keys, deploy keys) - never commit
+.secrets/
+
+# Tool scan outputs (ruflo security scans)
+.claude/security-scans/
+web/*/.claude/

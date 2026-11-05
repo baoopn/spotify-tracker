@@ -1,0 +1,106 @@
+# Architecture
+
+## Services and responsibilities
+
+- **api** is the only component with database access. All business rules
+  (history, replay detection, enrichment scheduling, token handling) live in
+  `internal/tracker`, `internal/spotify.Manager` and `internal/store`.
+- **poller** and **enricher** are stateless workers that talk to the API over
+  gRPC (`api/proto/tracker/v1/tracker.proto`). They can be restarted or scaled
+  without coordination.
+- **PostgreSQL** is the source of truth. **Redis** holds derived and ephemeral
+  state: caches, playback state for replay detection, the enrichment stream,
+  Spotify access tokens, OAuth state, heartbeats and analytics counters.
+
+## gRPC services (internal, port 9000)
+
+| Service | Caller | Purpose |
+|---|---|---|
+| `IngestService.RecordPlayback / ClearPlayback` | poller | Persist a playback snapshot in one transaction. |
+| `EnrichmentService.ListPendingTracks / SubmitTrackFeatures / ReportEnrichmentFailure` | enricher | Work queue backed by `track_features`. |
+| `SpotifyService.GetAccessToken` | poller | Short-lived Spotify access tokens. The client secret and refresh token never leave the API. |
+| `grpc.health.v1.Health` | probes | Standard health checking. |
+
+Calls are authenticated with a shared bearer token (`INTERNAL_API_TOKEN`).
+The port is never published: it lives on the private Docker network. Clients
+retry `UNAVAILABLE` with exponential backoff.
+
+## Data model
+
+```
+artists ─┐                 ┌─ albums
+         └─ track_artists ─┤
+                           tracks ──┬── listening_history   (track_id, played_at) unique
+                                    ├── track_features      1:1, enrichment status + backoff
+                                    └── current_playback    singleton row
+settings (encrypted secrets) · admin_audit · api_request_stats (hourly aggregates)
+```
+
+Migrations are plain SQL in `migrations/` (goose, embedded in the binary,
+applied under a Postgres advisory lock).
+
+## Playback → history rules
+
+Same semantics as the original Deno poller:
+
+1. A different track than the last snapshot starts a new history row (`played_at` = Spotify's snapshot timestamp).
+2. The same track whose progress jumps back by more than `REPLAY_RESET_THRESHOLD` (10 s) increments `replay_count`.
+3. "Nothing playing" forgets the last track, so resuming later starts a new row.
+
+The last state is kept in Redis, so restarts don't create duplicates, and the
+`(track_id, played_at)` unique key makes ingestion and imports idempotent.
+
+## Enrichment
+
+When a new track is seen, a `pending` row is created in `track_features` and
+the track is pushed to a Redis stream (consumer group `enricher`). The
+enricher also sweeps pending rows every `ENRICH_INTERVAL_MS` as a safety net.
+Lookups are rate limited client-side (`SOUNDCHARTS_RPS`, shared by
+`ENRICH_CONCURRENCY` workers). A 429 pauses all workers for `Retry-After`.
+Failures back off exponentially (1 min → 24 h) up to `ENRICH_MAX_ATTEMPTS`,
+then the track is marked `failed`; it can be re-queued from the dashboard.
+ISRCs unknown to Soundcharts are marked `unavailable`.
+
+## Spotify tokens
+
+- Authorization Code flow from the dashboard (Settings → Spotify). The
+  callback is `PUBLIC_URL/admin/api/spotify/callback`, protected by a
+  single-use `state` stored in Redis and tied to the admin who started it.
+- The refresh token is stored AES-256-GCM encrypted (`SECRETS_KEY`) in
+  `settings`. Rotated refresh tokens are persisted automatically.
+- Access tokens are cached in Redis until a minute before expiry. On a 401 the
+  poller asks for a forced refresh.
+- Refresh tokens expire 180 days after authorization. The API emails the
+  configured recipients 14/7/3/1 days before expiry, on expiry, and when
+  Spotify answers `invalid_grant` (de-duplicated through Redis).
+
+## Admin dashboard
+
+SvelteKit SPA built to static files and embedded with `go:embed`, served at
+`/admin` with a strict CSP. Script hashes are computed from `index.html` at
+startup, and the Clerk Frontend API host is derived from the publishable key.
+Authentication is by Clerk: the SPA sends the Clerk session JWT as a Bearer
+token, and the API verifies it against Clerk's JWKS (authorized party = our
+origin) and checks an allow-list of emails / user IDs. Every sensitive action
+is written to `admin_audit`.
+
+## Observability
+
+- Structured JSON logs (`log/slog`) with request IDs.
+- Prometheus metrics on `OPS_ADDR` (`/metrics`), plus `/healthz` and
+  `/readyz` (dependency checks) on every service. The containers' healthcheck
+  is `<binary> healthcheck`, so distroless images need no curl.
+- Workers publish heartbeats to Redis, which the dashboard shows as service health.
+- API analytics (public `/api/v1` traffic only) are aggregated hourly in Postgres:
+  counts, status codes and a latency histogram for p50/p95/p99. Unique
+  clients are counted per day with a Redis HyperLogLog of salted IP hashes,
+  so no raw IPs are stored. Data is pruned after 90 days.
+
+## Security notes
+
+- Secrets are read from the environment and unset after loading (`unset` tag).
+- Containers run as non-root on distroless images (read-only root filesystem
+  and no capabilities in the VPS compose). Postgres, Redis and gRPC are never
+  exposed.
+- The client IP trust model is explicit (`TRUSTED_PROXY_HOPS` /
+  `CLIENT_IP_HEADER`), so `X-Forwarded-For` can't be spoofed into the rate limiter.

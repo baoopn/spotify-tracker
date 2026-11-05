@@ -1,0 +1,196 @@
+# Production stack for any Docker host (VPS, bare metal).
+#
+#   cp .env.example .env          # set production secrets + API_DOMAIN
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Caddy terminates TLS (automatic Let's Encrypt) for ${API_DOMAIN} and proxies
+# to the API. Postgres, Redis, gRPC and ops ports are never published.
+# Images come from GHCR (built by .github/workflows/release.yml); to build on
+# the host instead run: docker compose -f docker-compose.prod.yml build
+
+name: spotify-tracker
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/baoopn/spotify-tracker}:${IMAGE_TAG:-latest}
+  build:
+    context: .
+    dockerfile: deploy/docker/Dockerfile
+    args:
+      VERSION: ${IMAGE_TAG:-latest}
+  env_file: .env
+  restart: unless-stopped
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  networks: [internal]
+  logging: &logging
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-app-env: &app-env
+  APP_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_FORMAT: json
+  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+  INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
+  TRACKER_GRPC_ADDR: api:9000
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-spotify_tracker}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [internal]
+    shm_size: 128mb
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+      --maxmemory 128mb --maxmemory-policy volatile-lru
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    networks: [internal]
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *app
+    command: ["/usr/local/bin/api"]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spotify_tracker}?sslmode=disable
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      PUBLIC_URL: https://${API_DOMAIN}
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 256m }
+
+  poller:
+    <<: *app
+    command: ["/usr/local/bin/poller"]
+    # Needs outbound internet access (Spotify).
+    networks: [internal, edge]
+    environment:
+      <<: *app-env
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/poller", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits: { memory: 64m }
+
+  enricher:
+    <<: *app
+    command: ["/usr/local/bin/enricher"]
+    # Needs outbound internet access (Soundcharts).
+    networks: [internal, edge]
+    environment:
+      <<: *app-env
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/enricher", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits: { memory: 64m }
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal, edge]
+    logging: *logging
+    depends_on:
+      api: { condition: service_healthy }
+
+  # Nightly pg_dump with rotation (7 daily, 4 weekly, 6 monthly) to ./backups.
+  backup:
+    image: prodrigestivill/postgres-backup-local:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-spotify_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    networks: [internal]
+    logging: *logging
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  importer:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["/usr/local/bin/importer"]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spotify_tracker}?sslmode=disable
+    networks: [internal, edge]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,17 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# Miscellaneous
+/static/
+/build/
+/.svelte-kit/
+
+# Go embed shim
+*.go
+
+# Brand kit tokens, copied verbatim from design/brand/tokens/colors.css
+src/lib/theme/brand.css

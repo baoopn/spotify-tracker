@@ -9,7 +9,7 @@ import (
 // zoneInfo is the server's view of a time zone right now. The server embeds
 // the IANA database from its Go toolchain, which is often newer than the
 // one bundled in browsers; clients use this to detect and correct stale
-// browser tz data (e.g. Alberta's 2026 switch to permanent UTC-6).
+// browser tz data after a region changes its time-zone rules.
 type zoneInfo struct {
 	TZ            string    `json:"tz"`
 	Abbreviation  string    `json:"abbreviation"`
@@ -19,11 +19,11 @@ type zoneInfo struct {
 	Source        string    `json:"source"`
 }
 
-// GET /api/v1/timezone?tz=America/Edmonton
+// GET /api/v1/timezone?tz=Europe/Berlin
 func (h *Handler) timezone(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("tz")
 	if name == "" || len(name) > 64 || name == "Local" {
-		writeError(w, http.StatusBadRequest, "invalid_tz", "tz must be an IANA time zone name, e.g. America/Edmonton")
+		writeError(w, http.StatusBadRequest, "invalid_tz", "tz must be an IANA time zone name, e.g. Europe/Berlin")
 		return
 	}
 	loc, err := time.LoadLocation(name)

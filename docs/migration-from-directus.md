@@ -54,7 +54,7 @@ never enriched are imported as `pending`, and the enricher picks them up
 1. Deploy the new stack with the Spotify credentials (seed
    `SPOTIFY_REFRESH_TOKEN` / `SPOTIFY_AUTHORIZED_AT`).
 2. Run the importer.
-3. Stop the old `worker-poll-spotify` and `worker-enrich-spotify` containers.
+3. Stop the old Directus-based poller and enricher containers.
 4. Run the importer once more to pick up anything recorded in between.
 5. Point the frontend at the new `/api/v1` API.
 6. Keep Directus running only if other projects use it.

@@ -14,7 +14,7 @@ Read `docs/architecture.md` first; the admin API contract is `docs/admin-api.md`
 - `.env` holds real local secrets: read/write is allowed, but never commit it or print its values.
 - **Never push to `main`.** Every change goes through a branch + pull request (`gh pr create`);
   CI must be green before merging (squash or rebase). Merging the PR deploys: GitHub Actions →
-  GHCR → Coolify (server sr2). Direct pushes are blocked locally (`.githooks/pre-push`, enable with
+  GHCR → Coolify. Direct pushes are blocked locally (`.githooks/pre-push`, enable with
   `git config core.hooksPath .githooks`) and are never deployed (gate in `release.yml`).
   See `docs/deployment.md`.
 

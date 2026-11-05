@@ -6,7 +6,7 @@ func TestPlaybackContextID(t *testing.T) {
 	cases := map[string]string{
 		"spotify:playlist:37i9dQZF1DXcBWIGoYBM5M": "37i9dQZF1DXcBWIGoYBM5M",
 		"spotify:album:1kOV94kOm4oCBzloDcW9ry":    "1kOV94kOm4oCBzloDcW9ry",
-		"spotify:user:bao:collection":             "collection",
+		"spotify:user:owner1:collection":          "collection",
 		"https://open.spotify.com/x":              "",
 		"":                                        "",
 	}

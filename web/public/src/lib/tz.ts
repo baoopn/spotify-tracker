@@ -108,5 +108,5 @@ export function zoneList(): string[] {
 	} catch {
 		list = [];
 	}
-	return [...new Set([...list, 'America/Edmonton', 'UTC'])].sort();
+	return [...new Set([...list, 'UTC'])].sort();
 }

@@ -92,10 +92,9 @@ check('relative times come from instant differences', () => {
 
 check('stale browser tz data: server offset wins, labelled GMT-6', () => {
 	const at = new Date('2026-11-05T18:00:00Z');
-	// America/Edmonton: browser ICU (tz 2025b) says -7, the server says -6. If this
-	// Node's ICU is already current, simulate the same stale gap with America/Denver.
-	const tz =
-		t.intlOffsetMinutes('America/Edmonton', at) === -360 ? 'America/Denver' : 'America/Edmonton';
+	// Simulate stale browser data: Intl says UTC-7 for America/Denver (MST in
+	// November), while the mocked server answer says -6 for the same zone.
+	const tz = 'America/Denver';
 	assert.equal(t.intlOffsetMinutes(tz, at), -420, 'sanity: Intl reports -7 for the test zone');
 	const server = { tz, offset_minutes: -360, offset: '-06:00' };
 	const spec = t.resolveZone(tz, server, at);
@@ -124,8 +123,8 @@ check('server agrees or is unreachable: plain Intl with the IANA zone', () => {
 		at
 	);
 	assert.deepEqual([ok.corrected, ok.timeZone, ok.label], [false, 'America/Denver', undefined]);
-	const down = t.resolveZone('America/Edmonton', null, at);
-	assert.deepEqual([down.corrected, down.timeZone], [false, 'America/Edmonton']);
+	const down = t.resolveZone('America/Denver', null, at);
+	assert.deepEqual([down.corrected, down.timeZone], [false, 'America/Denver']);
 	assert.deepEqual(t.resolveZone(null, null, at), { iana: null, corrected: false });
 	assert.equal(t.offsetLabel(-360), 'GMT-6');
 	assert.equal(t.offsetLabel(330), 'GMT+5:30');

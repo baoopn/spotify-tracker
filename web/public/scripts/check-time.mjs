@@ -46,14 +46,14 @@ assert.equal(gmtLabel(-360), 'GMT-6');
 assert.equal(gmtLabel(330), 'GMT+5:30');
 assert.equal(gmtLabel(0), 'GMT');
 const server = {
-	tz: 'America/Edmonton',
+	tz: 'America/Denver',
 	abbreviation: 'CST',
 	offset_minutes: -360,
 	offset: '-06:00',
 	now: '2026-11-05T14:00:00-06:00',
 	source: 'test'
 };
-const stale = resolveZone('America/Edmonton', server, -420); // browser ICU says UTC-7
+const stale = resolveZone('America/Denver', server, -420); // browser ICU says UTC-7
 assert.equal(stale.kind, 'corrected');
 assert.ok(stale.kind === 'corrected');
 assert.equal(stale.zone, '-06:00');
@@ -62,26 +62,26 @@ const fixed = { zone: stale.zone, label: stale.label };
 assert.match(clockTime('2026-11-05T20:00:00Z', fixed), /^2:00:00\sPM GMT-6$/);
 assert.match(dateTime('2026-11-05T20:00:00Z', fixed), /2:00:00.PM GMT-6$/);
 // Agreement keeps the IANA zone; no zone at all is "unknown".
-assert.deepEqual(resolveZone('America/Edmonton', server, -360), {
+assert.deepEqual(resolveZone('America/Denver', server, -360), {
 	kind: 'intl',
-	zone: 'America/Edmonton'
+	zone: 'America/Denver'
 });
 assert.deepEqual(resolveZone(null, null, null), { kind: 'unknown' });
-assert.equal(typeof browserOffset('America/Edmonton'), 'number');
+assert.equal(typeof browserOffset('America/Denver'), 'number');
 assert.equal(offsetZone(-360), '-06:00');
 assert.equal(offsetZone(330), '+05:30');
 // Same offset but a stale name (browser "MDT", server "CST"): keep the IANA
 // zone, label from the offset.
-assert.deepEqual(resolveZone('America/Edmonton', server, -360, 'MDT'), {
+assert.deepEqual(resolveZone('America/Denver', server, -360, 'MDT'), {
 	kind: 'corrected',
-	zone: 'America/Edmonton',
+	zone: 'America/Denver',
 	label: 'GMT-6',
-	tz: 'America/Edmonton',
+	tz: 'America/Denver',
 	reason: 'name'
 });
-assert.deepEqual(resolveZone('America/Edmonton', server, -360, 'CST'), {
+assert.deepEqual(resolveZone('America/Denver', server, -360, 'CST'), {
 	kind: 'intl',
-	zone: 'America/Edmonton'
+	zone: 'America/Denver'
 });
 // Numeric server abbreviations ("+07") never trigger a relabel.
 assert.equal(

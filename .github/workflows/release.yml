@@ -2,11 +2,11 @@ name: Release & deploy
 
 # On every push to main: run CI, build and push the image to GHCR (used by
 # docker-compose.prod.yml on plain VPS hosts), then trigger the Coolify
-# resource on sr2, which builds the same commit from the repo and deploys it.
+# resource, which builds the same commit from the repo and deploys it.
 #
 # Required repository configuration (Settings → Secrets and variables → Actions):
 #   secrets.COOLIFY_TOKEN          Coolify API token with deploy permission
-#   vars.COOLIFY_URL               e.g. https://coolify.baoopn.com
+#   vars.COOLIFY_URL               e.g. https://coolify.example.com
 #   vars.COOLIFY_RESOURCE_UUID     UUID of the spotify-tracker Coolify application
 # The "production" environment can add required reviewers if desired.
 
@@ -87,7 +87,7 @@ jobs:
           push-to-registry: true
 
   deploy:
-    name: Deploy to Coolify (sr2)
+    name: Deploy to Coolify
     needs: image
     # Skipped until the Coolify resource is wired up (vars.COOLIFY_RESOURCE_UUID).
     if: vars.COOLIFY_RESOURCE_UUID != '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))

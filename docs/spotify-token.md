@@ -36,7 +36,7 @@ token); the poller only receives short-lived access tokens over gRPC.
 3. **Create app**:
    - *App name / description*: e.g. `baoopn listening`.
    - *Redirect URIs* (add all you need, exactly):
-     - production: `https://listening.baoopn.com/admin/api/spotify/callback`
+     - production: `https://<your-domain>/admin/api/spotify/callback`
      - local dev: `http://127.0.0.1:8080/admin/api/spotify/callback`
    - *APIs used*: **Web API**.
    - Accept the terms and save.

@@ -1,3 +1,10 @@
 * text=auto eol=lf
 *.go text eol=lf
 gen/** linguist-generated=true
+
+# Claude Code tooling (ruflo harness, skills, agents, helpers) is vendored:
+# exclude it from GitHub's language statistics and diffs-by-default.
+.claude/** linguist-vendored
+.claude-flow/** linguist-vendored
+.mcp.json linguist-vendored
+CLAUDE.md linguist-documentation

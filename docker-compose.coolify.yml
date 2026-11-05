@@ -58,6 +58,10 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile
+      args:
+        # Coolify provides SOURCE_COMMIT for builds ("Include Source Commit
+        # in Build"); shown as the app version in the dashboard.
+        VERSION: ${SOURCE_COMMIT:-coolify}
     image: spotify-tracker-app:latest
     command: ["/usr/local/bin/api"]
     environment:

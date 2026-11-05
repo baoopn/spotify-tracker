@@ -37,7 +37,9 @@ distroless Docker images · GitHub Actions → GHCR → Coolify.
 
 ## Quick start (local)
 
-Prerequisites: Docker, Go 1.27+, Node 22 + pnpm (only to work on the dashboard).
+Prerequisites: Docker, Go 1.27+, Node 22 + pnpm (only to work on the frontends),
+a Spotify **Premium** account with a Development Mode app
+([setup](docs/spotify-token.md)), and Soundcharts API credentials.
 
 ```bash
 cp .env.example .env      # fill in Spotify, Soundcharts, SECRETS_KEY, …
@@ -85,5 +87,5 @@ and `/api/v1` is rate limited per client IP.
 - [Architecture & design decisions](docs/architecture.md)
 - [Deployment: Coolify, any VPS, CI/CD](docs/deployment.md)
 - [Admin dashboard & Clerk setup](docs/admin.md) · [Admin API contract](docs/admin-api.md)
-- [Spotify authorization](docs/spotify-token.md)
+- [Spotify developer setup & authorization](docs/spotify-token.md) (requires Spotify Premium)
 - [Migrating from the Directus version](docs/migration-from-directus.md)

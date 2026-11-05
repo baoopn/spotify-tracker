@@ -77,7 +77,10 @@ jobs:
           provenance: true
           sbom: true
 
+      # Artifact attestations are unavailable for private repos on personal
+      # accounts; the image still carries buildx provenance + SBOM.
       - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -100,8 +103,10 @@ jobs:
           UUID: ${{ vars.COOLIFY_RESOURCE_UUID }}
         run: |
           set -euo pipefail
-          resp=$(curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$UUID&force=false" \
-            -H "Authorization: Bearer $COOLIFY_TOKEN" -A github-actions)
+          # Coolify v4 requires POST for /deploy.
+          resp=$(curl -fsS -X POST "$COOLIFY_URL/api/v1/deploy" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" -H "Content-Type: application/json" -A github-actions \
+            --data "{\"uuid\":\"$UUID\",\"force\":false}")
           echo "$resp"
           echo "deployment_uuid=$(echo "$resp" | jq -r '.deployments[0].deployment_uuid')" >> "$GITHUB_OUTPUT"
 
@@ -112,9 +117,10 @@ jobs:
           DEPLOYMENT: ${{ steps.deploy.outputs.deployment_uuid }}
         run: |
           set -euo pipefail
-          for i in $(seq 1 60); do
+          # First builds compile both frontends + Go on the server: allow 20 min.
+          for i in $(seq 1 120); do
             status=$(curl -fsS "$COOLIFY_URL/api/v1/deployments/$DEPLOYMENT" \
-              -H "Authorization: Bearer $COOLIFY_TOKEN" -A github-actions | jq -r '.status')
+              -H "Authorization: Bearer $COOLIFY_TOKEN" -A github-actions | jq -r 'if type == "array" then .[0].status else .status end')
             echo "[$i] status=$status"
             case "$status" in
               finished) exit 0 ;;

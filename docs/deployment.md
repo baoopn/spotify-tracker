@@ -13,6 +13,14 @@ their named volumes. No external database is needed.
 
 ## CI/CD (GitHub Actions)
 
+**Workflow: pull requests only.** `main` is updated exclusively by merging a
+PR with green CI. GitHub rulesets / branch protection need GitHub Pro for
+private repos on personal accounts, so this is enforced by (1) a deploy gate
+in `release.yml` — a commit on `main` that did not come from a merged PR is
+built and tested but **never deployed** — and (2) a local pre-push hook
+(`git config core.hooksPath .githooks`) that refuses pushes to `main`. With
+GitHub Pro or a public repo, add a ruleset requiring PRs + the CI checks.
+
 - **`ci.yml`** runs on PRs and on `main`. Go: generated-code drift check, `go mod tidy`
   check, golangci-lint, race tests, build. SPA: svelte-check, eslint, build.
   It also validates all compose files and does a Docker build on PRs.

@@ -25,7 +25,13 @@ export const REFRESH = {
 	/** Paginated data lists and the track drawer. */
 	list: 30_000,
 	/** Analytics and listening insights. */
-	analytics: 60_000
+	analytics: 60_000,
+	/**
+	 * Public-page visitors. Faster than `analytics` because the response carries
+	 * `live_now` (visitors in the last 5 min); the query is a cheap aggregate, so
+	 * the whole payload is simply re-read rather than split into a live endpoint.
+	 */
+	pageAnalytics: 30_000
 } as const;
 
 export type TracksParams = {
@@ -50,6 +56,8 @@ export const qk = {
 	spotify: ['spotify', 'status'] as const,
 	emailSettings: ['settings', 'email'] as const,
 	analytics: (range: AnalyticsRange, tz: string | null) => ['analytics', range, tz] as const,
+	pageAnalytics: (range: AnalyticsRange, tz: string | null) =>
+		['analytics', 'pages', range, tz] as const,
 	stats: {
 		all: ['stats'] as const,
 		topTracks: (range: StatsRange, limit: number) => ['stats', 'top-tracks', range, limit] as const,
@@ -114,6 +122,14 @@ export const queries = {
 			queryFn: ({ signal }) => api.analytics(range, tz, { signal }),
 			placeholderData: keepPreviousData,
 			refetchInterval: REFRESH.analytics
+		}),
+
+	pageAnalytics: (range: AnalyticsRange, tz: string | null) =>
+		queryOptions({
+			queryKey: qk.pageAnalytics(range, tz),
+			queryFn: ({ signal }) => api.pageAnalytics(range, tz, { signal }),
+			placeholderData: keepPreviousData,
+			refetchInterval: REFRESH.pageAnalytics
 		}),
 
 	topTracks: (range: StatsRange, limit = 10) =>

@@ -38,6 +38,18 @@ export function hours(msTotal: number | null | undefined): string {
 	return h < 10 ? `${nf1.format(h)} h` : `${compact(Math.round(h))} h`;
 }
 
+/** Human time span, e.g. "45s", "1m 12s", "2h 5m". */
+export function timeSpan(msTotal: number | null | undefined): string {
+	if (msTotal == null || Number.isNaN(msTotal) || msTotal < 0) return '–';
+	const total = Math.round(msTotal / 1000);
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+	if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+	return `${s}s`;
+}
+
 export function duration(msTotal: number | null | undefined): string {
 	if (msTotal == null || msTotal < 0) return '–:––';
 	const total = Math.floor(msTotal / 1000);

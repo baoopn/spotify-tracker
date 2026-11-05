@@ -20,6 +20,7 @@ import type {
 	OffsetList,
 	OkResult,
 	Overview,
+	PageAnalytics,
 	SortOrder,
 	SpotifyAuthorizeResponse,
 	SpotifyStatus,
@@ -222,6 +223,9 @@ export const api = {
 	/** `tz`: the viewer's IANA zone, so 30d buckets are their calendar days; null = UTC. */
 	analytics: (range: AnalyticsRange, tz: string | null, { signal }: Signal = {}) =>
 		request<Analytics>(`${ADMIN_API}/analytics`, { query: { range, tz }, signal }),
+	/** Public-page visitors; same `range` / `tz` semantics as `analytics`. */
+	pageAnalytics: (range: AnalyticsRange, tz: string | null, { signal }: Signal = {}) =>
+		request<PageAnalytics>(`${ADMIN_API}/analytics/pages`, { query: { range, tz }, signal }),
 
 	// audit
 	audit: (q: { limit?: number; cursor?: string | null }, { signal }: Signal = {}) =>

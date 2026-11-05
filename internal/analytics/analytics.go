@@ -1,6 +1,7 @@
 // Package analytics records public API traffic (per-route counts, status
-// codes, latency histograms, unique clients, origins) and answers dashboard
-// queries over it.
+// codes, latency histograms, unique clients, origins) and visits to the
+// public page (views, unique visitors, time on page, referrers, devices,
+// browsers, countries), and answers dashboard queries over both.
 //
 // Requests are aggregated in memory per hour/route/method/status and flushed
 // to Postgres every few seconds; unique clients (salted IP hashes) and
@@ -54,11 +55,14 @@ type Recorder struct {
 	salt string
 	log  *slog.Logger
 
-	mu  sync.Mutex
-	agg map[aggKey]*aggVal
+	mu    sync.Mutex
+	agg   map[aggKey]*aggVal
+	pages map[pageKey]*pageVal
 
-	// clients is drained by Run; full queue = drop (analytics are best effort).
-	clients chan clientEvent
+	// clients and visitors are drained by Run; a full queue drops the event
+	// (analytics are best effort).
+	clients  chan clientEvent
+	visitors chan visitorEvent
 }
 
 type clientEvent struct{ day, client, origin string }
@@ -66,7 +70,8 @@ type clientEvent struct{ day, client, origin string }
 // NewRecorder creates a Recorder. salt keeps client hashes unlinkable to IPs.
 func NewRecorder(pool *pgxpool.Pool, rdb *redis.Client, salt string, log *slog.Logger) *Recorder {
 	return &Recorder{pool: pool, rdb: rdb, salt: salt, log: log, agg: map[aggKey]*aggVal{},
-		clients: make(chan clientEvent, 4096)}
+		pages: map[pageKey]*pageVal{}, clients: make(chan clientEvent, 4096),
+		visitors: make(chan visitorEvent, 4096)}
 }
 
 // Middleware records every request that reaches it. Mount it on the public
@@ -169,12 +174,17 @@ func (r *Recorder) Run(ctx context.Context, interval time.Duration) error {
 			r.Flush(ctx)
 		case ev := <-r.clients:
 			r.trackClient(ctx, ev.day, ev.client, ev.origin)
+		case ev := <-r.visitors:
+			r.trackVisitor(ctx, ev)
 		}
 	}
 }
 
 // Flush writes in-memory aggregates to Postgres.
 func (r *Recorder) Flush(ctx context.Context) {
+	if err := r.flushPages(ctx); err != nil {
+		r.log.WarnContext(ctx, "flush page analytics failed; re-queueing", slog.Any("error", err))
+	}
 	r.mu.Lock()
 	pending := r.agg
 	r.agg = map[aggKey]*aggVal{}
@@ -219,6 +229,10 @@ func (r *Recorder) Flush(ctx context.Context) {
 
 // Prune deletes aggregates older than retention.
 func (r *Recorder) Prune(ctx context.Context, retention time.Duration) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM api_request_stats WHERE bucket < $1`, time.Now().Add(-retention))
+	cutoff := time.Now().Add(-retention)
+	if _, err := r.pool.Exec(ctx, `DELETE FROM api_request_stats WHERE bucket < $1`, cutoff); err != nil {
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `DELETE FROM page_view_stats WHERE bucket < $1`, cutoff)
 	return err
 }

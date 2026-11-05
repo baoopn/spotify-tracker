@@ -667,6 +667,24 @@ func (a *API) analytics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rep)
 }
 
+func (a *API) pageAnalytics(w http.ResponseWriter, r *http.Request) {
+	loc, err := analytics.LoadZone(r.URL.Query().Get("tz"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_tz", err.Error())
+		return
+	}
+	rep, err := a.Analytics.QueryPages(r.Context(), r.URL.Query().Get("range"), loc)
+	if errors.Is(err, analytics.ErrBadRange) {
+		writeError(w, http.StatusBadRequest, "invalid_range", err.Error())
+		return
+	}
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
 func (a *API) auditLog(w http.ResponseWriter, r *http.Request) {
 	limit, err := intParam(r, "limit", 50, 1, 200)
 	if err != nil {

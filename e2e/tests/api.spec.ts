@@ -115,3 +115,26 @@ test('live stream sends the current snapshot immediately (even when idle)', asyn
 	// JSON object or null: either way it arrives right away.
 	expect(first).toMatch(/^event:[{n]/);
 });
+
+test('page-view beacon accepts valid events and rejects malformed ones', async ({ request }) => {
+	const ok = await request.post('/api/v1/events', {
+		data: { type: 'pageview', path: '/', referrer: 'https://example.org/', width: 1280 }
+	});
+	expect(ok.status()).toBe(202);
+	const engagement = await request.post('/api/v1/events', {
+		data: { type: 'engagement', path: '/', width: 1280, visible_ms: 1500 }
+	});
+	expect(engagement.status()).toBe(202);
+	for (const body of ['{', '{"type":"click"}']) {
+		const bad = await request.post('/api/v1/events', {
+			data: body,
+			headers: { 'content-type': 'text/plain' }
+		});
+		expect(bad.status(), body).toBe(400);
+	}
+	const big = await request.post('/api/v1/events', {
+		data: JSON.stringify({ type: 'pageview', path: '/' + 'x'.repeat(4000) }),
+		headers: { 'content-type': 'text/plain' }
+	});
+	expect(big.status()).toBe(413);
+});

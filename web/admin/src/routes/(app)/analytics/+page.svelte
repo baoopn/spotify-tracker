@@ -9,6 +9,7 @@
 	import TimeSeriesChart from '#lib/components/charts/TimeSeriesChart.svelte';
 	import BarList from '#lib/components/charts/BarList.svelte';
 	import ListeningInsights from './ListeningInsights.svelte';
+	import PageVisitors from './PageVisitors.svelte';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { compact, ms, num, percent } from '#lib/format.js';
@@ -62,14 +63,16 @@
 	eyebrow="Insights"
 	description={a
 		? `${compact(a.totals.requests)} public API requests in the last ${range} · p95 ${ms(a.totals.p95_ms)}`
-		: 'Who reads the public API, how fast it answers, and what gets played.'}
-/>
+		: 'Who reads the public API, who visits the public page, and what gets played.'}
+>
+	{#snippet actions()}
+		<!-- One range for API traffic and public page visitors. -->
+		<Segmented options={ranges} bind:value={range} label="Traffic and visitors time range" />
+	{/snippet}
+</PageHeader>
 
 <section aria-labelledby="traffic-h">
-	<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-		<h2 id="traffic-h" class="text-2xl font-semibold text-ink">API traffic</h2>
-		<Segmented options={ranges} bind:value={range} label="Traffic time range" />
-	</div>
+	<h2 id="traffic-h" class="mb-4 text-2xl font-semibold text-ink">API traffic</h2>
 
 	{#if analytics.isError && !a}
 		<div class="card-print">
@@ -274,5 +277,7 @@
 		{/if}
 	{/if}
 </section>
+
+<PageVisitors {range} />
 
 <ListeningInsights />

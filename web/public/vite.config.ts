@@ -71,6 +71,21 @@ export default defineConfig({
 		// Extra Host names for the dev server, e.g. the compose service name when
 		// e2e tests run in another container (VITE_ALLOWED_HOSTS=web-admin).
 		allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').filter(Boolean),
+		// Bind mounts from Windows/macOS hosts don't deliver file events to a
+		// Linux container: poll the sources instead (VITE_WATCH_POLL=<ms>).
+		// Dependencies and build output are never watched.
+		watch: process.env.VITE_WATCH_POLL
+			? {
+					usePolling: true,
+					interval: Number(process.env.VITE_WATCH_POLL) || 1000,
+					ignored: [
+						'**/node_modules/**',
+						'**/build/**',
+						'**/.svelte-kit/output/**',
+						'**/.pnpm-store/**'
+					]
+				}
+			: undefined,
 		proxy: apiProxy
 	},
 	preview: {

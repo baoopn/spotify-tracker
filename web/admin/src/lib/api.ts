@@ -175,13 +175,14 @@ export const api = {
 	overview: ({ signal }: Signal = {}) => request<Overview>(`${ADMIN_API}/overview`, { signal }),
 
 	// spotify
-	spotify: () => request<SpotifyStatus>(`${ADMIN_API}/spotify`),
+	spotify: ({ signal }: Signal = {}) => request<SpotifyStatus>(`${ADMIN_API}/spotify`, { signal }),
 	spotifyAuthorize: () =>
 		request<SpotifyAuthorizeResponse>(`${ADMIN_API}/spotify/authorize`, { method: 'POST' }),
 	spotifyTest: () => request<SpotifyTestResponse>(`${ADMIN_API}/spotify/test`, { method: 'POST' }),
 
 	// email
-	emailSettings: () => request<EmailSettings>(`${ADMIN_API}/settings/email`),
+	emailSettings: ({ signal }: Signal = {}) =>
+		request<EmailSettings>(`${ADMIN_API}/settings/email`, { signal }),
 	saveEmailSettings: (body: EmailSettingsUpdate) =>
 		request<EmailSettings>(`${ADMIN_API}/settings/email`, { method: 'PUT', body }),
 	testEmail: (to?: string) =>

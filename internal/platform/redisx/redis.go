@@ -33,7 +33,16 @@ const (
 	KeySpotifyRefreshToken = prefix + "spotify:refresh-token"
 	// KeyCachePrefix prefixes HTTP response cache entries.
 	KeyCachePrefix = prefix + "cache:"
+	// KeyCacheGeneration is part of every response-cache key; bumping it
+	// (BumpCache) makes all cached responses stale at once.
+	KeyCacheGeneration = prefix + "cache-gen"
 )
+
+// BumpCache invalidates every cached API response by moving to a new cache
+// generation. Old entries simply expire with their TTL.
+func BumpCache(ctx context.Context, rdb *redis.Client) error {
+	return rdb.Incr(ctx, KeyCacheGeneration).Err()
+}
 
 // KeyPlaylistLock guards a single in-flight playlist metadata fetch.
 func KeyPlaylistLock(id string) string { return prefix + "playlist:fetching:" + id }

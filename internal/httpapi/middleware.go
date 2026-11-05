@@ -83,6 +83,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// clientCacheControl is sent with cacheable API responses.
+const clientCacheControl = "no-cache"
+
 // headerNoStore lets a handler opt a response out of the Redis cache (e.g.
 // data that is about to change, like a track still being enriched).
 const headerNoStore = "X-Internal-No-Store"
@@ -105,13 +108,17 @@ func (h *Handler) cached(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		sum := sha256.Sum256([]byte(r.URL.Path + "?" + r.URL.Query().Encode()))
+		// The generation changes whenever listening data changes (see
+		// redisx.BumpCache), so a cached response is never older than the data.
+		gen, _ := h.rdb.Get(r.Context(), redisx.KeyCacheGeneration).Result()
+		sum := sha256.Sum256([]byte(gen + "|" + r.URL.Path + "?" + r.URL.Query().Encode()))
 		key := redisx.KeyCachePrefix + hex.EncodeToString(sum[:16])
-		maxAge := strconv.Itoa(int(h.opts.CacheTTL.Seconds()))
 
+		// Clients must revalidate every time: freshness is handled server-side,
+		// so browser and CDN caches can never serve outdated stats.
 		if body, err := h.rdb.Get(r.Context(), key).Bytes(); err == nil && json.Valid(body) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Cache-Control", "public, max-age="+maxAge)
+			w.Header().Set("Cache-Control", clientCacheControl)
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(body) //nolint:gosec // cached JSON produced by our own handlers
 			return
@@ -127,7 +134,7 @@ func (h *Handler) cached(next http.HandlerFunc) http.HandlerFunc {
 		switch {
 		case bw.status == http.StatusOK && !skip:
 			_ = h.rdb.Set(r.Context(), key, bw.buf.Bytes(), h.opts.CacheTTL).Err()
-			w.Header().Set("Cache-Control", "public, max-age="+maxAge)
+			w.Header().Set("Cache-Control", clientCacheControl)
 		case skip:
 			w.Header().Set("Cache-Control", "no-store")
 		}

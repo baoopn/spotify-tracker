@@ -1,41 +1,22 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { LoaderCircle, ScrollText } from '@lucide/svelte';
+	import { createInfiniteQuery } from '@tanstack/svelte-query';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import RelTime from '#lib/components/RelTime.svelte';
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import Badge, { type Tone } from '#lib/components/Badge.svelte';
-	import { api, errorMessage } from '#lib/api.js';
+	import { errorMessage } from '#lib/api.js';
+	import { queries } from '#lib/queries.js';
 	import type { AuditEntry } from '#lib/types.js';
 
 	const LIMIT = 50;
 
-	let rows = $state.raw<AuditEntry[]>([]);
-	let cursor = $state<string | null>(null);
-	let loading = $state(false);
-	let loaded = $state(false);
-	let error = $state<string | null>(null);
-
-	async function load(reset: boolean) {
-		loading = true;
-		error = null;
-		try {
-			const res = await api.audit({ limit: LIMIT, cursor: reset ? undefined : cursor });
-			rows = reset ? res.data : [...rows, ...res.data];
-			cursor = res.next_cursor || null;
-			loaded = true;
-		} catch (err) {
-			error = errorMessage(err);
-		} finally {
-			loading = false;
-		}
-	}
-
-	onMount(() => {
-		void load(true);
-	});
+	// Polling re-reads every loaded page from the newest one, so new entries appear on top.
+	const audit = createInfiniteQuery(() => queries.audit(LIMIT));
+	const rows = $derived(audit.data?.pages.flatMap((p) => p.data) ?? []);
+	const error = $derived(audit.error ? errorMessage(audit.error) : null);
 
 	function tone(action: string): Tone {
 		if (action.endsWith('failed')) return 'danger';
@@ -59,8 +40,8 @@
 
 <div class="overflow-hidden">
 	{#if error && rows.length === 0}
-		<ErrorState message={error} onretry={() => load(true)} />
-	{:else if !loaded}
+		<ErrorState message={error} onretry={() => audit.refetch()} />
+	{:else if !audit.data}
 		<div class="flex flex-col gap-3 p-4" aria-busy="true">
 			{#each { length: 8 }, i (i)}
 				<Skeleton class="h-7" />
@@ -103,14 +84,17 @@
 		</div>
 		<div class="flex items-center justify-center gap-3 border-t border-border p-3">
 			{#if error}<p class="text-sm text-danger" role="alert">{error}</p>{/if}
-			{#if cursor}
+			{#if audit.hasNextPage}
 				<button
 					type="button"
 					class="btn btn-secondary"
-					onclick={() => load(false)}
-					disabled={loading}
+					onclick={() => audit.fetchNextPage()}
+					disabled={audit.isFetchingNextPage}
 				>
-					{#if loading}<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />{/if}
+					{#if audit.isFetchingNextPage}<LoaderCircle
+							class="size-4 animate-spin"
+							aria-hidden="true"
+						/>{/if}
 					Load more
 				</button>
 			{:else}

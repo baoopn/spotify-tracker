@@ -9,50 +9,50 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { api, errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
+	import { qk, queries } from '#lib/queries.js';
 	import { toasts } from '#lib/toast.svelte.js';
 	import type { OffsetList, Playlist, RecentPlaylist } from '#lib/types.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
 	const LIMIT = 25;
 
 	let offset = $state(0);
-	let refreshing = $state<string | null>(null);
-	const list = new Query<OffsetList<RecentPlaylist>>();
-
-	$effect(() => {
-		const params = { limit: LIMIT, offset };
-		void list.run((signal) => api.playlists(params, { signal }));
-		return () => list.abort();
-	});
+	const queryClient = useQueryClient();
+	const list = createQuery(() => queries.playlists({ limit: LIMIT, offset }));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => list.refetch());
 
 	function label(p: Playlist): string {
 		return p.available && p.name ? p.name : 'Spotify mix / unavailable';
 	}
 
-	async function refresh(p: Playlist) {
-		refreshing = p.id;
-		try {
-			const updated = await api.refreshPlaylist(p.id);
-			if (list.data) {
-				list.data = {
-					...list.data,
-					data: list.data.data.map((r) =>
-						r.playlist.id === updated.id ? { ...r, playlist: updated } : r
-					)
-				};
-			}
+	const refresh = createMutation(() => ({
+		mutationFn: (p: Playlist) => api.refreshPlaylist(p.id),
+		onSuccess: (updated) => {
+			// Patch cached pages right away, then refetch every playlist view.
+			queryClient.setQueriesData<OffsetList<RecentPlaylist>>(
+				{ queryKey: qk.playlists.lists },
+				(old) =>
+					old && {
+						...old,
+						data: old.data.map((r) =>
+							r.playlist.id === updated.id ? { ...r, playlist: updated } : r
+						)
+					}
+			);
+			void queryClient.invalidateQueries({ queryKey: qk.playlists.all });
 			toasts.success(
 				'Playlist metadata refreshed',
 				updated.available ? label(updated) : 'Spotify reports this playlist as unavailable.'
 			);
-		} catch (err) {
-			toasts.error('Could not refresh playlist', errorMessage(err));
-		} finally {
-			refreshing = null;
-		}
-	}
+		},
+		onError: (err) => toasts.error('Could not refresh playlist', errorMessage(err))
+	}));
+
+	const refreshingId = $derived(refresh.isPending ? refresh.variables?.id : undefined);
 </script>
 
 <PageHeader
@@ -62,8 +62,8 @@
 />
 
 <div class="overflow-hidden">
-	{#if list.error && !list.data}
-		<ErrorState message={list.error} onretry={() => list.refetch()} />
+	{#if list.isError && !list.data}
+		<ErrorState message={errorMessage(list.error)} onretry={() => manual.run()} />
 	{:else if !list.data}
 		<div class="flex flex-col gap-3 p-4" aria-busy="true">
 			{#each { length: 6 }, i (i)}
@@ -79,7 +79,12 @@
 			message="Playlists appear here once you play something from one."
 		/>
 	{:else}
-		<div class={['overflow-x-auto transition-opacity', list.loading && 'opacity-60']}>
+		<div
+			class={[
+				'overflow-x-auto transition-opacity',
+				(list.isPlaceholderData || manual.active) && 'opacity-60'
+			]}
+		>
 			<table class="data-table">
 				<caption class="sr-only">Playlists played from</caption>
 				<thead>
@@ -136,11 +141,11 @@
 								<button
 									type="button"
 									class="btn btn-secondary btn-sm"
-									onclick={() => refresh(p)}
-									disabled={refreshing === p.id}
+									onclick={() => refresh.mutate(p)}
+									disabled={refreshingId === p.id}
 									aria-label="Refresh metadata for {label(p)}"
 								>
-									{#if refreshing === p.id}
+									{#if refreshingId === p.id}
 										<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
 									{:else}
 										<RefreshCw class="size-4" aria-hidden="true" />
@@ -157,7 +162,7 @@
 			{offset}
 			limit={LIMIT}
 			total={list.data.total}
-			disabled={list.loading}
+			disabled={list.isPlaceholderData}
 			onchange={(o) => (offset = o)}
 		/>
 	{/if}

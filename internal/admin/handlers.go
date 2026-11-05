@@ -611,6 +611,7 @@ func (a *API) enrichTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Tracker.QueueEnrichment(r.Context(), id, isrc)
+	a.Tracker.InvalidateCache(r.Context())
 	a.audit(r, "enrichment.requeued", map[string]string{"track_id": id})
 	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
@@ -621,6 +622,7 @@ func (a *API) retryFailed(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	a.Tracker.InvalidateCache(r.Context())
 	a.audit(r, "enrichment.requeued", map[string]any{"failed_tracks": n})
 	writeJSON(w, http.StatusOK, map[string]int64{"requeued": n})
 }

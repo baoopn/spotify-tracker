@@ -12,16 +12,16 @@
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import TrackDrawer from './TrackDrawer.svelte';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { api, errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
+	import { qk, queries } from '#lib/queries.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import { toasts } from '#lib/toast.svelte.js';
 	import {
 		ENRICHMENT_STATUSES,
 		type EnrichmentStatus,
-		type OffsetList,
 		type SortOrder,
-		type TrackRow,
 		type TrackSort
 	} from '#lib/types.js';
 
@@ -40,13 +40,10 @@
 	let selected = $state<string | null>(null);
 	let confirmRetry = $state(false);
 
-	const list = new Query<OffsetList<TrackRow>>();
-
-	$effect(() => {
-		const params = { q, status, sort, order, limit: LIMIT, offset };
-		void list.run((signal) => api.tracks(params, { signal }));
-		return () => list.abort();
-	});
+	const queryClient = useQueryClient();
+	const list = createQuery(() => queries.tracks({ q, status, sort, order, limit: LIMIT, offset }));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => list.refetch());
 
 	function setSort(s: TrackSort) {
 		if (sort === s) order = order === 'desc' ? 'asc' : 'desc';
@@ -57,16 +54,27 @@
 		offset = 0;
 	}
 
-	async function retryFailed() {
-		try {
-			const { requeued } = await api.retryFailed();
+	const retryFailed = createMutation(() => ({
+		mutationFn: () => api.retryFailed(),
+		onSuccess: ({ requeued }) => {
 			toasts.success(
 				'Failed tracks requeued',
 				`${num(requeued)} ${requeued === 1 ? 'track' : 'tracks'} queued for enrichment.`
 			);
-			await list.refetch();
-		} catch (err) {
-			toasts.error('Could not requeue failed tracks', errorMessage(err));
+			// Returned so the confirm dialog stays busy until the lists are fresh.
+			return Promise.all([
+				queryClient.invalidateQueries({ queryKey: qk.tracks.all }),
+				queryClient.invalidateQueries({ queryKey: qk.overview })
+			]);
+		},
+		onError: (err) => toasts.error('Could not requeue failed tracks', errorMessage(err))
+	}));
+
+	async function confirmRetryFailed() {
+		try {
+			await retryFailed.mutateAsync();
+		} catch {
+			// already reported by onError
 		}
 	}
 
@@ -118,8 +126,8 @@
 </div>
 
 <div class="overflow-hidden">
-	{#if list.error && !list.data}
-		<ErrorState message={list.error} onretry={() => list.refetch()} />
+	{#if list.isError && !list.data}
+		<ErrorState message={errorMessage(list.error)} onretry={() => manual.run()} />
 	{:else if !list.data}
 		<div class="flex flex-col gap-3 p-4" aria-busy="true">
 			{#each { length: 8 }, i (i)}
@@ -137,7 +145,12 @@
 				: 'No tracks have been recorded yet.'}
 		/>
 	{:else}
-		<div class={['overflow-x-auto transition-opacity', list.loading && 'opacity-60']}>
+		<div
+			class={[
+				'overflow-x-auto transition-opacity',
+				(list.isPlaceholderData || manual.active) && 'opacity-60'
+			]}
+		>
 			<table class="data-table">
 				<caption class="sr-only">
 					Tracks, sorted by {sort}
@@ -206,18 +219,18 @@
 			{offset}
 			limit={LIMIT}
 			total={list.data.total}
-			disabled={list.loading}
+			disabled={list.isPlaceholderData}
 			onchange={(o) => (offset = o)}
 		/>
 	{/if}
 </div>
 
-<TrackDrawer bind:trackId={selected} onchanged={() => list.refetch()} />
+<TrackDrawer bind:trackId={selected} />
 
 <ConfirmDialog
 	bind:open={confirmRetry}
 	title="Retry all failed tracks?"
 	message="Every track whose enrichment failed is reset to pending and queued again. This may take a while and uses provider quota."
 	confirmLabel="Retry failed"
-	onconfirm={retryFailed}
+	onconfirm={confirmRetryFailed}
 />

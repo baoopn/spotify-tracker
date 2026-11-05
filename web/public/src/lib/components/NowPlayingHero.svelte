@@ -6,12 +6,18 @@
 	import RelTime from './RelTime.svelte';
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear, spotifyUrl, toDate } from '#lib/format.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
+	import { historyQuery, loadStatus, nowPlayingQuery } from '#lib/queries.js';
 
 	/** A paused track this old counts as "not listening". */
 	const PAUSED_STALE_MS = 15 * 60_000;
 
-	const np = $derived(live.nowPlaying);
+	const now = createQuery(() => nowPlayingQuery());
+	const history = createQuery(() => historyQuery());
+	const nowStatus = $derived(loadStatus(now));
+	const np = $derived(now.data ?? null);
 	const stale = $derived.by(() => {
 		if (!np?.track || np.is_playing) return false;
 		const at = toDate(np.fetched_at)?.getTime() ?? 0;
@@ -42,8 +48,8 @@
 
 	// Last played, for the idle state: the newest history entry, or the stale paused track.
 	const lastPlayed = $derived(
-		live.history[0]
-			? { track: live.history[0].track, at: live.history[0].played_at }
+		history.data?.[0]
+			? { track: history.data[0].track, at: history.data[0].played_at }
 			: np?.track
 				? { track: np.track, at: np.fetched_at }
 				: null
@@ -52,7 +58,7 @@
 	const announcement = $derived(
 		track
 			? `${playing ? 'Now playing' : 'Paused'}: ${track.name} by ${artistNames(track.artists)}`
-			: live.nowStatus === 'ready'
+			: nowStatus === 'ready'
 				? 'Not listening right now'
 				: ''
 	);
@@ -64,17 +70,17 @@
 
 <section
 	aria-labelledby="now-heading"
-	aria-busy={live.nowStatus === 'loading'}
+	aria-busy={nowStatus === 'loading'}
 	class={[
 		'transition-opacity duration-200',
 		// Brand guideline: dim slightly when nothing is playing.
-		live.nowStatus === 'ready' && !playing && 'opacity-85'
+		nowStatus === 'ready' && !playing && 'opacity-85'
 	]}
 >
 	<h2 id="now-heading" class="sr-only">Now playing</h2>
 	<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
 
-	{#if live.nowStatus === 'loading'}
+	{#if nowStatus === 'loading'}
 		<div class="hero">
 			<div class="skeleton aspect-square w-full rounded-brand"></div>
 			<div class="space-y-4">
@@ -84,7 +90,7 @@
 				<div class="skeleton mt-8 h-px w-full"></div>
 			</div>
 		</div>
-	{:else if live.nowStatus === 'error'}
+	{:else if nowStatus === 'error'}
 		<div class="border-y border-rule py-10" role="alert">
 			<p class="chip label [--chip:var(--spot-rose)]">
 				<span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>
@@ -93,7 +99,7 @@
 			<p class="mt-4 font-display text-2xl font-semibold tracking-tight">
 				What's playing didn't come through.
 			</p>
-			<p class="mt-1 text-ink-soft">{live.nowError}</p>
+			<p class="mt-1 text-ink-soft">{errorMessage(now.error)}</p>
 			<button type="button" class="btn btn-secondary mt-6" onclick={() => live.retry()}
 				>Try again</button
 			>

@@ -9,25 +9,23 @@
 	import TimeSeriesChart from '#lib/components/charts/TimeSeriesChart.svelte';
 	import BarList from '#lib/components/charts/BarList.svelte';
 	import ListeningInsights from './ListeningInsights.svelte';
-	import { api } from '#lib/api.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { compact, ms, num, percent } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
+	import { queries } from '#lib/queries.js';
 	import { bucketLabel, bucketTitle } from '#lib/time.js';
 	import { zone } from '#lib/zone.svelte.js';
-	import type { Analytics, AnalyticsRange } from '#lib/types.js';
+	import type { AnalyticsRange } from '#lib/types.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
 	let range = $state<AnalyticsRange>('24h');
 	// IANA zone for server-side day bucketing (the server has current tz rules);
 	// unknown -> no tz -> UTC days.
 	const timeZone = $derived(zone.iana);
-	const analytics = new Query<Analytics>();
-
-	$effect(() => {
-		const r = range;
-		const tz = timeZone;
-		void analytics.run((signal) => api.analytics(r, tz, { signal }));
-		return () => analytics.abort();
-	});
+	// Keeps the previous range's data on screen (dimmed) while the new one loads.
+	const analytics = createQuery(() => queries.analytics(range, timeZone));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => analytics.refetch());
 
 	const a = $derived(analytics.data);
 	const x = $derived(a?.timeseries.map((p) => new Date(p.bucket)) ?? []);
@@ -73,9 +71,9 @@
 		<Segmented options={ranges} bind:value={range} label="Traffic time range" />
 	</div>
 
-	{#if analytics.error && !a}
+	{#if analytics.isError && !a}
 		<div class="card-print">
-			<ErrorState message={analytics.error} onretry={() => analytics.refetch()} />
+			<ErrorState message={errorMessage(analytics.error)} onretry={() => manual.run()} />
 		</div>
 	{:else}
 		<KpiRow
@@ -100,7 +98,7 @@
 				<ChartCard
 					title="Requests and errors"
 					subtitle="{bucketNote} · errors are 5xx"
-					refreshing={analytics.loading}
+					refreshing={analytics.isPlaceholderData || manual.active}
 				>
 					{#snippet chart()}
 						<TimeSeriesChart
@@ -149,7 +147,11 @@
 					{/snippet}
 				</ChartCard>
 
-				<ChartCard title="p95 latency" subtitle={bucketNote} refreshing={analytics.loading}>
+				<ChartCard
+					title="p95 latency"
+					subtitle={bucketNote}
+					refreshing={analytics.isPlaceholderData || manual.active}
+				>
 					{#snippet chart()}
 						<TimeSeriesChart
 							{x}
@@ -192,7 +194,12 @@
 				{#if a.routes.length === 0}
 					<EmptyState title="No traffic in this range" />
 				{:else}
-					<div class={['overflow-x-auto transition-opacity', analytics.loading && 'opacity-60']}>
+					<div
+						class={[
+							'overflow-x-auto transition-opacity',
+							(analytics.isPlaceholderData || manual.active) && 'opacity-60'
+						]}
+					>
 						<table class="data-table">
 							<caption class="sr-only">Requests per route</caption>
 							<thead>
@@ -229,7 +236,7 @@
 			</div>
 
 			<div class="mt-8 grid gap-6 lg:grid-cols-2">
-				<ChartCard title="Status codes" refreshing={analytics.loading}>
+				<ChartCard title="Status codes" refreshing={analytics.isPlaceholderData || manual.active}>
 					{#snippet chart()}
 						{#if a.status_codes.length}
 							<BarList
@@ -246,7 +253,7 @@
 						{/if}
 					{/snippet}
 				</ChartCard>
-				<ChartCard title="Top origins" refreshing={analytics.loading}>
+				<ChartCard title="Top origins" refreshing={analytics.isPlaceholderData || manual.active}>
 					{#snippet chart()}
 						{#if a.top_origins.length}
 							<BarList

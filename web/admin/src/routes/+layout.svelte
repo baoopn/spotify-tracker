@@ -4,8 +4,10 @@
 	import '@fontsource-variable/jetbrains-mono';
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import Toasts from '#lib/components/Toasts.svelte';
 	import { auth } from '#lib/auth.svelte.js';
+	import { queryClient } from '#lib/query-client.js';
 	import { theme } from '#lib/theme.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
 	import type { LayoutProps } from './$types';
@@ -34,6 +36,8 @@
 	>Skip to content</a
 >
 
-{@render children()}
+<QueryClientProvider client={queryClient}>
+	{@render children()}
+</QueryClientProvider>
 
 <Toasts />

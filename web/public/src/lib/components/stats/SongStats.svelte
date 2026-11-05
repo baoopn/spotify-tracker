@@ -1,7 +1,7 @@
 <script lang="ts">
 	// "Song stats" liner notes: radar for the 0..1 features, then one small
 	// illustration per remaining stat, each captioned with a big Outfit value.
-	import { onMount } from 'svelte';
+	import { createQuery } from '@tanstack/svelte-query';
 	import BeatDots from './BeatDots.svelte';
 	import GenreBar from './GenreBar.svelte';
 	import KeyWheel from './KeyWheel.svelte';
@@ -9,23 +9,29 @@
 	import PlayTally from './PlayTally.svelte';
 	import RadarChart, { type RadarAxis } from './RadarChart.svelte';
 	import TempoGauge from './TempoGauge.svelte';
-	import { live } from '#lib/live.svelte.js';
 	import { keyName } from '#lib/music.js';
-	import { songStats } from '#lib/stats.svelte.js';
+	import {
+		audioProfileQuery,
+		historyQuery,
+		nowPlayingQuery,
+		trackDetailQuery
+	} from '#lib/queries.js';
 	import type { AudioFeatureValues, AudioProfile } from '#lib/types.js';
 
-	onMount(() => songStats.start());
+	const now = createQuery(() => nowPlayingQuery());
+	const history = createQuery(() => historyQuery());
+	const profile = createQuery(() => audioProfileQuery());
 
 	// The track on show: now playing, else the last played one.
-	const trackId = $derived(live.nowPlaying?.track?.id ?? live.history[0]?.track.id ?? null);
-	$effect(() => {
-		songStats.load(trackId);
-	});
+	const trackId = $derived(now.data?.track?.id ?? history.data?.[0]?.track.id ?? null);
+	// Keyed by track: a new song shows its own loading state, never the previous
+	// song's stats; refetches of the same song keep the current data on screen.
+	const detail = createQuery(() => trackDetailQuery(trackId));
 
-	const d = $derived(songStats.detail?.id === trackId ? songStats.detail : null);
+	const d = $derived(detail.data?.id === trackId ? detail.data : null);
 	const f = $derived<AudioFeatureValues | null>(d?.features?.features ?? null);
 	const status = $derived(d?.features?.status ?? null);
-	const playing = $derived(!!live.nowPlaying?.is_playing && live.nowPlaying.track?.id === d?.id);
+	const playing = $derived(!!now.data?.is_playing && now.data.track?.id === d?.id);
 
 	const AXES: { label: string; key: keyof AudioFeatureValues & keyof AudioProfile }[] = [
 		{ label: 'Energy', key: 'energy' },
@@ -40,7 +46,7 @@
 		AXES.map((a) => ({
 			label: a.label,
 			value: f?.[a.key] ?? null,
-			avg: songStats.profile?.[a.key] ?? null
+			avg: profile.data?.[a.key] ?? null
 		}))
 	);
 	const radarState = $derived.by(() => {
@@ -72,7 +78,7 @@
 {/snippet}
 
 {#if trackId}
-	<section aria-labelledby="stats-heading" aria-busy={songStats.status === 'loading'}>
+	<section aria-labelledby="stats-heading" aria-busy={detail.isLoading}>
 		<div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1 border-b border-ink pb-3">
 			<h2 id="stats-heading" class="font-display text-2xl font-semibold tracking-[-0.02em]">
 				Song stats
@@ -80,10 +86,10 @@
 			{#if d}<p class="label max-w-full truncate text-ink-soft">{d.name}</p>{/if}
 		</div>
 
-		{#if songStats.status === 'error' && !d}
+		{#if detail.isError && !d}
 			<div class="flex flex-wrap items-center gap-4 border-b border-rule py-6" role="alert">
 				<p class="text-ink-soft">Couldn't load the stats for this track.</p>
-				<button type="button" class="btn btn-secondary" onclick={() => songStats.retry()}
+				<button type="button" class="btn btn-secondary" onclick={() => detail.refetch()}
 					>Try again</button
 				>
 			</div>

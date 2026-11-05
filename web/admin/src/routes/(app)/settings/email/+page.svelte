@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Check, LoaderCircle, Plus, Save, Send, Trash2, Undo2 } from '@lucide/svelte';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import TagInput from '#lib/components/TagInput.svelte';
 	import Badge from '#lib/components/Badge.svelte';
@@ -8,14 +9,17 @@
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import { ApiError, api, errorMessage } from '#lib/api.js';
 	import { dateTime } from '#lib/format.js';
+	import { qk, queries } from '#lib/queries.js';
 	import { toasts } from '#lib/toast.svelte.js';
 	import type { EmailSettings, EmailSettingsUpdate } from '#lib/types.js';
 
 	const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 	const PRESET_DAYS = [30, 14, 7, 3, 1];
 
-	let settings = $state.raw<EmailSettings | null>(null);
-	let loadError = $state<string | null>(null);
+	const queryClient = useQueryClient();
+	const query = createQuery(() => queries.emailSettings());
+	/** Live server state (badges, "password stored"); the form below is only filled once. */
+	const settings = $derived(query.data ?? null);
 
 	// form state
 	let host = $state('');
@@ -28,13 +32,10 @@
 	let days = $state<number[]>([]);
 	let customDay = $state<number | null>(null);
 
-	let saving = $state(false);
 	let errors = $state<Record<string, string>>({});
 	let testTo = $state('');
-	let testing = $state(false);
 
 	function fill(s: EmailSettings) {
-		settings = s;
 		host = s.host;
 		port = s.port || 587;
 		username = s.username;
@@ -45,17 +46,14 @@
 		days = [...s.expiry_alert_days].sort((a, b) => b - a);
 	}
 
-	async function load() {
-		loadError = null;
-		try {
-			fill(await api.emailSettings());
-		} catch (err) {
-			loadError = errorMessage(err);
-		}
-	}
-
-	onMount(() => {
-		void load();
+	// Fill the form from the first load only: background refetches (focus,
+	// reconnect) must never overwrite what is being typed.
+	let filled = false;
+	$effect(() => {
+		const s = query.data;
+		if (!s || filled) return;
+		filled = true;
+		untrack(() => fill(s));
 	});
 
 	function validate(): Record<string, string> {
@@ -85,7 +83,7 @@
 		return out;
 	}
 
-	async function save(e: SubmitEvent) {
+	function save(e: SubmitEvent) {
 		e.preventDefault();
 		errors = validate();
 		if (Object.keys(errors).length) {
@@ -104,22 +102,28 @@
 		if (clearPassword) body.password = '';
 		else if (password) body.password = password;
 
-		saving = true;
-		try {
-			fill(await api.saveEmailSettings(body));
+		saveSettings.mutate(body);
+	}
+
+	const saveSettings = createMutation(() => ({
+		mutationFn: (body: EmailSettingsUpdate) => api.saveEmailSettings(body),
+		onSuccess: (saved) => {
+			queryClient.setQueryData(qk.emailSettings, saved);
+			fill(saved);
 			errors = {};
 			toasts.success('Email settings saved');
-		} catch (err) {
+			void queryClient.invalidateQueries({ queryKey: qk.emailSettings });
+		},
+		onError: (err) => {
 			if (err instanceof ApiError && err.isValidation) {
 				errors = mapServerFields(err.fields);
 				toasts.error('The server rejected some fields', err.message);
 			} else {
 				toasts.error('Could not save settings', errorMessage(err));
 			}
-		} finally {
-			saving = false;
 		}
-	}
+	}));
+	const saving = $derived(saveSettings.isPending);
 
 	function toggleDay(d: number) {
 		days = days.includes(d) ? days.filter((x) => x !== d) : [...days, d].sort((a, b) => b - a);
@@ -138,23 +142,24 @@
 		errors = rest;
 	}
 
-	async function sendTest() {
+	const testEmail = createMutation(() => ({
+		mutationFn: (to: string) => api.testEmail(to || undefined),
+		onSuccess: (res, to) => {
+			if (res.ok)
+				toasts.success('Test email sent', to ? `Sent to ${to}` : 'Sent to the alert recipients');
+			else toasts.error('Test email failed', res.error);
+		},
+		onError: (err) => toasts.error('Test email failed', errorMessage(err))
+	}));
+	const testing = $derived(testEmail.isPending);
+
+	function sendTest() {
 		const to = testTo.trim();
 		if (to && !EMAIL_RE.test(to)) {
 			toasts.error('Invalid test recipient', `${to} is not a valid email address`);
 			return;
 		}
-		testing = true;
-		try {
-			const res = await api.testEmail(to || undefined);
-			if (res.ok)
-				toasts.success('Test email sent', to ? `Sent to ${to}` : 'Sent to the alert recipients');
-			else toasts.error('Test email failed', res.error);
-		} catch (err) {
-			toasts.error('Test email failed', errorMessage(err));
-		} finally {
-			testing = false;
-		}
+		testEmail.mutate(to);
 	}
 
 	const allDays = $derived([...new Set([...PRESET_DAYS, ...days])].sort((a, b) => b - a));
@@ -166,8 +171,10 @@
 	description="Where token-expiry warnings go, and the SMTP server that sends them."
 />
 
-{#if loadError && !settings}
-	<div class="card"><ErrorState message={loadError} onretry={load} /></div>
+{#if query.isError && !settings}
+	<div class="card">
+		<ErrorState message={errorMessage(query.error)} onretry={() => query.refetch()} />
+	</div>
 {:else if !settings}
 	<div class="card flex flex-col gap-4 p-6">
 		{#each { length: 6 }, i (i)}<Skeleton class="h-10" />{/each}

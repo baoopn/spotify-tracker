@@ -7,48 +7,21 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
-	import { api, errorMessage } from '#lib/api.js';
+	import { createInfiniteQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { duration } from '#lib/format.js';
-	import type { HistoryEntry } from '#lib/types.js';
+	import { queries } from '#lib/queries.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
 	const LIMIT = 50;
 
 	let q = $state('');
-	let rows = $state.raw<HistoryEntry[]>([]);
-	let cursor = $state<string | null>(null);
-	let loading = $state(false);
-	let loaded = $state(false);
-	let error = $state<string | null>(null);
-	let ctrl: AbortController | null = null;
-
-	async function load(reset: boolean) {
-		ctrl?.abort();
-		const c = new AbortController();
-		ctrl = c;
-		loading = true;
-		error = null;
-		try {
-			const res = await api.history(
-				{ limit: LIMIT, q, cursor: reset ? undefined : cursor },
-				{ signal: c.signal }
-			);
-			if (c.signal.aborted) return;
-			rows = reset ? res.data : [...rows, ...res.data];
-			cursor = res.next_cursor || null;
-			loaded = true;
-		} catch (err) {
-			if (c.signal.aborted) return;
-			error = errorMessage(err);
-		} finally {
-			if (ctrl === c) loading = false;
-		}
-	}
-
-	$effect(() => {
-		void q;
-		void load(true);
-		return () => ctrl?.abort();
-	});
+	// Polling re-reads every loaded page from the newest one, so new plays appear on top.
+	const plays = createInfiniteQuery(() => queries.history(q, LIMIT));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => plays.refetch());
+	const rows = $derived(plays.data?.pages.flatMap((p) => p.data) ?? []);
+	const error = $derived(plays.error ? errorMessage(plays.error) : null);
 </script>
 
 <PageHeader
@@ -68,8 +41,8 @@
 
 <div class="overflow-hidden">
 	{#if error && rows.length === 0}
-		<ErrorState message={error} onretry={() => load(true)} />
-	{:else if !loaded}
+		<ErrorState message={error} onretry={() => manual.run()} />
+	{:else if !plays.data}
 		<div class="flex flex-col gap-3 p-4" aria-busy="true">
 			{#each { length: 8 }, i (i)}
 				<div class="flex items-center gap-3">
@@ -88,7 +61,12 @@
 			message={q ? `Nothing found for “${q}”.` : 'Plays appear here once the poller records them.'}
 		/>
 	{:else}
-		<div class={['overflow-x-auto transition-opacity', loading && 'opacity-60']}>
+		<div
+			class={[
+				'overflow-x-auto transition-opacity',
+				(plays.isPlaceholderData || manual.active) && 'opacity-60'
+			]}
+		>
 			<table class="data-table">
 				<caption class="sr-only">Listening history</caption>
 				<thead>
@@ -130,14 +108,17 @@
 			{#if error}
 				<p class="mr-3 text-sm text-danger" role="alert">{error}</p>
 			{/if}
-			{#if cursor}
+			{#if plays.hasNextPage}
 				<button
 					type="button"
 					class="btn btn-secondary"
-					onclick={() => load(false)}
-					disabled={loading}
+					onclick={() => plays.fetchNextPage()}
+					disabled={plays.isFetchingNextPage}
 				>
-					{#if loading}<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />{/if}
+					{#if plays.isFetchingNextPage}<LoaderCircle
+							class="size-4 animate-spin"
+							aria-hidden="true"
+						/>{/if}
 					Load more
 				</button>
 			{:else}

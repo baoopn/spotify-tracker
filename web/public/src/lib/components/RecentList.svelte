@@ -5,22 +5,31 @@
 	import ExplicitBadge from './ExplicitBadge.svelte';
 	import RelTime from './RelTime.svelte';
 	import { spotifyUrl } from '#lib/format.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
+	import { historyQuery, loadStatus, nowPlayingQuery } from '#lib/queries.js';
 
 	const SHOW = 5;
 
+	const now = createQuery(() => nowPlayingQuery());
+	// The history observer that owns the periodic safety-net refresh.
+	const history = createQuery(() => historyQuery({ refresh: true }));
+	const historyStatus = $derived(loadStatus(history));
+
 	// Skip the newest entry when it is the track currently playing (shown in the hero).
 	const items = $derived.by(() => {
-		const np = live.nowPlaying;
-		const [first, ...rest] = live.history;
+		const np = now.data;
+		const all = history.data ?? [];
+		const [first, ...rest] = all;
 		const dupe = !!first && !!np?.is_playing && np.track?.id === first.track.id;
-		return (dupe ? rest : live.history).slice(0, SHOW);
+		return (dupe ? rest : all).slice(0, SHOW);
 	});
 
 	const pad = (n: number) => String(n).padStart(2, '0');
 </script>
 
-<section aria-labelledby="recent-heading" aria-busy={live.historyStatus === 'loading'}>
+<section aria-labelledby="recent-heading" aria-busy={historyStatus === 'loading'}>
 	<div class="flex items-end justify-between gap-4 border-b border-ink pb-3">
 		<h2
 			id="recent-heading"
@@ -29,12 +38,12 @@
 			<BrandIcon name="track" class="size-6" />
 			Recently played
 		</h2>
-		{#if live.historyStatus === 'ready' && items.length > 0}
+		{#if historyStatus === 'ready' && items.length > 0}
 			<p class="label text-ink-soft">{pad(items.length)} tracks</p>
 		{/if}
 	</div>
 
-	{#if live.historyStatus === 'loading'}
+	{#if historyStatus === 'loading'}
 		<ol aria-hidden="true">
 			{#each [1, 2, 3, 4, 5] as i (i)}
 				<li class="row">
@@ -47,13 +56,13 @@
 				</li>
 			{/each}
 		</ol>
-	{:else if live.historyStatus === 'error'}
+	{:else if historyStatus === 'error'}
 		<div class="flex flex-wrap items-center gap-4 border-b border-rule py-6" role="alert">
 			<p class="chip label [--chip:var(--spot-rose)]">
 				<span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>
 				Couldn't load
 			</p>
-			<p class="text-ink-soft">{live.historyError}</p>
+			<p class="text-ink-soft">{errorMessage(history.error)}</p>
 			<button type="button" class="btn btn-secondary" onclick={() => live.retry()}>Try again</button
 			>
 		</div>

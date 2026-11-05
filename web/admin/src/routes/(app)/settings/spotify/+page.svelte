@@ -12,25 +12,46 @@
 	import { api, errorMessage } from '#lib/api.js';
 	import { artistNames, dateTime, inDays, utcDateTime } from '#lib/format.js';
 	import { relativeClock } from '#lib/clock.svelte.js';
-	import { Query } from '#lib/query.svelte.js';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { qk, queries } from '#lib/queries.js';
 	import { startSpotifyAuthorize, tokenDaysLeft, tokenHealth } from '#lib/spotify.js';
 	import { toasts } from '#lib/toast.svelte.js';
-	import type { SpotifyStatus, SpotifyTestResponse } from '#lib/types.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
-	const status = new Query<SpotifyStatus>();
+	const queryClient = useQueryClient();
+	const status = createQuery(() => queries.spotify());
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => status.refetch());
 	let authorizing = $state(false);
-	let testing = $state(false);
-	let testResult = $state<SpotifyTestResponse | null>(null);
+
+	/** Token status shows up on this page and on the overview. */
+	function invalidateSpotify() {
+		return Promise.all([
+			queryClient.invalidateQueries({ queryKey: qk.spotify }),
+			queryClient.invalidateQueries({ queryKey: qk.overview })
+		]);
+	}
+
+	// The test may refresh the access token server-side, so re-read the status after it.
+	const test = createMutation(() => ({
+		mutationFn: () => api.spotifyTest(),
+		onSuccess: (res) => {
+			if (res.ok) toasts.success('Spotify connection works');
+			else toasts.error('Spotify test failed', res.error);
+		},
+		onError: (err) => toasts.error('Spotify test failed', errorMessage(err)),
+		onSettled: () => invalidateSpotify()
+	}));
+	const testResult = $derived(test.data);
 
 	onMount(() => {
-		void status.run(() => api.spotify());
-
 		// Returning from the OAuth callback: /admin/settings/spotify?result=success|error&message=…
 		const params = page.url.searchParams;
 		const result = params.get('result');
 		if (result) {
 			if (result === 'success') {
 				toasts.success('Spotify connected', 'The new refresh token is stored.');
+				void invalidateSpotify();
 			} else {
 				toasts.error('Spotify authorization failed', params.get('message') ?? undefined);
 			}
@@ -42,20 +63,6 @@
 		authorizing = true;
 		await startSpotifyAuthorize();
 		authorizing = false;
-	}
-
-	async function test() {
-		testing = true;
-		testResult = null;
-		try {
-			testResult = await api.spotifyTest();
-			if (testResult.ok) toasts.success('Spotify connection works');
-			else toasts.error('Spotify test failed', testResult.error);
-		} catch (err) {
-			toasts.error('Spotify test failed', errorMessage(err));
-		} finally {
-			testing = false;
-		}
 	}
 
 	const s = $derived(status.data);
@@ -75,13 +82,13 @@
 		<button
 			type="button"
 			class="btn btn-secondary"
-			onclick={test}
-			disabled={testing || !s?.connected}
+			onclick={() => test.mutate()}
+			disabled={test.isPending || !s?.connected}
 		>
-			{#if testing}<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />{:else}<PlugZap
-					class="size-4"
+			{#if test.isPending}<LoaderCircle
+					class="size-4 animate-spin"
 					aria-hidden="true"
-				/>{/if}
+				/>{:else}<PlugZap class="size-4" aria-hidden="true" />{/if}
 			Test connection
 		</button>
 		<button type="button" class="btn btn-primary" onclick={authorize} disabled={authorizing}>
@@ -94,8 +101,10 @@
 	{/snippet}
 </PageHeader>
 
-{#if status.error && !s}
-	<div class="card"><ErrorState message={status.error} onretry={() => status.refetch()} /></div>
+{#if status.isError && !s}
+	<div class="card">
+		<ErrorState message={errorMessage(status.error)} onretry={() => manual.run()} />
+	</div>
 {:else if !s}
 	<div class="card flex flex-col gap-3 p-6">
 		{#each { length: 6 }, i (i)}<Skeleton class="h-6" />{/each}
@@ -108,10 +117,10 @@
 				<button
 					type="button"
 					class="btn btn-ghost btn-sm"
-					onclick={() => status.refetch()}
-					disabled={status.loading}
+					onclick={() => manual.run()}
+					disabled={manual.active}
 				>
-					<RefreshCw class={['size-4', status.loading && 'animate-spin']} aria-hidden="true" /> Refresh
+					<RefreshCw class={['size-4', manual.active && 'animate-spin']} aria-hidden="true" /> Refresh
 				</button>
 			</div>
 			<dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[12rem_1fr]">

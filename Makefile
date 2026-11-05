@@ -119,3 +119,7 @@ prod-up: ## Pull images and start the production stack
 .PHONY: prod-import
 prod-import: ## Run the Directus importer against production
 	$(PROD) --profile tools run --rm importer
+
+.PHONY: e2e
+e2e: ## Run Playwright end-to-end tests against the dev stack (docker compose up first)
+	docker compose --profile e2e run --rm e2e

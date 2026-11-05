@@ -18,7 +18,7 @@
 		} catch {
 			list = [];
 		}
-		return [...new Set([...list, 'America/Edmonton', 'UTC'])].sort();
+		return [...new Set([...list, 'UTC'])].sort();
 	})();
 
 	let draft = $state('');
@@ -100,7 +100,7 @@
 				id={inputId}
 				class="input max-w-sm flex-1"
 				list="{inputId}-zones"
-				placeholder="Search, e.g. America/Edmonton"
+				placeholder="Search, e.g. Europe/Berlin"
 				autocomplete="off"
 				spellcheck="false"
 				bind:value={draft}

@@ -166,7 +166,7 @@
 		</form>
 		{#if zoneError}
 			<p id="tz-error" class="mt-1 text-xs text-ink-soft">
-				Pick a zone from the list, e.g. America/Edmonton.
+				Pick a zone from the list, e.g. Europe/Berlin.
 			</p>
 		{/if}
 		{#if zone.override}

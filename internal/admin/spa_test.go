@@ -97,14 +97,14 @@ func TestAllowed(t *testing.T) {
 }
 
 func TestPartyAllowed(t *testing.T) {
-	prod := &Authenticator{parties: []string{"https://listening.baoopn.com"}}
+	prod := &Authenticator{parties: []string{"https://listening.example.com"}}
 	dev := &Authenticator{parties: []string{"http://127.0.0.1:8080"}, allowLoopback: true}
 	cases := []struct {
 		a    *Authenticator
 		azp  string
 		want bool
 	}{
-		{prod, "https://listening.baoopn.com", true},
+		{prod, "https://listening.example.com", true},
 		{prod, "http://localhost:5175", false},
 		{prod, "https://evil.example", false},
 		{prod, "", true},

@@ -12,7 +12,11 @@ Read `docs/architecture.md` first; the admin API contract is `docs/admin-api.md`
 - Config lives in env vars only (`internal/config`); document every new one in `.env.example` and
   in all three compose files.
 - `.env` holds real local secrets: read/write is allowed, but never commit it or print its values.
-- Deploy: push to `main` → GitHub Actions → GHCR → Coolify (server sr2). See `docs/deployment.md`.
+- **Never push to `main`.** Every change goes through a branch + pull request (`gh pr create`);
+  CI must be green before merging (squash or rebase). Merging the PR deploys: GitHub Actions →
+  GHCR → Coolify. Direct pushes are blocked locally (`.githooks/pre-push`, enable with
+  `git config core.hooksPath .githooks`) and are never deployed (gate in `release.yml`).
+  See `docs/deployment.md`.
 
 ---
 

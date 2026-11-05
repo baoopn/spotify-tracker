@@ -209,7 +209,7 @@ Public (no auth): `GET /api/v1/playlists/recent?limit=5` → `{ data: RecentPlay
 ### Stale browser time-zone data
 
 Browsers bundle their own copy of the IANA database (ICU), which can lag
-real-world rule changes (e.g. Alberta moving to permanent UTC−6 in 2026).
+real-world rule changes (e.g. a region abolishing or adopting DST).
 `GET /api/v1/timezone?tz=<IANA>` (public, cached 5 min) returns the server's
 current view: `{ tz, abbreviation, offset_minutes, offset: "-06:00", now, source }`.
 Clients compare it with `Intl` for the same zone; if they disagree, they format

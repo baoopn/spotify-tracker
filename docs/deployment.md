@@ -13,6 +13,14 @@ their named volumes. No external database is needed.
 
 ## CI/CD (GitHub Actions)
 
+**Workflow: pull requests only.** `main` is updated exclusively by merging a
+PR with green CI. GitHub rulesets / branch protection need GitHub Pro for
+private repos on personal accounts, so this is enforced by (1) a deploy gate
+in `release.yml` — a commit on `main` that did not come from a merged PR is
+built and tested but **never deployed** — and (2) a local pre-push hook
+(`git config core.hooksPath .githooks`) that refuses pushes to `main`. With
+GitHub Pro or a public repo, add a ruleset requiring PRs + the CI checks.
+
 - **`ci.yml`** runs on PRs and on `main`. Go: generated-code drift check, `go mod tidy`
   check, golangci-lint, race tests, build. SPA: svelte-check, eslint, build.
   It also validates all compose files and does a Docker build on PRs.
@@ -29,23 +37,23 @@ Repository settings required:
 | Kind | Name | Value |
 |---|---|---|
 | Secret | `COOLIFY_TOKEN` | Coolify API token (Keys & Tokens → API tokens, *deploy* + *write* scope) |
-| Variable | `COOLIFY_URL` | `https://coolify.baoopn.com` |
+| Variable | `COOLIFY_URL` | `https://coolify.example.com` |
 | Variable | `COOLIFY_RESOURCE_UUID` | UUID of the spotify-tracker application in Coolify |
 
 Rollback: re-run an older successful `Release & deploy` run, or set
 `IMAGE_TAG` to an older `sha-…` in Coolify and redeploy.
 
-## Coolify (server `sr2`)
+## Coolify
 
 1. **GHCR access.** If the package is private, add a registry login for
-   `ghcr.io` on the sr2 server (Coolify → Servers → sr2 → Docker registries)
+   `ghcr.io` on the target server (Coolify → Servers → *your server* → Docker registries)
    with a read-only PAT (`read:packages`).
 2. **Create the resource.** Project → Environment → *New resource* → *Docker
    Compose* (from the Git repository `baoopn/spotify-tracker`, branch `main`),
-   Docker Compose location `/docker-compose.coolify.yml`, destination server **sr2**.
+   Docker Compose location `/docker-compose.coolify.yml`, destination server of your choice.
 3. **Domain.** On the `api` service, set the domain, e.g.
-   `https://listening.baoopn.com` (the whole project: `/`, `/api`, `/admin`).
-   Traefik terminates TLS. The DNS record must point at the sr2 server.
+   `https://listening.example.com` (the whole project: `/`, `/api`, `/admin`).
+   Traefik terminates TLS. The DNS record must point at that server.
 4. **Environment variables.** Coolify generates `SERVICE_*`. Set:
    `SECRETS_KEY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`
    (+ `SPOTIFY_REFRESH_TOKEN`, `SPOTIFY_AUTHORIZED_AT` to migrate the current

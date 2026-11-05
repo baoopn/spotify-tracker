@@ -64,8 +64,7 @@ LABEL org.opencontainers.image.title="spotify-tracker" \
 COPY --from=build /out/ /usr/local/bin/
 
 # Use the Go toolchain's IANA tz database instead of the base image's
-# /usr/share/zoneinfo, which lags real-world rule changes (e.g. Alberta's
-# permanent UTC-6). Go reads ZONEINFO before the system database.
+# /usr/share/zoneinfo, which can lag recent real-world rule changes. Go reads ZONEINFO before the system database.
 COPY --from=build /tz/zoneinfo.zip /usr/local/share/zoneinfo.zip
 ENV ZONEINFO=/usr/local/share/zoneinfo.zip
 

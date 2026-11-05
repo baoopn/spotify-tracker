@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,21 +80,29 @@ func parseRange(r *http.Request) (domain.Range, error) {
 // GET /api/v1/now-playing
 func (h *Handler) nowPlaying(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if body, err := h.rdb.Get(r.Context(), redisx.KeyNowPlaying).Bytes(); err == nil && json.Valid(body) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"data":%s}`+"\n", body)
-		return
-	}
-	np, err := h.store.NowPlaying(r.Context())
-	if errors.Is(err, domain.ErrNotFound) {
-		writeJSON(w, http.StatusOK, itemResponse[*domain.NowPlaying]{Data: nil})
-		return
-	}
+	body, err := h.nowPlayingJSON(r.Context())
 	if err != nil {
 		h.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, itemResponse[domain.NowPlaying]{Data: np})
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{"data":%s}`+"\n", body) //nolint:gosec // JSON produced by our own code
+}
+
+// nowPlayingJSON returns the current snapshot as JSON: the Redis copy kept
+// by the tracker, else the database row, else null (nothing played yet).
+func (h *Handler) nowPlayingJSON(ctx context.Context) ([]byte, error) {
+	if body, err := h.rdb.Get(ctx, redisx.KeyNowPlaying).Bytes(); err == nil && json.Valid(body) {
+		return body, nil
+	}
+	np, err := h.store.NowPlaying(ctx)
+	if errors.Is(err, domain.ErrNotFound) {
+		return []byte("null"), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(np)
 }
 
 // GET /api/v1/now-playing/stream — Server-Sent Events of now-playing updates.
@@ -116,6 +125,9 @@ func (h *Handler) nowPlayingStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	// Send the headers now: until the first flush nothing reaches the client,
+	// which would treat the stream as dead and fall back to polling.
+	flusher.Flush()
 
 	send := func(event string, data []byte) bool {
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
@@ -125,10 +137,15 @@ func (h *Handler) nowPlayingStream(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	if body, err := h.rdb.Get(ctx, redisx.KeyNowPlaying).Bytes(); err == nil {
-		if !send("now-playing", body) {
-			return
-		}
+	// Always start with the current snapshot (null when nothing has played),
+	// also when the Redis copy has expired because nothing is playing.
+	body, err := h.nowPlayingJSON(ctx)
+	if err != nil {
+		h.log.WarnContext(ctx, "now-playing snapshot for stream failed", logging.Err(err))
+		body = []byte("null")
+	}
+	if !send("now-playing", body) {
+		return
 	}
 
 	ch := sub.Channel()

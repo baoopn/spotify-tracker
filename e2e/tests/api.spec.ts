@@ -94,3 +94,24 @@ test('pages carry security headers', async ({ request }) => {
 		expect(h['x-content-type-options'], path).toBe('nosniff');
 	}
 });
+
+test('live stream sends the current snapshot immediately (even when idle)', async ({ page }) => {
+	await page.goto('/api/healthz');
+	const first = await page.evaluate(
+		() =>
+			new Promise<string>((resolve) => {
+				const es = new EventSource('/api/v1/now-playing/stream');
+				const timer = setTimeout(() => {
+					es.close();
+					resolve('timeout');
+				}, 5_000);
+				es.addEventListener('now-playing', (e) => {
+					clearTimeout(timer);
+					es.close();
+					resolve(`event:${(e as MessageEvent<string>).data.slice(0, 1)}`);
+				});
+			})
+	);
+	// JSON object or null: either way it arrives right away.
+	expect(first).toMatch(/^event:[{n]/);
+});

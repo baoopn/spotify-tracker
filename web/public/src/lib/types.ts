@@ -1,6 +1,12 @@
 // Public API (/api/v1) response shapes.
 
-export type Artist = { id: string; name: string; uri?: string; external_url?: string };
+export type Artist = {
+	id: string;
+	name: string;
+	uri?: string;
+	external_url?: string;
+	image_url?: string;
+};
 
 export type Album = {
 	id: string;

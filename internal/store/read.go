@@ -51,7 +51,7 @@ func (q *Queries) artistsFor(ctx context.Context, trackIDs []string) (map[string
 		return out, nil
 	}
 	rows, err := q.db.Query(ctx, `
-		SELECT ta.track_id, a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, '')
+		SELECT ta.track_id, a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, ''), COALESCE(a.image_url, '')
 		FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
 		WHERE ta.track_id = ANY($1)
 		ORDER BY ta.track_id, ta.position`, trackIDs)
@@ -62,7 +62,7 @@ func (q *Queries) artistsFor(ctx context.Context, trackIDs []string) (map[string
 	for rows.Next() {
 		var tid string
 		var a domain.Artist
-		if err := rows.Scan(&tid, &a.ID, &a.Name, &a.URI, &a.ExternalURL); err != nil {
+		if err := rows.Scan(&tid, &a.ID, &a.Name, &a.URI, &a.ExternalURL, &a.ImageURL); err != nil {
 			return nil, err
 		}
 		out[tid] = append(out[tid], a)
@@ -211,7 +211,7 @@ func (q *Queries) TopTracks(ctx context.Context, r domain.Range, limit int) ([]d
 // TopArtists ranks artists by play count within the range.
 func (q *Queries) TopArtists(ctx context.Context, r domain.Range, limit int) ([]domain.TopArtist, error) {
 	rows, err := q.db.Query(ctx, `
-		SELECT a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, ''),
+		SELECT a.id, a.name, COALESCE(a.uri, ''), COALESCE(a.external_url, ''), COALESCE(a.image_url, ''),
 			SUM(h.replay_count)::bigint AS plays, MAX(h.played_at) AS last_played
 		FROM listening_history h
 		JOIN track_artists ta ON ta.track_id = h.track_id
@@ -225,7 +225,7 @@ func (q *Queries) TopArtists(ctx context.Context, r domain.Range, limit int) ([]
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.TopArtist, error) {
 		var ta domain.TopArtist
-		err := row.Scan(&ta.Artist.ID, &ta.Artist.Name, &ta.Artist.URI, &ta.Artist.ExternalURL,
+		err := row.Scan(&ta.Artist.ID, &ta.Artist.Name, &ta.Artist.URI, &ta.Artist.ExternalURL, &ta.Artist.ImageURL,
 			&ta.Plays, &ta.LastPlayed)
 		return ta, err
 	})

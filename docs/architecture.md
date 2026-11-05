@@ -74,6 +74,15 @@ ISRCs unknown to Soundcharts are marked `unavailable`.
   configured recipients 14/7/3/1 days before expiry, on expiry, and when
   Spotify answers `invalid_grant` (de-duplicated through Redis).
 
+## Artist images
+
+The API fills `artists.image_url` in the background (`internal/artistimages`)
+from `GET /artists/{id}`. Every minute it looks up to 25 artists that have
+never been checked (most recently played first), 2 s apart, then re-checks
+each one every 30 days. A 429 pauses it for `Retry-After`. A refused lookup or
+an artist with no image keeps any image stored earlier. Clients fall back to
+the artist's initial when there is no image.
+
 ## Admin dashboard
 
 SvelteKit SPA built to static files and embedded with `go:embed`, served at

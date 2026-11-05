@@ -1,5 +1,6 @@
 <script lang="ts">
 	import OutLink from '#lib/components/OutLink.svelte';
+	import ArtistAvatar from '#lib/components/ArtistAvatar.svelte';
 	import { ArrowDown, ArrowUp, ExternalLink, MicVocal } from '@lucide/svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import SearchInput from '#lib/components/SearchInput.svelte';
@@ -124,10 +125,7 @@
 						<tr>
 							<td>
 								<div class="flex items-center gap-3">
-									<span
-										class="grid size-9 shrink-0 place-items-center rounded-full bg-spot-select text-sm font-semibold text-on-spot"
-										aria-hidden="true">{row.artist.name.slice(0, 1).toUpperCase()}</span
-									>
+									<ArtistAvatar name={row.artist.name} src={row.artist.image_url} />
 									<span class="font-medium text-fg">{row.artist.name}</span>
 									{#if row.artist.external_url}
 										<OutLink

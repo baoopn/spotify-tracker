@@ -2,12 +2,21 @@
 	import Sidebar from '#lib/components/shell/Sidebar.svelte';
 	import TopBar from '#lib/components/shell/TopBar.svelte';
 	import AuthScreen from '#lib/components/shell/AuthScreen.svelte';
+	import { useQueryClient } from '@tanstack/svelte-query';
 	import { auth, currentPath, navigateTo } from '#lib/auth.svelte.js';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
 
 	let sidebarOpen = $state(false);
+	const queryClient = useQueryClient();
+
+	// Queries only exist while signed in (children render behind the gate below);
+	// drop cached admin data as soon as the session is gone or rejected.
+	$effect(() => {
+		if (auth.status === 'signed-in' || auth.status === 'checking') return;
+		queryClient.clear();
+	});
 
 	// Auth guard: no Clerk session -> sign-in page, remembering where we were.
 	$effect(() => {

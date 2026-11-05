@@ -17,41 +17,34 @@
 		musicalKey,
 		num
 	} from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { qk, queries } from '#lib/queries.js';
 	import { toasts } from '#lib/toast.svelte.js';
-	import type { TrackAdminDetail } from '#lib/types.js';
 
-	let {
-		trackId = $bindable(null),
-		onchanged
-	}: { trackId?: string | null; onchanged?: () => void } = $props();
+	let { trackId = $bindable(null) }: { trackId?: string | null } = $props();
 
-	const detail = new Query<TrackAdminDetail>();
-	let enriching = $state(false);
-
-	$effect(() => {
-		const id = trackId;
-		if (!id) return;
-		void detail.run((signal) => api.track(id, { signal }));
-		return () => detail.abort();
-	});
+	const queryClient = useQueryClient();
+	// Enabled (and polled) only while the drawer is open.
+	const detail = createQuery(() => queries.track(trackId));
 
 	const t = $derived(detail.data && detail.data.id === trackId ? detail.data : undefined);
 	const e = $derived(t?.enrichment ?? null);
 
-	async function reenrich() {
-		if (!trackId) return;
-		enriching = true;
-		try {
-			await api.enrichTrack(trackId);
+	const enrich = createMutation(() => ({
+		mutationFn: (id: string) => api.enrichTrack(id),
+		onSuccess: () => {
 			toasts.success('Re-enrichment queued', 'The track was reset to pending.');
-			await detail.refetch();
-			onchanged?.();
-		} catch (err) {
-			toasts.error('Could not queue enrichment', errorMessage(err));
-		} finally {
-			enriching = false;
-		}
+			// Detail + every tracks list, and the overview's enrichment counts.
+			return Promise.all([
+				queryClient.invalidateQueries({ queryKey: qk.tracks.all }),
+				queryClient.invalidateQueries({ queryKey: qk.overview })
+			]);
+		},
+		onError: (err) => toasts.error('Could not queue enrichment', errorMessage(err))
+	}));
+
+	function reenrich() {
+		if (trackId) enrich.mutate(trackId);
 	}
 </script>
 
@@ -65,8 +58,8 @@
 	variant="drawer"
 	title={t?.name ?? 'Track'}
 >
-	{#if detail.error && !t}
-		<ErrorState message={detail.error} onretry={() => detail.refetch()} />
+	{#if detail.isError && !t}
+		<ErrorState message={errorMessage(detail.error)} onretry={() => detail.refetch()} />
 	{:else if !t}
 		<div class="flex flex-col gap-4" aria-busy="true">
 			<div class="flex gap-4">
@@ -194,8 +187,13 @@
 
 	{#snippet footer()}
 		<button type="button" class="btn btn-secondary" onclick={() => (trackId = null)}>Close</button>
-		<button type="button" class="btn btn-primary" onclick={reenrich} disabled={enriching || !t}>
-			{#if enriching}<LoaderCircle
+		<button
+			type="button"
+			class="btn btn-primary"
+			onclick={reenrich}
+			disabled={enrich.isPending || !t}
+		>
+			{#if enrich.isPending}<LoaderCircle
 					class="size-4 animate-spin"
 					aria-hidden="true"
 				/>{:else}<RefreshCw class="size-4" aria-hidden="true" />{/if}

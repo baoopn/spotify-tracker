@@ -79,7 +79,10 @@ make test lint # quality gates (same as CI)
 
 `range` is `7d`, `30d` (default), `90d`, `180d`, `365d` or `all`. Responses are
 `{"data": …}`; errors are `{"error": {"code", "message"}}`. Stats are cached in
-Redis (`CACHE_TTL`, default 5 min). CORS is limited to `CORS_ALLOWED_ORIGINS`
+Redis (`CACHE_TTL`, default 5 min). The cache is dropped whenever a play is
+recorded or a track is enriched, so it never serves outdated data. Responses
+are sent with `Cache-Control: no-cache`, and tracks still being analysed with
+`no-store`. CORS is limited to `CORS_ALLOWED_ORIGINS`
 and `/api/v1` is rate limited per client IP.
 
 ## Documentation

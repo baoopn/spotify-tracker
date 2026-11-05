@@ -185,6 +185,9 @@ func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, res Recor
 	if res.HistoryCreated && pb.Context != nil && pb.Context.Type == "playlist" {
 		s.refreshPlaylist(pb.Context)
 	}
+	if res.HistoryCreated || res.ReplayIncremented {
+		s.InvalidateCache(ctx)
+	}
 	s.publishNowPlaying(ctx)
 
 	if res.HistoryCreated {
@@ -235,6 +238,7 @@ func (s *Service) SubmitFeatures(ctx context.Context, trackID string, found bool
 		status = domain.EnrichmentUnavailable
 	}
 	observability.EnrichmentResults.WithLabelValues(status).Inc()
+	s.InvalidateCache(ctx)
 	return nil
 }
 
@@ -247,6 +251,7 @@ func (s *Service) ReportFailure(ctx context.Context, trackID, msg string) (bool,
 	observability.EnrichmentResults.WithLabelValues(domain.EnrichmentFailed).Inc()
 	if exhausted {
 		s.log.WarnContext(ctx, "enrichment attempts exhausted", slog.String("track_id", trackID))
+		s.InvalidateCache(ctx)
 	}
 	return exhausted, nil
 }
@@ -351,6 +356,7 @@ func (s *Service) refreshPlaylist(pc *domain.PlaybackContext) {
 			s.log.WarnContext(ctx, "store playlist failed", slog.String("playlist_id", id), logging.Err(err))
 			return
 		}
+		s.InvalidateCache(ctx)
 		s.log.InfoContext(ctx, "playlist metadata stored", slog.String("playlist_id", id),
 			slog.String("name", pl.Name), slog.Bool("available", pl.Available))
 	}()
@@ -371,5 +377,17 @@ func (s *Service) RefreshPlaylist(ctx context.Context, id string) (domain.Playli
 	if pl.ExternalURL == "" {
 		pl.ExternalURL = "https://open.spotify.com/playlist/" + id
 	}
-	return pl, s.store.UpsertPlaylist(ctx, pl)
+	if err := s.store.UpsertPlaylist(ctx, pl); err != nil {
+		return pl, err
+	}
+	s.InvalidateCache(ctx)
+	return pl, nil
+}
+
+// InvalidateCache makes every cached public API response stale after
+// listening or enrichment data changed, so clients always see current stats.
+func (s *Service) InvalidateCache(ctx context.Context) {
+	if err := redisx.BumpCache(ctx, s.rdb); err != nil {
+		s.log.WarnContext(ctx, "bump response cache failed", logging.Err(err))
+	}
 }

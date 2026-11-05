@@ -1,21 +1,15 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { ListMusic } from '@lucide/svelte';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
 	import AlbumArt from '../AlbumArt.svelte';
 	import RelTime from '../RelTime.svelte';
 	import Skeleton from '../Skeleton.svelte';
-	import { api } from '#lib/api.js';
+	import { errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
-	import type { RecentPlaylist } from '#lib/types.js';
+	import { queries } from '#lib/queries.js';
 
-	const recent = new Query<RecentPlaylist[]>();
-
-	onMount(() => {
-		void recent.run((signal) => api.recentPlaylists(5, { signal }).then((r) => r.data));
-		return () => recent.abort();
-	});
+	const recent = createQuery(() => queries.recentPlaylists(5));
 </script>
 
 <section aria-labelledby="rp-title">
@@ -26,8 +20,10 @@
 		>
 	</div>
 
-	{#if recent.error && !recent.data}
-		<p class="text-sm text-muted" role="alert">Could not load playlists: {recent.error}</p>
+	{#if recent.isError && !recent.data}
+		<p class="text-sm text-muted" role="alert">
+			Could not load playlists: {errorMessage(recent.error)}
+		</p>
 	{:else if !recent.data}
 		<div class="flex flex-col gap-3" aria-busy="true">
 			{#each { length: 3 }, i (i)}<Skeleton class="h-10" />{/each}

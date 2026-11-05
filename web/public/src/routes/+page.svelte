@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import NowPlayingHero from '#lib/components/NowPlayingHero.svelte';
 	import RecentList from '#lib/components/RecentList.svelte';
 	import RecentPlaylists from '#lib/components/RecentPlaylists.svelte';
@@ -7,8 +8,17 @@
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
 	import { live } from '#lib/live.svelte.js';
+	import { NOW_POLL_MS, nowPlayingQuery } from '#lib/queries.js';
 
-	onMount(() => live.start());
+	const queryClient = useQueryClient();
+	onMount(() => live.start(queryClient));
+
+	// The one now-playing observer that polls, and only while the stream is down.
+	const now = createQuery(() => ({
+		...nowPlayingQuery(),
+		refetchInterval: live.polling ? NOW_POLL_MS : false
+	}));
+	const lastUpdated = $derived(now.dataUpdatedAt > 0 ? new Date(now.dataUpdatedAt) : null);
 
 	// Honest connection status; the countdown reads the 1 s clock only while waiting.
 	const status = $derived.by(() => {
@@ -63,13 +73,13 @@
 			></span>
 			{status}
 		</p>
-		{#if live.lastUpdated}
+		{#if lastUpdated}
 			<p>
 				Last updated
 				<time
-					datetime={live.lastUpdated.toISOString()}
-					title={zone.correctionNote ?? zone.dateTime(live.lastUpdated)}
-					>{zone.clockTime(live.lastUpdated)}</time
+					datetime={lastUpdated.toISOString()}
+					title={zone.correctionNote ?? zone.dateTime(lastUpdated)}
+					>{zone.clockTime(lastUpdated)}</time
 				>
 			</p>
 		{/if}

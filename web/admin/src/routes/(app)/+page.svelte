@@ -9,22 +9,16 @@
 	import ServiceList from '#lib/components/overview/ServiceList.svelte';
 	import EnrichmentProgress from '#lib/components/overview/EnrichmentProgress.svelte';
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
-	import { api } from '#lib/api.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { compact, date, hours } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
-	import type { Overview } from '#lib/types.js';
+	import { queries } from '#lib/queries.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
-	const overview = new Query<Overview>();
-
-	$effect(() => {
-		void overview.run((signal) => api.overview({ signal }));
-		// Refresh counters/health every minute; now-playing is live via SSE.
-		const id = setInterval(() => void overview.refetch(), 60_000);
-		return () => {
-			clearInterval(id);
-			overview.abort();
-		};
-	});
+	// Counters/health poll (see queries.ts); now-playing is live via SSE.
+	const overview = createQuery(() => queries.overview());
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => overview.refetch());
 
 	const d = $derived(overview.data);
 </script>
@@ -40,18 +34,18 @@
 		<button
 			type="button"
 			class="btn btn-secondary btn-sm"
-			onclick={() => overview.refetch()}
-			disabled={overview.loading}
+			onclick={() => manual.run()}
+			disabled={manual.active}
 		>
-			<RefreshCw class={['size-4', overview.loading && 'animate-spin']} aria-hidden="true" />
+			<RefreshCw class={['size-4', manual.active && 'animate-spin']} aria-hidden="true" />
 			Refresh
 		</button>
 	{/snippet}
 </PageHeader>
 
-{#if overview.error && !d}
+{#if overview.isError && !d}
 	<div class="card-print">
-		<ErrorState message={overview.error} onretry={() => overview.refetch()} />
+		<ErrorState message={errorMessage(overview.error)} onretry={() => manual.run()} />
 	</div>
 {:else}
 	<div class="grid items-start gap-8 lg:grid-cols-3">

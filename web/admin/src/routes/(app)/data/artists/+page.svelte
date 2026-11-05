@@ -9,10 +9,12 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
-	import { api } from '#lib/api.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
-	import type { ArtistRow, ArtistSort, OffsetList, SortOrder } from '#lib/types.js';
+	import { queries } from '#lib/queries.js';
+	import type { ArtistSort, SortOrder } from '#lib/types.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
 	const LIMIT = 25;
 
@@ -21,13 +23,9 @@
 	let order = $state<SortOrder>('desc');
 	let offset = $state(0);
 
-	const list = new Query<OffsetList<ArtistRow>>();
-
-	$effect(() => {
-		const params = { q, sort, order, limit: LIMIT, offset };
-		void list.run((signal) => api.artists(params, { signal }));
-		return () => list.abort();
-	});
+	const list = createQuery(() => queries.artists({ q, sort, order, limit: LIMIT, offset }));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const manual = new ManualRefetch(() => list.refetch());
 
 	function setSort(s: ArtistSort) {
 		if (sort === s) order = order === 'desc' ? 'asc' : 'desc';
@@ -65,8 +63,8 @@
 </PageHeader>
 
 <div class="overflow-hidden">
-	{#if list.error && !list.data}
-		<ErrorState message={list.error} onretry={() => list.refetch()} />
+	{#if list.isError && !list.data}
+		<ErrorState message={errorMessage(list.error)} onretry={() => manual.run()} />
 	{:else if !list.data}
 		<div class="flex flex-col gap-3 p-4" aria-busy="true">
 			{#each { length: 8 }, i (i)}
@@ -80,7 +78,12 @@
 			message={q ? 'Try a different search.' : 'No artists have been recorded yet.'}
 		/>
 	{:else}
-		<div class={['overflow-x-auto transition-opacity', list.loading && 'opacity-60']}>
+		<div
+			class={[
+				'overflow-x-auto transition-opacity',
+				(list.isPlaceholderData || manual.active) && 'opacity-60'
+			]}
+		>
 			<table class="data-table">
 				<caption class="sr-only">
 					Artists, sorted by {sort}
@@ -149,7 +152,7 @@
 			{offset}
 			limit={LIMIT}
 			total={list.data.total}
-			disabled={list.loading}
+			disabled={list.isPlaceholderData}
 			onchange={(o) => (offset = o)}
 		/>
 	{/if}

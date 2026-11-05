@@ -5,31 +5,27 @@
 	import ChartCard from '#lib/components/charts/ChartCard.svelte';
 	import BarList from '#lib/components/charts/BarList.svelte';
 	import AudioFeatureBars from '#lib/components/charts/AudioFeatureBars.svelte';
-	import { api } from '#lib/api.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { errorMessage } from '#lib/api.js';
 	import { artistNames, num, percent } from '#lib/format.js';
-	import { Query } from '#lib/query.svelte.js';
-	import type { AudioProfile, GenreStat, StatsRange, TopArtist, TopTrack } from '#lib/types.js';
+	import { queries } from '#lib/queries.js';
+	import type { StatsRange } from '#lib/types.js';
+	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 
 	let range = $state<StatsRange>('30d');
 
-	const tracks = new Query<TopTrack[]>();
-	const artists = new Query<TopArtist[]>();
-	const genres = new Query<GenreStat[]>();
-	const profile = new Query<AudioProfile>();
-
-	$effect(() => {
-		const r = range;
-		void tracks.run((signal) => api.topTracks(r, 10, { signal }).then((x) => x.data));
-		void artists.run((signal) => api.topArtists(r, 10, { signal }).then((x) => x.data));
-		void genres.run((signal) => api.genres(r, 10, { signal }).then((x) => x.data));
-		void profile.run((signal) => api.audioProfile(r, { signal }).then((x) => x.data));
-		return () => {
-			tracks.abort();
-			artists.abort();
-			genres.abort();
-			profile.abort();
-		};
-	});
+	const tracks = createQuery(() => queries.topTracks(range, 10));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const tracksManual = new ManualRefetch(() => tracks.refetch());
+	const artists = createQuery(() => queries.topArtists(range, 10));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const artistsManual = new ManualRefetch(() => artists.refetch());
+	const genres = createQuery(() => queries.genres(range, 10));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const genresManual = new ManualRefetch(() => genres.refetch());
+	const profile = createQuery(() => queries.audioProfile(range));
+	// Dim/spin only for this (user-triggered) refetch, never for background polls.
+	const profileManual = new ManualRefetch(() => profile.refetch());
 
 	const ranges = [
 		{ value: '7d', label: '7d' },
@@ -53,10 +49,14 @@
 	</div>
 
 	<div class="grid gap-4 lg:grid-cols-2">
-		<ChartCard title="Top tracks" subtitle="By plays" refreshing={tracks.loading && !!tracks.data}>
+		<ChartCard
+			title="Top tracks"
+			subtitle="By plays"
+			refreshing={(tracks.isPlaceholderData || tracksManual.active) && !!tracks.data}
+		>
 			{#snippet chart()}
-				{#if tracks.error && !tracks.data}
-					<ErrorState message={tracks.error} onretry={() => tracks.refetch()} />
+				{#if tracks.isError && !tracks.data}
+					<ErrorState message={errorMessage(tracks.error)} onretry={() => tracksManual.run()} />
 				{:else if !tracks.data}
 					{@render loadingBars()}
 				{:else if tracks.data.length === 0}
@@ -79,11 +79,11 @@
 		<ChartCard
 			title="Top artists"
 			subtitle="By plays"
-			refreshing={artists.loading && !!artists.data}
+			refreshing={(artists.isPlaceholderData || artistsManual.active) && !!artists.data}
 		>
 			{#snippet chart()}
-				{#if artists.error && !artists.data}
-					<ErrorState message={artists.error} onretry={() => artists.refetch()} />
+				{#if artists.isError && !artists.data}
+					<ErrorState message={errorMessage(artists.error)} onretry={() => artistsManual.run()} />
 				{:else if !artists.data}
 					{@render loadingBars()}
 				{:else if artists.data.length === 0}
@@ -105,11 +105,11 @@
 		<ChartCard
 			title="Genres"
 			subtitle="Share of plays"
-			refreshing={genres.loading && !!genres.data}
+			refreshing={(genres.isPlaceholderData || genresManual.active) && !!genres.data}
 		>
 			{#snippet chart()}
-				{#if genres.error && !genres.data}
-					<ErrorState message={genres.error} onretry={() => genres.refetch()} />
+				{#if genres.isError && !genres.data}
+					<ErrorState message={errorMessage(genres.error)} onretry={() => genresManual.run()} />
 				{:else if !genres.data}
 					{@render loadingBars()}
 				{:else if genres.data.length === 0}
@@ -137,11 +137,11 @@
 			subtitle={profile.data
 				? `Play-weighted average of ${num(profile.data.sample_tracks)} tracks`
 				: 'Play-weighted average'}
-			refreshing={profile.loading && !!profile.data}
+			refreshing={(profile.isPlaceholderData || profileManual.active) && !!profile.data}
 		>
 			{#snippet chart()}
-				{#if profile.error && !profile.data}
-					<ErrorState message={profile.error} onretry={() => profile.refetch()} />
+				{#if profile.isError && !profile.data}
+					<ErrorState message={errorMessage(profile.error)} onretry={() => profileManual.run()} />
 				{:else if !profile.data}
 					{@render loadingBars()}
 				{:else if profile.data.sample_tracks === 0}

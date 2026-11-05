@@ -3,7 +3,12 @@
 	import BrandIcon from './BrandIcon.svelte';
 	import RelTime from './RelTime.svelte';
 	import { spotifyUrl } from '#lib/format.js';
-	import { live } from '#lib/live.svelte.js';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { recentPlaylistsQuery } from '#lib/queries.js';
+
+	// Optional section: keeps the last good list on errors; with none, it stays hidden.
+	const query = createQuery(() => recentPlaylistsQuery({ refresh: true }));
+	const playlists = $derived(query.data ?? []);
 
 	const nf = new Intl.NumberFormat(undefined);
 
@@ -14,7 +19,7 @@
 </script>
 
 <!-- Optional section: rendered only once there is at least one playlist. -->
-{#if live.playlists.length > 0}
+{#if playlists.length > 0}
 	<section aria-labelledby="playlists-heading">
 		<div class="border-b border-ink pb-3">
 			<h2
@@ -28,7 +33,7 @@
 
 		<!-- A row of square sleeves. -->
 		<ul class="mt-6 grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 lg:grid-cols-5">
-			{#each live.playlists as item (item.playlist.id)}
+			{#each playlists as item (item.playlist.id)}
 				{@const pl = item.playlist}
 				{@const href = spotifyUrl(pl.external_url)}
 				{@const name = pl.name || 'Unavailable playlist'}

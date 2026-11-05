@@ -1,10 +1,13 @@
-// Live listening state: now playing over SSE (with reconnect backoff and a
-// polling fallback) plus the recent history, refreshed on track changes.
+// Live connection: the now-playing SSE stream (with reconnect backoff) writing
+// into the TanStack Query cache, plus the server clock-skew estimate. Data and
+// its load/error state live in the query cache (see queries.ts); this module
+// only owns the stream, the connection status and the track-change invalidation.
 
-import { API, errorMessage, fetchHistory, fetchNowPlaying, fetchRecentPlaylists } from './api';
-import type { HistoryEntry, NowPlaying, RecentPlaylist } from './types';
+import { hashKey, type QueryCacheNotifyEvent, type QueryClient } from '@tanstack/svelte-query';
+import { API } from './api';
+import { isAnalysing, queryKeys } from './queries';
+import type { NowPlaying, TrackDetail } from './types';
 
-export type LoadStatus = 'loading' | 'ready' | 'error';
 /**
  * connecting:   first stream connection pending (bounded by CONNECT_TIMEOUT_MS)
  * live:         stream open
@@ -13,25 +16,22 @@ export type LoadStatus = 'loading' | 'ready' | 'error';
  */
 export type Connection = 'connecting' | 'live' | 'reconnecting' | 'polling';
 
-const HISTORY_LIMIT = 6;
-const PLAYLIST_LIMIT = 5;
-const POLL_MS = 10_000;
-const HISTORY_REFRESH_MS = 60_000;
 /** The stream sends about every 3 s; treat it as down after this much silence. */
 const STREAM_STALE_MS = 20_000;
 const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 /** A stream that neither opens nor errors this long counts as failed. */
 const CONNECT_TIMEOUT_MS = 10_000;
+/** The tracker records the play right around a track change; refresh again after this. */
+const PLAY_RECORDED_DELAY_MS = 4_000;
+
+const NOW_HASH = hashKey(queryKeys.nowPlaying);
 
 function isNowPlaying(v: unknown): v is NowPlaying {
 	return typeof v === 'object' && v !== null && 'is_playing' in v && 'fetched_at' in v;
 }
 
 class LiveState {
-	nowPlaying = $state<NowPlaying | null>(null);
-	nowStatus = $state<LoadStatus>('loading');
-	nowError = $state<string | null>(null);
 	/**
 	 * Estimated client-minus-server clock skew (ms): the smallest recent gap
 	 * between receiving a snapshot and its server `fetched_at`. A wrong system
@@ -40,42 +40,37 @@ class LiveState {
 	skewMs = $state(0);
 	#skewSamples: number[] = [];
 
-	history = $state<HistoryEntry[]>([]);
-	historyStatus = $state<LoadStatus>('loading');
-	historyError = $state<string | null>(null);
-
-	/** Secondary section: stays empty (hidden) until loaded, and on errors. */
-	playlists = $state<RecentPlaylist[]>([]);
-	playlistsStatus = $state<LoadStatus>('loading');
-
 	connection = $state<Connection>('connecting');
-	lastUpdated = $state<Date | null>(null);
 	/** Client time (ms) of the next stream reconnect attempt while disconnected. */
 	retryAt = $state<number | null>(null);
 
+	/** Poll now playing over HTTP (the stream is down or unsupported). */
+	get polling(): boolean {
+		return this.connection === 'reconnecting' || this.connection === 'polling';
+	}
+
+	#client: QueryClient | null = null;
 	#source: EventSource | null = null;
 	#timers = new Set<ReturnType<typeof setTimeout>>();
-	#pollTimer: ReturnType<typeof setInterval> | null = null;
-	#historyTimer: ReturnType<typeof setInterval> | null = null;
 	#staleTimer: ReturnType<typeof setTimeout> | null = null;
 	#connectTimer: ReturnType<typeof setTimeout> | null = null;
 	#everOpen = false;
 	#attempt = 0;
 	#running = false;
-	#historyAbort: AbortController | null = null;
-	#playlistsAbort: AbortController | null = null;
+	/** Track id of the last snapshot seen; undefined before the first one. */
+	#trackId: string | null | undefined = undefined;
 
-	/** Start live updates. Returns a cleanup function. */
-	start(): () => void {
+	/** Start the stream, writing into `client`'s cache. Returns a cleanup function. */
+	start(client: QueryClient): () => void {
 		if (this.#running) return () => {};
 		this.#running = true;
+		this.#client = client;
 
-		void this.refreshNow();
-		void this.refreshHistory();
-		this.#historyTimer = setInterval(() => void this.refreshHistory(), HISTORY_REFRESH_MS);
+		// Every snapshot, from the stream (setQueryData) or HTTP (fetch/poll),
+		// lands here: sample the skew and react to track changes.
+		const unsubscribe = client.getQueryCache().subscribe((ev) => this.#onCacheEvent(ev));
 
 		if (typeof EventSource === 'undefined') {
-			this.#startPolling();
 			this.connection = 'polling';
 		} else {
 			this.#connect();
@@ -83,7 +78,6 @@ class LiveState {
 
 		const onVisible = () => {
 			if (document.visibilityState !== 'visible') return;
-			void this.refreshHistory();
 			if (!this.#source && typeof EventSource !== 'undefined') {
 				this.#attempt = 0;
 				this.#connect();
@@ -93,6 +87,7 @@ class LiveState {
 
 		return () => {
 			document.removeEventListener('visibilitychange', onVisible);
+			unsubscribe();
 			this.#stop();
 		};
 	}
@@ -100,59 +95,13 @@ class LiveState {
 	/** Retry everything after an error (button in the UI). */
 	retry(): void {
 		this.#attempt = 0;
-		void this.refreshNow();
-		void this.refreshHistory();
+		const client = this.#client;
+		if (client) {
+			for (const queryKey of [queryKeys.nowPlaying, queryKeys.historyAll, queryKeys.playlistsAll]) {
+				void client.refetchQueries({ queryKey, type: 'active' }, { cancelRefetch: false });
+			}
+		}
 		if (this.#running && !this.#source && typeof EventSource !== 'undefined') this.#connect();
-	}
-
-	async refreshNow(): Promise<void> {
-		try {
-			this.#accept(await fetchNowPlaying());
-			// Stream down but HTTP works: be honest that we are polling.
-			if (this.connection === 'reconnecting') this.connection = 'polling';
-		} catch (err) {
-			// Keep showing the last good value; only surface the error with no data.
-			if (this.nowStatus !== 'ready') {
-				this.nowStatus = 'error';
-				this.nowError = errorMessage(err);
-			}
-		}
-	}
-
-	async refreshHistory(): Promise<void> {
-		void this.refreshPlaylists();
-		this.#historyAbort?.abort();
-		const ctrl = new AbortController();
-		this.#historyAbort = ctrl;
-		try {
-			const items = await fetchHistory(HISTORY_LIMIT, ctrl.signal);
-			if (ctrl.signal.aborted) return;
-			this.history = items;
-			this.historyStatus = 'ready';
-			this.historyError = null;
-		} catch (err) {
-			if (ctrl.signal.aborted) return;
-			if (this.historyStatus !== 'ready') {
-				this.historyStatus = 'error';
-				this.historyError = errorMessage(err);
-			}
-		}
-	}
-
-	/** Called with every history refresh (load, track change, every 60 s, tab visible). */
-	async refreshPlaylists(): Promise<void> {
-		this.#playlistsAbort?.abort();
-		const ctrl = new AbortController();
-		this.#playlistsAbort = ctrl;
-		try {
-			const items = await fetchRecentPlaylists(PLAYLIST_LIMIT, ctrl.signal);
-			if (ctrl.signal.aborted) return;
-			this.playlists = items;
-			this.playlistsStatus = 'ready';
-		} catch {
-			// Optional section: keep the last good list; with none, it stays hidden.
-			if (!ctrl.signal.aborted && this.playlistsStatus !== 'ready') this.playlistsStatus = 'error';
-		}
 	}
 
 	/** The server's "now" (ms since epoch) for a client instant, skew-corrected. */
@@ -160,10 +109,10 @@ class LiveState {
 		return clientNow - this.skewMs;
 	}
 
-	#accept(next: NowPlaying | null): void {
-		const prev = this.nowPlaying;
-		const prevId = prev?.track?.id ?? null;
-		const nextId = next?.track?.id ?? null;
+	#onCacheEvent(ev: QueryCacheNotifyEvent): void {
+		if (ev.type !== 'updated' || ev.action.type !== 'success') return;
+		if (ev.query.queryHash !== NOW_HASH) return;
+		const next = ev.query.state.data as NowPlaying | null | undefined;
 
 		const fetched = next ? Date.parse(next.fetched_at) : NaN;
 		if (!Number.isNaN(fetched)) {
@@ -171,16 +120,49 @@ class LiveState {
 			if (this.#skewSamples.length > 20) this.#skewSamples.shift();
 			this.skewMs = Math.min(...this.#skewSamples);
 		}
-		this.nowPlaying = next;
-		this.nowStatus = 'ready';
-		this.nowError = null;
-		this.lastUpdated = new Date();
 
-		if (this.#running && this.historyStatus !== 'loading' && prevId !== nextId) {
-			// The tracker records the play right around the change; refresh twice.
-			void this.refreshHistory();
-			this.#later(() => void this.refreshHistory(), 4_000);
+		// Stream down but HTTP works: be honest that we are polling.
+		if (!ev.action.manual && this.connection === 'reconnecting') this.connection = 'polling';
+
+		const prevId = this.#trackId;
+		const nextId = next?.track?.id ?? null;
+		this.#trackId = nextId;
+		if (this.#running && prevId !== undefined && prevId !== nextId) {
+			this.#invalidatePlays();
+			this.#later(() => this.#invalidatePlays(nextId), PLAY_RECORDED_DELAY_MS);
 		}
+	}
+
+	/** A play was (about to be) recorded: refresh everything derived from plays. */
+	#invalidatePlays(trackId?: string | null): void {
+		const client = this.#client;
+		if (!client) return;
+		void client.invalidateQueries({ queryKey: queryKeys.historyAll });
+		void client.invalidateQueries({ queryKey: queryKeys.playlistsAll });
+		void client.invalidateQueries({ queryKey: queryKeys.statsAll });
+		if (trackId) void client.invalidateQueries({ queryKey: queryKeys.track(trackId) });
+	}
+
+	/**
+	 * A frame for the same track: nudge its detail while it is still being
+	 * analysed (the 4 s poll covers the rest), so the stats show up promptly.
+	 * Enriched details are left to their normal interval.
+	 */
+	#nudgeDetail(prevId: string | null | undefined, id: string | null): void {
+		const client = this.#client;
+		if (!client || !id || id !== prevId) return;
+		const key = queryKeys.track(id);
+		const detail = client.getQueryData<TrackDetail>(key);
+		if (!isAnalysing(detail)) return;
+		if (client.getQueryState(key)?.fetchStatus === 'fetching') return;
+		void client.invalidateQueries({ queryKey: key });
+	}
+
+	#refetchNow(): void {
+		void this.#client?.refetchQueries(
+			{ queryKey: queryKeys.nowPlaying, type: 'active' },
+			{ cancelRefetch: false }
+		);
 	}
 
 	#connect(): void {
@@ -193,7 +175,6 @@ class LiveState {
 		try {
 			es = new EventSource(API.stream);
 		} catch {
-			this.#startPolling();
 			this.connection = 'polling';
 			return;
 		}
@@ -207,19 +188,23 @@ class LiveState {
 			this.#attempt = 0;
 			this.#everOpen = true;
 			this.#clearConnectTimer();
+			// Leaving 'reconnecting'/'polling' also stops the HTTP poll (refetchInterval).
 			this.connection = 'live';
-			this.#stopPolling();
 			this.#armStale();
 		};
 		es.addEventListener('now-playing', (ev) => {
 			this.connection = 'live';
 			this.#armStale();
+			let data: unknown;
 			try {
-				const data: unknown = JSON.parse((ev as MessageEvent<string>).data);
-				this.#accept(isNowPlaying(data) ? data : null);
+				data = JSON.parse((ev as MessageEvent<string>).data);
 			} catch {
-				// ignore a malformed frame; the next one will follow shortly
+				return; // ignore a malformed frame; the next one will follow shortly
 			}
+			const snapshot = isNowPlaying(data) ? data : null;
+			const prevId = this.#trackId;
+			this.#client?.setQueryData(queryKeys.nowPlaying, snapshot);
+			this.#nudgeDetail(prevId, snapshot?.track?.id ?? null);
 		});
 		// Take over reconnection ourselves (EventSource gives up on HTTP errors
 		// and retries too eagerly otherwise) and poll while disconnected.
@@ -228,9 +213,9 @@ class LiveState {
 
 	#fail(): void {
 		this.#closeSource();
+		// 'reconnecting'/'polling' switch on the now-playing refetchInterval.
 		if (this.connection !== 'polling') this.connection = 'reconnecting';
-		this.#startPolling();
-		void this.refreshNow();
+		this.#refetchNow();
 		this.#scheduleReconnect();
 	}
 
@@ -258,16 +243,6 @@ class LiveState {
 		}, STREAM_STALE_MS);
 	}
 
-	#startPolling(): void {
-		if (this.#pollTimer) return;
-		this.#pollTimer = setInterval(() => void this.refreshNow(), POLL_MS);
-	}
-
-	#stopPolling(): void {
-		if (this.#pollTimer) clearInterval(this.#pollTimer);
-		this.#pollTimer = null;
-	}
-
 	#closeSource(): void {
 		this.#clearConnectTimer();
 		if (this.#staleTimer) clearTimeout(this.#staleTimer);
@@ -287,13 +262,10 @@ class LiveState {
 	#stop(): void {
 		this.#running = false;
 		this.#closeSource();
-		this.#stopPolling();
-		if (this.#historyTimer) clearInterval(this.#historyTimer);
-		this.#historyTimer = null;
 		for (const id of this.#timers) clearTimeout(id);
 		this.#timers.clear();
-		this.#historyAbort?.abort();
-		this.#playlistsAbort?.abort();
+		this.#client = null;
+		this.#trackId = undefined;
 	}
 }
 

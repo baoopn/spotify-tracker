@@ -1,6 +1,6 @@
 <script lang="ts">
 	import BrandLogo from '../BrandLogo.svelte';
-	import { LogOut, Menu, Monitor, Moon, Palette, Sun } from '@lucide/svelte';
+	import { Globe, LogOut, Menu, Monitor, Moon, Palette, Sun } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import Popover from './Popover.svelte';
 	import ZoneNotice from '../ZoneNotice.svelte';
@@ -42,6 +42,14 @@
 	</a>
 
 	<div class="flex min-w-0 flex-1 justify-end"><ZoneNotice /></div>
+
+	<!-- The public page lives outside the admin app (site root), so this is a full navigation. -->
+	<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+	<a href="/" class="btn btn-ghost gap-2 px-2" title="Open the public listening page">
+		<Globe class="size-5" aria-hidden="true" />
+		<span class="hidden text-sm font-medium sm:inline">Public page</span>
+		<span class="sr-only sm:hidden">Public page</span>
+	</a>
 
 	<Popover label="Appearance" triggerClass="btn btn-ghost btn-icon">
 		{#snippet trigger()}

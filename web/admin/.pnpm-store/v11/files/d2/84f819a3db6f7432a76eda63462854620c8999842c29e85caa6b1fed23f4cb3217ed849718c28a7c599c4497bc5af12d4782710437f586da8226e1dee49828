@@ -1,0 +1,250 @@
+import { useDragGesture } from "../../../hooks/useDragGesture.js";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+
+//#region src/components/devPrompts/KeylessPrompt/use-drag-to-corner.ts
+const STORAGE_KEY = "clerk-keyless-prompt-corner";
+const CORNER_OFFSET = "1.25rem";
+const CORNER_OFFSET_PX = 20;
+const VELOCITY_SAMPLE_INTERVAL_MS = 10;
+const INERTIA_DECELERATION_RATE = .999;
+const SPRING_TRANSITION = `transform 350ms cubic-bezier(0.34, 1.2, 0.64, 1)`;
+const ZERO_TRANSFORM = "translate3d(0px, 0px, 0)";
+const ZERO_POINT = {
+	x: 0,
+	y: 0
+};
+function getNearestCorner(projectedTranslation, corners) {
+	let nearestCorner = "bottom-right";
+	let minDistance = Infinity;
+	for (const [corner, translation] of Object.entries(corners)) {
+		const dx = projectedTranslation.x - translation.x;
+		const dy = projectedTranslation.y - translation.y;
+		const distance = Math.sqrt(dx * dx + dy * dy);
+		if (distance < minDistance) {
+			minDistance = distance;
+			nearestCorner = corner;
+		}
+	}
+	return nearestCorner;
+}
+function getCornerStyles(corner) {
+	switch (corner) {
+		case "top-left": return {
+			top: CORNER_OFFSET,
+			left: CORNER_OFFSET
+		};
+		case "top-right": return {
+			top: CORNER_OFFSET,
+			right: CORNER_OFFSET
+		};
+		case "bottom-left": return {
+			bottom: CORNER_OFFSET,
+			left: CORNER_OFFSET
+		};
+		case "bottom-right": return {
+			bottom: CORNER_OFFSET,
+			right: CORNER_OFFSET
+		};
+	}
+}
+const VALID_CORNERS = [
+	"top-left",
+	"top-right",
+	"bottom-left",
+	"bottom-right"
+];
+function saveCornerPreference(corner) {
+	if (typeof window === "undefined") return;
+	try {
+		localStorage.setItem(STORAGE_KEY, corner);
+	} catch {}
+}
+function project(initialVelocity) {
+	return initialVelocity / 1e3 * INERTIA_DECELERATION_RATE / (1 - INERTIA_DECELERATION_RATE);
+}
+function calculateVelocity(history) {
+	if (history.length < 2) return ZERO_POINT;
+	const oldest = history[0];
+	const latest = history[history.length - 1];
+	const timeDelta = latest.timestamp - oldest.timestamp;
+	if (timeDelta === 0) return ZERO_POINT;
+	return {
+		x: (latest.position.x - oldest.position.x) / timeDelta * 1e3,
+		y: (latest.position.y - oldest.position.y) / timeDelta * 1e3
+	};
+}
+function useDragToCorner() {
+	const [corner, setCorner] = useState("bottom-right");
+	const [isDragging, setIsDragging] = useState(false);
+	const [preventClick, setPreventClick] = useState(false);
+	const [isInitialized, setIsInitialized] = useState(false);
+	const pendingCornerUpdate = useRef(null);
+	useEffect(() => {
+		if (typeof window === "undefined") {
+			setIsInitialized(true);
+			return;
+		}
+		try {
+			const stored = localStorage.getItem(STORAGE_KEY);
+			if (stored && VALID_CORNERS.includes(stored)) setCorner(stored);
+		} catch {} finally {
+			setIsInitialized(true);
+		}
+	}, []);
+	const containerRef = useRef(null);
+	const translation = useRef({
+		x: 0,
+		y: 0
+	});
+	const dragStartTranslation = useRef(ZERO_POINT);
+	const lastTimestamp = useRef(0);
+	const velocities = useRef([]);
+	const dragStartDimensions = useRef(null);
+	const setTranslation = useCallback((position) => {
+		if (!containerRef.current) return;
+		translation.current = position;
+		containerRef.current.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+	}, []);
+	const getCorners = useCallback(() => {
+		const container = containerRef.current;
+		if (!container) return {
+			"top-left": ZERO_POINT,
+			"top-right": ZERO_POINT,
+			"bottom-left": ZERO_POINT,
+			"bottom-right": ZERO_POINT
+		};
+		const triggerWidth = dragStartDimensions.current?.width ?? container.offsetWidth ?? 0;
+		const triggerHeight = dragStartDimensions.current?.height ?? container.offsetHeight ?? 0;
+		const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+		function getAbsolutePosition(c) {
+			const isRight = c.includes("right");
+			const isBottom = c.includes("bottom");
+			return {
+				x: isRight ? window.innerWidth - scrollbarWidth - CORNER_OFFSET_PX - triggerWidth : CORNER_OFFSET_PX,
+				y: isBottom ? window.innerHeight - CORNER_OFFSET_PX - triggerHeight : CORNER_OFFSET_PX
+			};
+		}
+		const base = getAbsolutePosition(corner);
+		function toRelative(c) {
+			const pos = getAbsolutePosition(c);
+			return {
+				x: pos.x - base.x,
+				y: pos.y - base.y
+			};
+		}
+		return {
+			"top-left": toRelative("top-left"),
+			"top-right": toRelative("top-right"),
+			"bottom-left": toRelative("bottom-left"),
+			"bottom-right": toRelative("bottom-right")
+		};
+	}, [corner]);
+	const animate = useCallback((cornerTranslation) => {
+		const el = containerRef.current;
+		if (!el) return;
+		const dx = cornerTranslation.translation.x - translation.current.x;
+		const dy = cornerTranslation.translation.y - translation.current.y;
+		if (Math.sqrt(dx * dx + dy * dy) < .5) {
+			saveCornerPreference(cornerTranslation.corner);
+			translation.current = ZERO_POINT;
+			el.style.transition = "";
+			el.style.transform = ZERO_TRANSFORM;
+			setPreventClick(false);
+			return;
+		}
+		const handleAnimationEnd = (e) => {
+			if (e.propertyName !== "transform") return;
+			el.removeEventListener("transitionend", handleAnimationEnd);
+			saveCornerPreference(cornerTranslation.corner);
+			if (cornerTranslation.corner === corner) {
+				translation.current = ZERO_POINT;
+				el.style.transition = "";
+				el.style.transform = ZERO_TRANSFORM;
+				setPreventClick(false);
+			} else {
+				pendingCornerUpdate.current = cornerTranslation.corner;
+				setCorner(cornerTranslation.corner);
+			}
+		};
+		el.style.transition = SPRING_TRANSITION;
+		el.addEventListener("transitionend", handleAnimationEnd);
+		setTranslation(cornerTranslation.translation);
+	}, [setTranslation, corner]);
+	useLayoutEffect(() => {
+		if (pendingCornerUpdate.current === corner) {
+			const el = containerRef.current;
+			if (el) {
+				translation.current = ZERO_POINT;
+				el.style.transition = "";
+				el.style.transform = ZERO_TRANSFORM;
+				setPreventClick(false);
+				pendingCornerUpdate.current = null;
+			}
+		}
+	}, [corner]);
+	const onPointerDown = useDragGesture({
+		onDragStart: () => {
+			const container = containerRef.current;
+			if (!container) return;
+			dragStartDimensions.current = {
+				width: container.offsetWidth,
+				height: container.offsetHeight
+			};
+			dragStartTranslation.current = translation.current;
+			velocities.current = [];
+			lastTimestamp.current = Date.now();
+			container.style.transition = "none";
+			setIsDragging(true);
+		},
+		onDrag: (offset) => {
+			const position = {
+				x: dragStartTranslation.current.x + offset.x,
+				y: dragStartTranslation.current.y + offset.y
+			};
+			setTranslation(position);
+			const now = Date.now();
+			if (now - lastTimestamp.current >= VELOCITY_SAMPLE_INTERVAL_MS) {
+				velocities.current = [...velocities.current.slice(-4), {
+					position,
+					timestamp: now
+				}];
+				lastTimestamp.current = now;
+			}
+		},
+		onDragCancel: () => {
+			velocities.current = [];
+			dragStartDimensions.current = null;
+			setIsDragging(false);
+			if (containerRef.current) containerRef.current.style.transition = "";
+		},
+		onDragEnd: () => {
+			const velocity = calculateVelocity(velocities.current);
+			const allCorners = getCorners();
+			velocities.current = [];
+			dragStartDimensions.current = null;
+			setIsDragging(false);
+			const newCorner = getNearestCorner({
+				x: translation.current.x + project(velocity.x),
+				y: translation.current.y + project(velocity.y)
+			}, allCorners);
+			setPreventClick(true);
+			animate({
+				corner: newCorner,
+				translation: allCorners[newCorner]
+			});
+		}
+	});
+	return {
+		corner,
+		isDragging,
+		cornerStyle: getCornerStyles(corner),
+		containerRef,
+		onPointerDown,
+		preventClick,
+		isInitialized
+	};
+}
+
+//#endregion
+export { useDragToCorner };
+//# sourceMappingURL=use-drag-to-corner.js.map

@@ -1,0 +1,80 @@
+import { localizationKeys } from "../../localization/localizationKeys.js";
+import { CardStateProvider } from "../../elements/contexts/index.js";
+import { Step } from "../ConfigureSSO/elements/Step.js";
+import { ConfigureSSOSkeleton } from "../ConfigureSSO/ConfigureSSOSkeleton.js";
+import { Wizard } from "../ConfigureSSO/elements/Wizard/Wizard.js";
+import { ConfigureSSOHeader } from "../ConfigureSSO/ConfigureSSOHeader.js";
+import { ConfigureDirectorySyncProvider, useConfigureDirectorySync } from "./ConfigureDirectorySyncContext.js";
+import { AttributeMappingStep } from "./steps/AttributeMappingStep.js";
+import { ConfigureStep } from "./steps/ConfigureStep.js";
+import { RoleMappingStep } from "./steps/RoleMappingStep.js";
+import { TestSyncStep } from "./steps/TestSyncStep.js";
+import React from "react";
+import { jsx, jsxs } from "@emotion/react/jsx-runtime";
+
+//#region src/components/ConfigureDirectorySync/ConfigureDirectorySyncWizard.tsx
+/**
+* The self-serve Directory Sync onboarding flow. Mirrors the ConfigureSSO
+* wizard's shape and reuses its chrome; state comes from the real
+* organization enterprise connection and its SCIM directory.
+*/
+const ConfigureDirectorySyncWizard = (props) => /* @__PURE__ */ jsx(ConfigureDirectorySyncProvider, {
+	contentRef: props.contentRef,
+	onExit: props.onExit,
+	children: /* @__PURE__ */ jsx(WizardInternal, { ...props })
+});
+const WizardInternal = ({ title }) => {
+	const { connection, directory, isLoading } = useConfigureDirectorySync();
+	const hasSsoConnection = Boolean(connection);
+	const hasDirectory = Boolean(directory);
+	const steps = React.useMemo(() => [
+		{
+			id: "configure",
+			label: localizationKeys("configureDirectorySync.stepper.configure"),
+			isComplete: () => hasSsoConnection && hasDirectory
+		},
+		{
+			id: "attributes",
+			label: localizationKeys("configureDirectorySync.stepper.attributes"),
+			isReachable: () => hasSsoConnection && hasDirectory
+		},
+		{
+			id: "test",
+			label: localizationKeys("configureDirectorySync.stepper.test"),
+			isReachable: () => hasSsoConnection && hasDirectory
+		},
+		{
+			id: "roles",
+			label: localizationKeys("configureDirectorySync.stepper.roles"),
+			isReachable: () => hasSsoConnection && hasDirectory
+		}
+	], [hasSsoConnection, hasDirectory]);
+	if (isLoading) return /* @__PURE__ */ jsx(ConfigureSSOSkeleton, {});
+	return /* @__PURE__ */ jsxs(Wizard, {
+		steps,
+		initialStepId: "configure",
+		children: [
+			/* @__PURE__ */ jsx(ConfigureSSOHeader, { title }),
+			/* @__PURE__ */ jsx(Wizard.Match, {
+				id: "configure",
+				children: /* @__PURE__ */ jsx(CardStateProvider, { children: /* @__PURE__ */ jsx(Step, { children: /* @__PURE__ */ jsx(ConfigureStep, {}) }) })
+			}),
+			/* @__PURE__ */ jsx(Wizard.Match, {
+				id: "attributes",
+				children: /* @__PURE__ */ jsx(CardStateProvider, { children: /* @__PURE__ */ jsx(Step, { children: /* @__PURE__ */ jsx(AttributeMappingStep, {}) }) })
+			}),
+			/* @__PURE__ */ jsx(Wizard.Match, {
+				id: "test",
+				children: /* @__PURE__ */ jsx(CardStateProvider, { children: /* @__PURE__ */ jsx(Step, { children: /* @__PURE__ */ jsx(TestSyncStep, {}) }) })
+			}),
+			/* @__PURE__ */ jsx(Wizard.Match, {
+				id: "roles",
+				children: /* @__PURE__ */ jsx(CardStateProvider, { children: /* @__PURE__ */ jsx(Step, { children: /* @__PURE__ */ jsx(RoleMappingStep, {}) }) })
+			})
+		]
+	});
+};
+
+//#endregion
+export { ConfigureDirectorySyncWizard };
+//# sourceMappingURL=ConfigureDirectorySyncWizard.js.map

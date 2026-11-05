@@ -1,0 +1,35 @@
+type VoidFn = () => void;
+type Subscriber = (update: VoidFn) => void | VoidFn;
+/**
+ * An object holding a value in its `current` property, e.g. a reactive value backed by `$state`.
+ */
+export type Box<T> = {
+    /**
+     * The held value.
+     */
+    current: T;
+};
+/**
+ * A {@link Box} whose `current` value is computed on each read, and that notifies the reactive
+ * contexts reading it through the given subscriber.
+ */
+export declare class ReactiveValue<T> implements Box<T> {
+    #private;
+    constructor(fn: () => T, onSubscribe: Subscriber);
+    /**
+     * Subscribes the reactive context reading it, then computes the value.
+     * @returns The value returned by the compute function.
+     */
+    get current(): T;
+}
+/**
+ * Makes all of the top-level keys of an object into $state.raw fields whose initial values
+ * are the same as in the original object. Does not mutate the original object. Provides an `update`
+ * function that _can_ (but does not have to be) be used to replace all of the object's top-level keys
+ * with the values of the new object, while maintaining the original root object's reference.
+ * @param init - The object or array whose top-level keys become the initial fields.
+ * @returns A tuple of the reactive object and the `update` function.
+ */
+export declare function createRawRef<T extends {} | Array<unknown>>(init: T): [T, (newValue: T) => void];
+export {};
+//# sourceMappingURL=containers.svelte.d.ts.map

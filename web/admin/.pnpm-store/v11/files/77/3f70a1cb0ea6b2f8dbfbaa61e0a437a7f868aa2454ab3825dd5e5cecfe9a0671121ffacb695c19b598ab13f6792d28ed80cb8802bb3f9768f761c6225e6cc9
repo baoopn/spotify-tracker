@@ -1,0 +1,18 @@
+import { useProtect } from "../../common/Gate.js";
+import { useOrganizationProfileContext } from "../../contexts/components/OrganizationProfile.js";
+
+//#region src/components/OrganizationProfile/useSecurityCapabilities.ts
+const useSecurityCapabilities = () => {
+	const { shouldShowSelfServeSSO, shouldShowSelfServeDirectorySync } = useOrganizationProfileContext();
+	const canManageConnections = useProtect({ permission: "org:sys_entconns:manage" });
+	const canManageSSOBypass = useProtect({ permission: "org:sys_entconns_sso_bypass:manage" });
+	return {
+		canConfigureSso: shouldShowSelfServeSSO && canManageConnections,
+		canConfigureDirectorySync: shouldShowSelfServeDirectorySync && canManageConnections,
+		canManageSSOBypass
+	};
+};
+
+//#endregion
+export { useSecurityCapabilities };
+//# sourceMappingURL=useSecurityCapabilities.js.map

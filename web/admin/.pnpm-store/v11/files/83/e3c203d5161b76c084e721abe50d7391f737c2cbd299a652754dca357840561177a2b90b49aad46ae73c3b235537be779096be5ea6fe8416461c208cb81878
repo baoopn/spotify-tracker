@@ -1,0 +1,23 @@
+/**
+ * @file
+ * @license @lucide/svelte v1.69.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+import type { LucideIconData, LucideIconNode } from '../types.js';
+export declare const __iconData: LucideIconData;
+/**
+ * @deprecated Access `__iconData` instead.
+ */
+export declare const __iconNode: LucideIconNode[];
+import type { LucideProps } from '../types.js';
+/**
+ * Lucide SVG icon component, renders SVG Element with children.
+ *
+ * @preview ![img](data:image/svg+xml;base64,PHN2ZyAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzAwMCIgc3R5bGU9ImJhY2tncm91bmQtY29sb3I6ICNmZmY7IGJvcmRlci1yYWRpdXM6IDJweCIKICBzdHJva2Utd2lkdGg9IjIiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogIHN0cm9rZS1saW5lam9pbj0icm91bmQiCj4KICA8cGF0aCBkPSJNMTIgMTQuMzRWMTJsOC43MS01IiAvPgogIDxwYXRoIGQ9Ik0xNi41MTEgMjEuMTQxYTIgMiAwIDAgMCAuODU0LS41MDZsNC4wMTMtNC4wMDlhMSAxIDAgMSAwLTMuMDA0LTMuMDA0bC00LjAxIDQuMDEyYTIgMiAwIDAgMC0uNTA2Ljg1NGwtLjgzNyAyLjg3YS41LjUgMCAwIDAgLjU5OS42MjZ6IiAvPgogIDxwYXRoIGQ9Ik0yMSA5LjExNFY4YTIgMiAwIDAgMC0xLTEuNzNsLTctNGEyIDIgMCAwIDAtMiAwbC03IDRBMiAyIDAgMCAwIDMgOHY4YTIgMiAwIDAgMCAxIDEuNzNsNS4wODcgMi45MDciIC8+CiAgPHBhdGggZD0iTTMuMjkgNyAxMiAxMiIgLz4KICA8cGF0aCBkPSJtNy41IDQuMjcgOSA1LjE1IiAvPgo8L3N2Zz4K) - https://lucide.dev/icons/package-pen
+ * @see https://lucide.dev/guide/packages/lucide-svelte - Documentation
+ */
+declare const PackagePen: import("svelte").Component<LucideProps, {}, "">;
+type PackagePen = ReturnType<typeof PackagePen>;
+export default PackagePen;

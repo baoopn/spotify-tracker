@@ -1,0 +1,72 @@
+import { localizationKeys } from "../../localization/localizationKeys.js";
+import { descriptors } from "../../customizables/elementDescriptors.js";
+import { Flow } from "../../customizables/Flow.js";
+import { Button, Col } from "../../customizables/index.js";
+import { useCardState } from "../../elements/contexts/index.js";
+import { Card } from "../../elements/Card/index.js";
+import { Header } from "../../elements/Header.js";
+import { handleError } from "../../utils/errorHandler.js";
+import { Form } from "../../elements/Form.js";
+import { useAfterVerification } from "./use-after-verification.js";
+import { isClerkRuntimeError } from "@clerk/shared/error";
+import React from "react";
+import { useSession } from "@clerk/shared/react";
+import { jsx, jsxs } from "@emotion/react/jsx-runtime";
+import { __internal_WebAuthnAbortService } from "@clerk/shared/internal/clerk-js/passkeys";
+
+//#region src/components/UserVerification/UVFactorTwoPasskeyCard.tsx
+const UVFactorTwoPasskeyCard = (props) => {
+	const { onShowAlternativeMethodsClicked, showAlternativeMethods } = props;
+	const { session } = useSession();
+	const { handleVerificationResponse } = useAfterVerification();
+	const card = useCardState();
+	React.useEffect(() => {
+		return () => {
+			__internal_WebAuthnAbortService.abort();
+		};
+	}, []);
+	const handlePasskeysAttempt = () => {
+		if (card.isLoading) return;
+		card.setLoading();
+		session?.verifyWithPasskey({ level: "second_factor" }).then((response) => {
+			return handleVerificationResponse(response);
+		}).catch((err) => {
+			if (isClerkRuntimeError(err) && err.code === "passkey_operation_aborted") return;
+			handleError(err, [], card.setError);
+		}).finally(() => card.setIdle());
+	};
+	return /* @__PURE__ */ jsx(Flow.Part, {
+		part: "passkey2Fa",
+		children: /* @__PURE__ */ jsxs(Card.Root, { children: [/* @__PURE__ */ jsxs(Card.Content, { children: [
+			/* @__PURE__ */ jsxs(Header.Root, { children: [/* @__PURE__ */ jsx(Header.Title, { localizationKey: localizationKeys("reverification.passkeyMfa.title") }), /* @__PURE__ */ jsx(Header.Subtitle, { localizationKey: localizationKeys("reverification.passkeyMfa.subtitle") })] }),
+			/* @__PURE__ */ jsx(Card.Alert, { children: card.error }),
+			/* @__PURE__ */ jsx(Col, {
+				elementDescriptor: descriptors.main,
+				gap: 8,
+				children: /* @__PURE__ */ jsx(Form.Root, { children: /* @__PURE__ */ jsxs(Col, {
+					gap: 3,
+					children: [/* @__PURE__ */ jsx(Button, {
+						type: "button",
+						isLoading: card.isLoading,
+						onClick: (e) => {
+							e.preventDefault();
+							handlePasskeysAttempt();
+						},
+						localizationKey: localizationKeys("reverification.passkeyMfa.blockButton__passkey"),
+						hasArrow: true
+					}), /* @__PURE__ */ jsx(Card.Action, {
+						elementId: "alternativeMethods",
+						children: showAlternativeMethods && onShowAlternativeMethodsClicked && /* @__PURE__ */ jsx(Card.ActionLink, {
+							localizationKey: localizationKeys("footerActionLink__useAnotherMethod"),
+							onClick: onShowAlternativeMethodsClicked
+						})
+					})]
+				}) })
+			})
+		] }), /* @__PURE__ */ jsx(Card.Footer, {})] })
+	});
+};
+
+//#endregion
+export { UVFactorTwoPasskeyCard };
+//# sourceMappingURL=UVFactorTwoPasskeyCard.js.map

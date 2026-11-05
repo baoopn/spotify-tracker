@@ -1,0 +1,14 @@
+import { ERROR_CODES } from "@clerk/shared/internal/clerk-js/constants";
+import { completeSignUpFlow } from "@clerk/shared/internal/clerk-js/completeSignUpFlow";
+
+//#region src/components/SignUp/util.ts
+function isSignUpPendingOAuthTransfer(signUp) {
+	if (signUp.status !== "missing_requirements") return false;
+	if (signUp.protectCheck || signUp.missingFields.some((mf) => mf === "protect_check")) return false;
+	const externalAccount = signUp.verifications?.externalAccount;
+	return externalAccount?.status === "transferable" && externalAccount.error?.code === ERROR_CODES.EXTERNAL_ACCOUNT_EXISTS;
+}
+
+//#endregion
+export { completeSignUpFlow, isSignUpPendingOAuthTransfer };
+//# sourceMappingURL=util.js.map

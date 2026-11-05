@@ -1,0 +1,47 @@
+import { localizationKeys } from "../../localization/localizationKeys.js";
+import { withCardStateProvider } from "../../elements/contexts/index.js";
+import { Wizard, useWizard } from "../../common/Wizard.js";
+import { MfaBackupCodeList } from "./MfaBackupCodeList.js";
+import { SuccessPage } from "../../elements/SuccessPage.js";
+import { AddAuthenticatorApp } from "./AddAuthenticatorApp.js";
+import { VerifyTOTP } from "./VerifyTOTP.js";
+import React from "react";
+import { jsx, jsxs } from "@emotion/react/jsx-runtime";
+
+//#region src/components/UserProfile/MfaTOTPScreen.tsx
+const MfaTOTPScreen = withCardStateProvider((props) => {
+	const { onReset } = props;
+	const wizard = useWizard();
+	const pendingTotpRef = React.useRef();
+	const verifiedTotpRef = React.useRef();
+	return /* @__PURE__ */ jsxs(Wizard, {
+		...wizard.props,
+		children: [
+			/* @__PURE__ */ jsx(AddAuthenticatorApp, {
+				title: localizationKeys("userProfile.mfaTOTPPage.title"),
+				onSuccess: wizard.nextStep,
+				onReset,
+				pendingTotpRef
+			}),
+			/* @__PURE__ */ jsx(VerifyTOTP, {
+				onSuccess: wizard.nextStep,
+				onReset,
+				onBack: wizard.prevStep,
+				verifiedTotpRef
+			}),
+			/* @__PURE__ */ jsx(SuccessPage, {
+				title: localizationKeys("userProfile.mfaTOTPPage.title"),
+				text: localizationKeys("userProfile.mfaTOTPPage.successMessage"),
+				onFinish: onReset,
+				contents: /* @__PURE__ */ jsx(MfaBackupCodeList, {
+					subtitle: localizationKeys("userProfile.backupCodePage.successSubtitle"),
+					backupCodes: verifiedTotpRef.current?.backupCodes
+				})
+			})
+		]
+	});
+});
+
+//#endregion
+export { MfaTOTPScreen };
+//# sourceMappingURL=MfaTOTPScreen.js.map

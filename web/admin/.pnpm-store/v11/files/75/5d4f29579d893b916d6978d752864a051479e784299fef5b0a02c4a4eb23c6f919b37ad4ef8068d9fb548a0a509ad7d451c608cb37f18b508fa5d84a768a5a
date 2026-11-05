@@ -1,0 +1,70 @@
+import type { TokenResource } from '@clerk/shared/types';
+import { type TokenCacheKeyJSON } from './keyResolver';
+/**
+ * Parameters for set(): the cache key, the token resolver, and an optional refresh callback.
+ */
+interface TokenCacheSetParams extends TokenCacheKeyJSON {
+    /**
+     * Callback to refresh this token before it expires.
+     * Called by the proactive refresh timer to trigger background refresh.
+     * If not provided, no refresh timer will be scheduled (e.g., for broadcast-received tokens).
+     */
+    onRefresh?: () => void;
+    /**
+     * Promise that resolves to the TokenResource.
+     * May be pending and should be awaited before accessing token data.
+     */
+    tokenResolver: Promise<TokenResource>;
+}
+/**
+ * Result from cache lookup containing the token, or its resolver while the entry is pending.
+ */
+export interface TokenCacheHit {
+    /**
+     * The resolved token value for synchronous reads.
+     * Populated after tokenResolver resolves. Check this first to avoid microtask overhead.
+     */
+    token?: TokenResource;
+    /**
+     * Promise that resolves to the TokenResource.
+     * May be pending and should be awaited when token is not populated.
+     */
+    tokenResolver: Promise<TokenResource>;
+}
+export interface TokenCache {
+    /**
+     * Removes all cached entries and clears associated timeouts.
+     * Side effects: Clears all scheduled expiration timers and empties the cache.
+     */
+    clear(): void;
+    /**
+     * Closes the BroadcastChannel connection and releases resources.
+     * Side effects: Disconnects from multi-tab synchronization channel.
+     */
+    close(): void;
+    /**
+     * Retrieves a cached token entry if it exists and is safe to use.
+     * Forces synchronous refresh if token has less than one poller interval remaining.
+     * Proactive refresh is handled by timers scheduled when tokens are cached.
+     *
+     * @param cacheKeyJSON - Object containing tokenId and optional audience to identify the cached entry
+     * @returns Result with the token or its resolver, or undefined if token is missing/expired/too close to expiration
+     */
+    get(cacheKeyJSON: TokenCacheKeyJSON): TokenCacheHit | undefined;
+    /**
+     * Stores a token entry in the cache and broadcasts to other tabs when the token resolves.
+     *
+     * @param params - TokenCacheSetParams containing tokenId, tokenResolver, and optional audience
+     * Side effects: Schedules automatic expiration cleanup, broadcasts to other tabs when token resolves
+     */
+    set(params: TokenCacheSetParams): void;
+    /**
+     * Returns the current number of cached entries.
+     *
+     * @returns The count of entries currently stored in the cache
+     */
+    size(): number;
+}
+export declare const SessionTokenCache: TokenCache;
+export {};
+//# sourceMappingURL=tokenCache.d.ts.map

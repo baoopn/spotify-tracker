@@ -1,0 +1,25 @@
+import type { ProtectLoader } from '@clerk/shared/types';
+import type { ProtectPlaceholders, ProtectRequestParams } from './protectSession';
+import type { Environment } from './resources';
+export declare class Protect {
+    #private;
+    /**
+     * The verification-module LOAD timeout asked for by the loader this browser was assigned, or
+     * undefined when none asked for one — in which case the caller falls back to the instance-wide
+     * value and then to the SDK default.
+     *
+     * Resolved from the APPLIED loaders rather than from the config, because rollout is decided by
+     * a random draw per page load: a loader being ramped can carry its own value without changing
+     * anything for browsers still on the loader it replaces, and which one a browser got cannot be
+     * recomputed afterwards.
+     */
+    get challengeLoadTimeoutMs(): number | undefined;
+    load(env: Environment, frontendApi: string): void;
+    /**
+     * The Protect params to attach to a sign-in or sign-up request, or `undefined` when this instance
+     * does not participate. Never rejects, and never blocks past the acquisition deadline.
+     */
+    getRequestParams(): Promise<ProtectRequestParams | undefined>;
+    applyLoader(loader: ProtectLoader, placeholders?: ProtectPlaceholders): HTMLElement | undefined;
+}
+//# sourceMappingURL=protect.d.ts.map

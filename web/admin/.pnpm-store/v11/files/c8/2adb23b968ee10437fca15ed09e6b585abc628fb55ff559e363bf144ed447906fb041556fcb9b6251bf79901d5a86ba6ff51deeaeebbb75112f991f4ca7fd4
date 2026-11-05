@@ -1,0 +1,132 @@
+import { useRouter } from "../../router/RouteContext.js";
+import { localizationKeys } from "../../localization/localizationKeys.js";
+import { useSignInContext } from "../../contexts/components/SignIn.js";
+import { useCoreSignIn } from "../../contexts/CoreClientContext.js";
+import { descriptors } from "../../customizables/elementDescriptors.js";
+import { useCardState } from "../../elements/contexts/index.js";
+import { Flow } from "../../customizables/Flow.js";
+import { Button, Col } from "../../customizables/index.js";
+import { Card } from "../../elements/Card/index.js";
+import { Header } from "../../elements/Header.js";
+import { handleError } from "../../utils/errorHandler.js";
+import { getEnterpriseConnectionFactors, hasMultipleEnterpriseConnections } from "./enterpriseSSOFactors.js";
+import { isProtectCheckRequiredError, navigateOnSignInProtectGate } from "./handleProtectCheck.js";
+import { SignInFactorOneCodeForm } from "./SignInFactorOneCodeForm.js";
+import { ChooseEnterpriseConnectionCard } from "../../common/ChooseEnterpriseConnectionCard.js";
+import React from "react";
+import { jsx, jsxs } from "@emotion/react/jsx-runtime";
+
+//#region src/components/SignIn/SignInFactorOneSSOBypass.tsx
+/**
+* Enterprise-routed sign-in for a user the instance has allowlisted for a bypass.
+*
+* Replaces the automatic redirect to the identity provider with a screen the user can act on,
+* since the bypass is only reachable from one.
+* @experimental
+*/
+const SignInFactorOneSSOBypass = (props) => {
+	const { bypassFactor } = props;
+	const card = useCardState();
+	const ctx = useSignInContext();
+	const signIn = useCoreSignIn();
+	const { navigate } = useRouter();
+	const [step, setStep] = React.useState("sso");
+	const [isRedirecting, setIsRedirecting] = React.useState(false);
+	const goToStep = (next) => {
+		card.setError(void 0);
+		setStep(next);
+	};
+	const authenticateWithEnterpriseSSO = async (enterpriseConnectionId) => {
+		try {
+			await signIn.authenticateWithRedirect({
+				strategy: "enterprise_sso",
+				redirectUrl: ctx.ssoCallbackUrl,
+				redirectUrlComplete: ctx.afterSignInUrl || "/",
+				oidcPrompt: ctx.oidcPrompt,
+				continueSignIn: true,
+				...enterpriseConnectionId && { enterpriseConnectionId }
+			});
+		} catch (err) {
+			if (isProtectCheckRequiredError(err) && navigateOnSignInProtectGate(signIn, navigate, "../protect-check")) return;
+			throw err;
+		}
+	};
+	const handleSSOError = (err) => handleError(err, [], card.setError);
+	const handleContinueWithSSO = () => {
+		setIsRedirecting(true);
+		authenticateWithEnterpriseSSO().catch((err) => {
+			setIsRedirecting(false);
+			handleSSOError(err);
+		});
+	};
+	const handleSelectEnterpriseConnection = (enterpriseConnectionId) => authenticateWithEnterpriseSSO(enterpriseConnectionId).catch((err) => {
+		handleSSOError(err);
+		throw err;
+	});
+	if (step === "code") return /* @__PURE__ */ jsx(Flow.Part, {
+		part: "ssoBypass",
+		children: /* @__PURE__ */ jsx(SignInFactorOneCodeForm, {
+			factor: bypassFactor,
+			factorAlreadyPrepared: false,
+			onFactorPrepare: () => {},
+			cardTitle: localizationKeys("signIn.ssoBypass.code.title"),
+			cardSubtitle: localizationKeys("signIn.ssoBypass.code.subtitle"),
+			cardNotice: localizationKeys("signIn.ssoBypass.notice"),
+			inputLabel: localizationKeys("signIn.emailCode.formTitle"),
+			resendButton: localizationKeys("signIn.ssoBypass.code.resendButton"),
+			identityPreviewEditButtonAriaLabel: localizationKeys("identityPreviewEditButton__emailAddress"),
+			onShowAlternativeMethodsClicked: () => goToStep("sso")
+		})
+	});
+	const bypassAction = /* @__PURE__ */ jsx(Card.Action, {
+		elementId: "ssoBypass",
+		children: /* @__PURE__ */ jsx(Card.ActionLink, {
+			localizationKey: localizationKeys("signIn.ssoBypass.actionLink"),
+			onClick: () => goToStep("code")
+		})
+	});
+	if (hasMultipleEnterpriseConnections(signIn.supportedFirstFactors)) {
+		const enterpriseConnections = getEnterpriseConnectionFactors(signIn.supportedFirstFactors).map((factor) => ({
+			id: factor.enterpriseConnectionId,
+			name: factor.enterpriseConnectionName,
+			logoPublicUrl: factor.enterpriseConnectionLogoPublicUrl,
+			provider: factor.enterpriseConnectionProvider
+		}));
+		return /* @__PURE__ */ jsx(Flow.Part, {
+			part: "ssoBypass",
+			children: /* @__PURE__ */ jsx(ChooseEnterpriseConnectionCard, {
+				title: localizationKeys("signIn.enterpriseConnections.title"),
+				subtitle: localizationKeys("signIn.enterpriseConnections.subtitle"),
+				onClick: handleSelectEnterpriseConnection,
+				enterpriseConnections,
+				children: bypassAction
+			})
+		});
+	}
+	return /* @__PURE__ */ jsx(Flow.Part, {
+		part: "ssoBypass",
+		children: /* @__PURE__ */ jsxs(Card.Root, { children: [/* @__PURE__ */ jsxs(Card.Content, { children: [
+			/* @__PURE__ */ jsxs(Header.Root, {
+				showLogo: true,
+				children: [/* @__PURE__ */ jsx(Header.Title, { localizationKey: localizationKeys("signIn.start.title") }), /* @__PURE__ */ jsx(Header.Subtitle, { localizationKey: localizationKeys("signIn.start.subtitle") })]
+			}),
+			/* @__PURE__ */ jsx(Card.Alert, { children: card.error }),
+			/* @__PURE__ */ jsxs(Col, {
+				elementDescriptor: descriptors.main,
+				gap: 4,
+				children: [/* @__PURE__ */ jsx(Button, {
+					elementDescriptor: descriptors.formButtonPrimary,
+					block: true,
+					hasArrow: true,
+					isLoading: isRedirecting,
+					localizationKey: localizationKeys("signIn.enterpriseSSO.formButtonPrimary"),
+					onClick: handleContinueWithSSO
+				}), bypassAction]
+			})
+		] }), /* @__PURE__ */ jsx(Card.Footer, {})] })
+	});
+};
+
+//#endregion
+export { SignInFactorOneSSOBypass };
+//# sourceMappingURL=SignInFactorOneSSOBypass.js.map

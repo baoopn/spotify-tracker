@@ -1,0 +1,10 @@
+import { __internal_ProtectCheckModalProps } from "@clerk/shared/types";
+
+//#region src/components/ProtectCheckModal/index.d.ts
+declare function ProtectCheckModal(props: __internal_ProtectCheckModalProps): JSX.Element | null;
+declare namespace ProtectCheckModal {
+  var displayName: string;
+}
+//#endregion
+export { ProtectCheckModal };
+//# sourceMappingURL=index.d.ts.map

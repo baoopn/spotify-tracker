@@ -68,6 +68,9 @@ export default defineConfig({
 	server: {
 		port: 5173,
 		strictPort: false,
+		// Extra Host names for the dev server, e.g. the compose service name when
+		// e2e tests run in another container (VITE_ALLOWED_HOSTS=web-admin).
+		allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').filter(Boolean),
 		proxy: apiProxy
 	},
 	preview: {

@@ -3,7 +3,10 @@
 #   cp .env.example .env   # fill in Spotify + Soundcharts credentials
 #   docker compose up --build
 #
-# API:      http://localhost:8080/v1/now-playing
+# API + embedded frontends: http://127.0.0.1:8080 (public page), /admin, /api/v1
+# Frontend dev servers (hot reload, proxy to the api container):
+#           admin  http://127.0.0.1:5173/admin   public  http://127.0.0.1:5174
+# E2E tests: docker compose --profile e2e run --rm e2e
 # gRPC:     localhost:9000 (reflection enabled in development)
 # Postgres: localhost:5432   Redis: localhost:6379
 #
@@ -29,6 +32,18 @@ x-app-env: &app-env
   REDIS_URL: redis://:${REDIS_PASSWORD:-devredis}@redis:6379/0
   INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
   TRACKER_GRPC_ADDR: api:9000
+
+x-web: &web
+  image: node:22-alpine
+  restart: unless-stopped
+  # pnpm via corepack; install is a no-op when node_modules is current.
+  command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && exec pnpm exec vite dev --host 0.0.0.0 --port 5173 --strictPort"]
+  depends_on:
+    api: { condition: service_healthy }
+
+x-web-env: &web-env
+  CI: "true"
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
 services:
   postgres:
@@ -115,6 +130,53 @@ services:
       start_period: 10s
       retries: 3
 
+  # Vite dev servers for both frontends, with hot reload. Sources are bind
+  # mounted; node_modules live in volumes because the host's (Windows/macOS)
+  # native binaries don't run in Linux containers.
+  web-admin:
+    <<: *web
+    working_dir: /app
+    volumes:
+      - ./web/admin:/app
+      - web-admin-node-modules:/app/node_modules
+    environment:
+      <<: *web-env
+      ADMIN_API_TARGET: http://api:8080
+      VITE_ALLOWED_HOSTS: web-admin
+    ports:
+      - "127.0.0.1:${WEB_ADMIN_HOST_PORT:-5173}:5173"
+
+  web-public:
+    <<: *web
+    working_dir: /app
+    volumes:
+      - ./web/public:/app
+      - web-public-node-modules:/app/node_modules
+    environment:
+      <<: *web-env
+      PUBLIC_API_TARGET: http://api:8080
+      VITE_ALLOWED_HOSTS: web-public
+    ports:
+      - "127.0.0.1:${WEB_PUBLIC_HOST_PORT:-5174}:5173"
+
+  # End-to-end tests (Playwright) against the running stack:
+  #   docker compose --profile e2e run --rm e2e
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: ["e2e"]
+    working_dir: /e2e
+    volumes:
+      - ./e2e:/e2e
+      - e2e-node-modules:/e2e/node_modules
+    environment:
+      CI: "true"
+      E2E_API_URL: http://api:8080
+      E2E_ADMIN_DEV_URL: http://web-admin:5173
+      E2E_PUBLIC_DEV_URL: http://web-public:5173
+    command: ["sh", "-c", "npm ci --no-audit --no-fund && npx playwright test"]
+    depends_on:
+      api: { condition: service_healthy }
+
   # One-off Directus → Postgres import:
   #   docker compose --profile tools run --rm importer
   importer:
@@ -131,3 +193,6 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  web-admin-node-modules:
+  web-public-node-modules:
+  e2e-node-modules:

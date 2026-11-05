@@ -1,0 +1,3 @@
+import { extractDigits, formatPhoneNumber, getCountryFromPhoneString, getFlagEmojiFromCountryIso, getPreferredPhoneCodeChannelByCountry, parsePhoneString, stringToFormattedPhoneString } from "@clerk/shared/phone";
+
+export { extractDigits, formatPhoneNumber, getCountryFromPhoneString, getFlagEmojiFromCountryIso, getPreferredPhoneCodeChannelByCountry, parsePhoneString, stringToFormattedPhoneString };

@@ -1,0 +1,3 @@
+export declare function isTabFocused(): boolean | undefined;
+export declare const getTabState: () => "focused" | "visible" | "hidden" | undefined;
+//# sourceMappingURL=isTabFocused.d.ts.map

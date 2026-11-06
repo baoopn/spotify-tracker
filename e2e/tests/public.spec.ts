@@ -74,3 +74,28 @@ test.describe('public page', () => {
 		expectClean(problems);
 	});
 });
+
+test('automated browsers are not counted', async ({ page }) => {
+	const beacons: string[] = [];
+	page.on('request', (r) => {
+		if (r.url().endsWith('/api/v1/events')) beacons.push(r.method());
+	});
+	await page.goto('/');
+	await expect(page.getByText('Updated live')).toBeVisible({ timeout: 20_000 });
+	expect(beacons).toEqual([]);
+});
+
+test('the public page sends a page-view beacon', async ({ page }) => {
+	// Pretend to be a regular browser so the beacon is sent; the request is
+	// aborted so the test visit never lands in the analytics.
+	await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+	await page.route('**/api/v1/events', (route) => route.abort());
+	const beacon = page.waitForRequest(
+		(r) => r.url().endsWith('/api/v1/events') && r.method() === 'POST',
+		{ timeout: 15_000 }
+	);
+	await page.goto('/');
+	const body = JSON.parse((await beacon).postData() ?? '{}');
+	expect(body).toMatchObject({ type: 'pageview', path: '/' });
+	expect(typeof body.width).toBe('number');
+});

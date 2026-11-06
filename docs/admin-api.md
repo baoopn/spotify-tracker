@@ -161,6 +161,40 @@ metrics routes are excluded from analytics.
 `errors` = status ≥ 500. Buckets are hourly (`24h`, `7d`) or daily (`30d`);
 empty buckets are included with zeros. `timeseries` is ordered oldest first.
 
+## Analytics (public page visitors)
+
+`GET /admin/api/analytics/pages?range=24h|7d|30d&tz=<IANA>` (same ranges and
+time-zone handling as the API analytics):
+
+```json
+{
+  "range": "24h", "bucket": "hour", "time_zone": "UTC",
+  "totals": { "views": 0, "visitors": 0, "avg_visible_ms": 0, "live_now": 0 },
+  "timeseries": [ { "bucket": "2026-11-05T17:00:00Z", "views": 0 } ],
+  "paths": [ { "name": "/", "views": 0 } ],
+  "referrers": [ { "name": "google.com", "views": 0 } ],
+  "devices": [ { "name": "mobile", "views": 0 } ],
+  "browsers": [ { "name": "Safari", "views": 0 } ],
+  "countries": [ { "name": "CA", "views": 0 } ]
+}
+```
+
+- **Collection**: the public page sends `POST /api/v1/events` beacons, one
+  `{"type":"pageview","path","referrer","width"}` per page view and
+  `{"type":"engagement","path","width","visible_ms"}` when the page is hidden.
+  The endpoint always answers `202` for a valid event, or `400`/`413` otherwise.
+- **Privacy**: no cookies, no client storage, no IDs; IPs are never stored.
+  `visitors` comes from a salted hash of IP + user agent that changes every UTC
+  day, kept in a Redis HyperLogLog for 40 days. `live_now` counts visitors seen
+  in the last 5 minutes. Rows keep only coarse dimensions: device class from
+  the viewport width, browser family, Cloudflare's country code, and the
+  referring host (empty = direct, including visits from the site itself).
+- **Exclusions**: automated browsers (`navigator.webdriver`, which covers the
+  e2e tests) don't send beacons; bots, crawlers, monitors and headless
+  browsers matched by user agent are accepted but not counted.
+- `avg_visible_ms` = total visible time ÷ views; each report is capped at 30
+  minutes. Data is pruned after 90 days, like the API analytics.
+
 ## Audit log
 
 `GET /admin/api/audit?limit&cursor` → `{ data: [{ id, at, actor, action, detail, ip }], next_cursor }`.

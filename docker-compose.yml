@@ -45,6 +45,8 @@ x-web: &web
 x-web-env: &web-env
   CI: "true"
   COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+  # Poll sources for hot reload (host bind mounts don't deliver file events).
+  VITE_WATCH_POLL: "1000"
 
 services:
   postgres:

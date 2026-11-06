@@ -60,6 +60,7 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			r.Post("/playlists/{id}/refresh", a.refreshPlaylist)
 
 			r.Get("/analytics", a.analytics)
+			r.Get("/analytics/pages", a.pageAnalytics)
 			r.Get("/audit", a.auditLog)
 		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {

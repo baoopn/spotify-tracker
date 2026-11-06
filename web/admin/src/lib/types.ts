@@ -242,6 +242,36 @@ export type Analytics = {
 	top_origins: { origin: string; count: number }[];
 };
 
+// ---------- public page analytics ----------
+
+/** One ranked dimension value. */
+export type DimCount = { name: string; views: number };
+
+/** Cookieless visitor analytics for the public page. */
+export type PageAnalytics = {
+	range: AnalyticsRange;
+	bucket: 'hour' | 'day';
+	/** IANA zone the daily buckets were computed in (echo of `tz`). */
+	time_zone: string;
+	totals: {
+		views: number;
+		/** Unique per UTC day (cookieless, salted daily hash), de-duplicated across the range. */
+		visitors: number;
+		avg_visible_ms: number;
+		/** Visitors seen in the last 5 minutes. */
+		live_now: number;
+	};
+	/** Zero-filled, oldest first. */
+	timeseries: { bucket: string; views: number }[];
+	paths: DimCount[];
+	/** `''` = direct (no referrer). */
+	referrers: DimCount[];
+	devices: DimCount[];
+	browsers: DimCount[];
+	/** ISO 3166-1 alpha-2; `''` = unknown. */
+	countries: DimCount[];
+};
+
 // ---------- audit ----------
 
 export type AuditEntry = {

@@ -207,6 +207,7 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			ClientIPHeader:       cfg.ClientIPHeader,
 			ShowPrivatePlaylists: cfg.ShowPrivatePlaylists,
 			V1Middleware:         []func(http.Handler) http.Handler{recorder.Middleware},
+			Events:               recorder.EventsHandler,
 			Mount: func(r chi.Router) {
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)

@@ -10,6 +10,7 @@
 	import { theme } from '#lib/theme.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
 	import { createQueryClient } from '#lib/queries.js';
+	import { startPageAnalytics } from '#lib/beacon.js';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -20,9 +21,11 @@
 	onMount(() => {
 		const stopTheme = theme.start();
 		const stopZone = zone.start();
+		const stopAnalytics = startPageAnalytics();
 		return () => {
 			stopTheme();
 			stopZone();
+			stopAnalytics();
 		};
 	});
 

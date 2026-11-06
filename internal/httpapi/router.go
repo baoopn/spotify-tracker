@@ -33,6 +33,8 @@ type Options struct {
 	Mount func(r chi.Router)
 	// ShowPrivatePlaylists exposes private playlists on the public API.
 	ShowPrivatePlaylists bool
+	// Events receives public-page analytics beacons (POST /api/v1/events).
+	Events http.HandlerFunc
 	// Site serves the public frontend at "/" and every non-API path that
 	// no other route matched (assets, 404 page).
 	Site http.Handler
@@ -99,6 +101,9 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 			r.Get("/stats/audio-profile", h.cached(h.audioProfile))
 			r.Get("/playlists/recent", h.cached(h.recentPlaylists))
 			r.Get("/timezone", h.timezone)
+			if opts.Events != nil {
+				r.Post("/events", opts.Events)
+			}
 		})
 	})
 

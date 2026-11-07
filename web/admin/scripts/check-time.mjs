@@ -131,6 +131,12 @@ check('server agrees or is unreachable: plain Intl with the IANA zone', () => {
 	assert.equal(t.offsetLabel(0), 'GMT');
 });
 
+check('calendarDateIn: the date in the given zone, not the browser zone', () => {
+	const at = new Date('2026-11-02T03:30:00Z'); // Nov 1, 10:30 PM in New York
+	assert.equal(t.calendarDateIn('America/New_York', at), '2026-11-01');
+	assert.equal(t.calendarDateIn('UTC', at), '2026-11-02');
+});
+
 if (process.exitCode) {
 	console.error('time checks failed');
 } else {

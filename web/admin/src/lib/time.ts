@@ -179,6 +179,19 @@ export function date(v: string | Date | null | undefined, opts?: FormatOpts): st
 	return d ? format(d, { year: 'numeric', month: 'short', day: 'numeric' }, opts) : '–';
 }
 
+/**
+ * The calendar date ("YYYY-MM-DD") an instant falls on in an IANA zone, e.g. the
+ * `max` of a date input that must not pass "today" in the server's configured zone.
+ */
+export function calendarDateIn(timeZone: string, at: Date = new Date()): string {
+	const parts = dtf(
+		{ year: 'numeric', month: '2-digit', day: '2-digit' },
+		{ locale: 'en-CA', timeZone }
+	).formatToParts(at);
+	const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+	return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
 /** An instant shown explicitly in UTC, e.g. "May 4, 2027, 9:12 AM UTC". */
 export function utcDateTime(v: string | Date | null | undefined, locale?: string): string {
 	return dateTime(v, { locale, timeZone: 'UTC' });

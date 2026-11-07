@@ -71,7 +71,10 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 		return nil, err
 	}
 	out := make([]topPlaylist, 0, len(rows))
-	for i, row := range rows {
+	for _, row := range rows {
+		if row.Hidden {
+			continue // the store filters hidden rows too; never publish one
+		}
 		zone := loc
 		if l, err := time.LoadLocation(row.TimeZone); err == nil && row.TimeZone != "" {
 			zone = l // label in the zone the period was generated in
@@ -88,7 +91,7 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 			t := row.PublishedAt.UTC()
 			item.PublishedAt = &t
 		}
-		if i == 0 {
+		if len(out) == 0 {
 			tracks, err := h.top.TopPlaylistTracks(ctx, row.Period, row.PeriodStart)
 			if err != nil {
 				return nil, err

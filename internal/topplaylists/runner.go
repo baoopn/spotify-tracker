@@ -3,6 +3,7 @@ package topplaylists
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,6 +31,8 @@ const (
 	// context that ignores shutdown, so a create that reached Spotify is
 	// always recorded and never repeated.
 	createTimeout = 30 * time.Second
+	// DefaultInterval is the time between two generator ticks.
+	DefaultInterval = 10 * time.Minute
 )
 
 // Store is the persistence the runner needs (implemented by *store.Store).
@@ -76,7 +79,7 @@ type Runner struct {
 // start, then every 10 minutes.
 func New(cfg Config, st Store, sp Spotify, auth Auth, invalidate func(context.Context), log *slog.Logger) *Runner {
 	return &Runner{Config: cfg, Store: st, Spotify: sp, Auth: auth, Invalidate: invalidate, Log: log,
-		FirstDelay: time.Minute, Interval: 10 * time.Minute}
+		FirstDelay: time.Minute, Interval: DefaultInterval}
 }
 
 // Run ticks until ctx is done.
@@ -92,27 +95,38 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce handles the last completed period of every enabled kind.
+// RunOnce handles the last completed period of every enabled kind. It does
+// nothing when another instance holds the lock.
 func (r *Runner) RunOnce(ctx context.Context) {
+	if err := r.RunNow(ctx); err != nil && !errors.Is(err, ErrBusy) {
+		r.Log.WarnContext(ctx, "top playlists lock failed", logging.Err(err))
+	}
+}
+
+// RunNow is RunOnce for callers that need the outcome: it returns ErrBusy
+// when another instance or tick holds the lock. Per-period failures are
+// stored on their rows (and logged), not returned.
+func (r *Runner) RunNow(ctx context.Context) error {
 	unlock, ok, err := r.Store.LockTopPlaylists(ctx)
 	if err != nil {
-		r.Log.WarnContext(ctx, "top playlists lock failed", logging.Err(err))
-		return
+		return err
 	}
 	if !ok {
-		return // another instance is generating
+		return ErrBusy // another instance is generating
 	}
 	defer unlock()
 	now := r.clock()
 	for _, p := range r.Config.Periods {
 		if rateLimited := r.generate(ctx, p, now); rateLimited {
-			return // the other kinds would be refused too; try next tick
+			return nil // the other kinds would be refused too; try next tick
 		}
 	}
+	return nil
 }
 
-// generate advances one period's state machine. It reports whether Spotify
-// rate-limited the request.
+// generate advances one period's state machine on a tick: finished periods
+// (created, empty) and failures still backing off are skipped. It reports
+// whether Spotify rate-limited the request.
 func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	loc := r.Config.Location
 	start, end := LastCompleted(p, now, loc)
@@ -132,6 +146,17 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 			return false
 		}
 	}
+	limited, _ := r.attempt(ctx, p, rec, start, end, loc, now) // outcome stored on the row and logged
+	return limited
+}
+
+// attempt ranks the period [start, end) (local midnights in loc), stores the
+// snapshot and publishes it: it creates the Spotify playlist when the row
+// has none, otherwise it replaces the items of the same playlist. Every
+// outcome is stored on the row; the error is also returned (errors.Is
+// ErrNotAuthorized for waiting_auth) and limited reports a rate limit.
+func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRecord, start, end time.Time,
+	loc *time.Location, now time.Time) (limited bool, err error) {
 	rec.PeriodStart, rec.PeriodEnd, rec.TimeZone = start, end, loc.String()
 	rec.Name = Name(p, start)
 	prev := rec.Status
@@ -139,26 +164,28 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	msg, err := r.authProblem(ctx)
 	if err != nil {
 		r.Log.WarnContext(ctx, "read spotify authorization failed", logging.Err(err))
-		return false
+		return false, err
 	}
 	if msg != "" {
 		r.waitAuth(ctx, rec, prev, msg, nil)
-		return false
+		return false, fmt.Errorf("%w: %s", ErrNotAuthorized, msg)
 	}
 
 	tracks, err := r.Store.RankTracks(ctx, start, end, TrackLimit)
 	if err != nil {
-		return r.fail(ctx, rec, err, now)
+		return r.fail(ctx, rec, err, now), err
 	}
 	if len(tracks) == 0 {
 		rec.Status, rec.TrackCount, rec.TotalPlays = domain.TopPlaylistEmpty, 0, 0
 		rec.LastError, rec.NextAttemptAt = "", nil
-		if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+		wctx, cancel := storeCtx(ctx)
+		defer cancel()
+		if err := r.Store.UpsertTopPlaylist(wctx, rec); err != nil {
 			r.Log.WarnContext(ctx, "save empty top playlist failed", slog.String("name", rec.Name), logging.Err(err))
-			return false
+			return false, err
 		}
 		r.Log.InfoContext(ctx, "top playlist skipped: no plays in period", slog.String("name", rec.Name))
-		return false
+		return false, nil
 	}
 
 	rec.Status = domain.TopPlaylistPending
@@ -166,15 +193,15 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	for _, t := range tracks {
 		rec.TotalPlays += t.Plays
 	}
-	if err := r.Store.SaveTopPlaylistSnapshot(ctx, rec, tracks); err != nil {
-		return r.fail(ctx, rec, err, now)
+	if err := r.saveSnapshot(ctx, rec, tracks); err != nil {
+		return r.fail(ctx, rec, err, now), err
 	}
 
 	if rec.SpotifyPlaylistID == "" {
 		var err error
 		if rec, err = r.create(ctx, rec, p, start); err != nil {
 			if rec.SpotifyPlaylistID != "" {
-				return false // created but not saved: logged; retried next tick
+				return false, err // created but not saved: logged; retried next tick
 			}
 			return r.spotifyError(ctx, rec, prev, err, now)
 		}
@@ -191,15 +218,15 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	published := now.UTC()
 	rec.Status, rec.PublishedAt, rec.Attempts = domain.TopPlaylistCreated, &published, 0
 	rec.LastError, rec.NextAttemptAt = "", nil
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
-		return r.fail(ctx, rec, err, now)
+	if err := r.upsert(ctx, rec); err != nil {
+		return r.fail(ctx, rec, err, now), err
 	}
 	r.Log.InfoContext(ctx, "top playlist published", slog.String("name", rec.Name),
 		slog.String("spotify_id", rec.SpotifyPlaylistID), slog.Int("tracks", rec.TrackCount))
 	if r.Invalidate != nil {
 		r.Invalidate(ctx)
 	}
-	return false
+	return false, nil
 }
 
 // create makes the Spotify playlist and persists its ID before anything
@@ -242,24 +269,36 @@ func (r *Runner) authProblem(ctx context.Context) (string, error) {
 }
 
 // spotifyError records a failed Spotify call: missing permissions wait for
-// re-authorization, everything else is retried with backoff.
-func (r *Runner) spotifyError(ctx context.Context, rec domain.TopPlaylistRecord, prev string, err error, now time.Time) bool {
+// re-authorization (the returned error wraps ErrNotAuthorized and the cause),
+// everything else is retried with backoff.
+func (r *Runner) spotifyError(ctx context.Context, rec domain.TopPlaylistRecord, prev string, err error, now time.Time) (bool, error) {
+	msg, backoff, ok := authMessage(err)
+	if !ok {
+		return r.fail(ctx, rec, err, now), err
+	}
+	var retryAt *time.Time
+	if backoff {
+		retry := now.Add(forbiddenRetry).UTC()
+		retryAt = &retry
+	}
+	r.waitAuth(ctx, rec, prev, msg, retryAt)
+	return false, fmt.Errorf("%w: %s: %w", ErrNotAuthorized, msg, err)
+}
+
+// authMessage maps a Spotify authorization error to the waiting_auth message.
+// backoff is set after a 403, whose retry is spaced out by forbiddenRetry.
+func authMessage(err error) (msg string, backoff, ok bool) {
 	switch {
 	case errors.Is(err, spotify.ErrForbidden):
-		retry := now.Add(forbiddenRetry).UTC()
-		r.waitAuth(ctx, rec, prev, msgMissingScope, &retry)
-		return false
+		return msgMissingScope, true, true
 	case errors.Is(err, spotify.ErrMissingScope):
-		r.waitAuth(ctx, rec, prev, msgMissingScope, nil)
-		return false
+		return msgMissingScope, false, true
 	case errors.Is(err, spotify.ErrInvalidGrant):
-		r.waitAuth(ctx, rec, prev, msgRevoked, nil)
-		return false
+		return msgRevoked, false, true
 	case errors.Is(err, spotify.ErrNotConnected):
-		r.waitAuth(ctx, rec, prev, msgNotConnected, nil)
-		return false
+		return msgNotConnected, false, true
 	}
-	return r.fail(ctx, rec, err, now)
+	return "", false, false
 }
 
 // waitAuth stores status waiting_auth, logging only when the status changes.
@@ -269,7 +308,7 @@ func (r *Runner) waitAuth(ctx context.Context, rec domain.TopPlaylistRecord, pre
 		return // unchanged; nothing to write or log
 	}
 	rec.Status, rec.LastError, rec.NextAttemptAt = domain.TopPlaylistWaitingAuth, msg, retryAt
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+	if err := r.upsert(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist state failed", slog.String("name", rec.Name), logging.Err(err))
 		return
 	}
@@ -292,7 +331,7 @@ func (r *Runner) fail(ctx context.Context, rec domain.TopPlaylistRecord, cause e
 	next := now.Add(delay).UTC()
 	rec.Status, rec.NextAttemptAt = domain.TopPlaylistFailed, &next
 	rec.LastError = truncateError(cause.Error())
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+	if err := r.upsert(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist failure failed", slog.String("name", rec.Name), logging.Err(err))
 	}
 	r.Log.WarnContext(ctx, "top playlist generation failed", slog.String("name", rec.Name),

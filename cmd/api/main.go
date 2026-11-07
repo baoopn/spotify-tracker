@@ -162,7 +162,9 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	if topCfg.Enabled() {
 		topRunner = topplaylists.New(topCfg, st, mgr, settingsStore, svc.InvalidateCache,
 			log.With(slog.String("component", "top_playlists")))
+		adminAPI.TopPlaylists = topRunner // left nil (not a typed nil) when disabled
 	}
+	adminAPI.TopPlaylistsConfig = topCfg
 
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{

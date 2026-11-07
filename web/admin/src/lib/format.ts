@@ -60,6 +60,7 @@ export function duration(msTotal: number | null | undefined): string {
 
 // Dates and times live in time.ts (zone-aware, DST-safe); re-exported for convenience.
 export {
+	calendarDateIn,
 	date,
 	dateTime,
 	daysUntil,

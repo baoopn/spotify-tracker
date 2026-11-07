@@ -28,6 +28,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/settings"
 	"github.com/baoopn/spotify-tracker/internal/spotify"
 	"github.com/baoopn/spotify-tracker/internal/store"
+	"github.com/baoopn/spotify-tracker/internal/topplaylists"
 	"github.com/baoopn/spotify-tracker/internal/tracker"
 )
 
@@ -48,11 +49,27 @@ type Deps struct {
 	TokenLifetimeDays   int
 	// Checks are dependency health checks (name → check).
 	Checks map[string]func(context.Context) error
+
+	// TopPlaylists runs the Top 50 generator; nil when the feature is disabled.
+	TopPlaylists TopPlaylistsAdmin
+	// TopPlaylistsConfig is the parsed TOP_PLAYLISTS_* configuration.
+	TopPlaylistsConfig topplaylists.Config
 }
 
 // API serves /admin/api.
 type API struct {
 	Deps
+
+	// Test seams; nil uses Deps.
+	tops        topPlaylistStore
+	spotifyAuth func(context.Context) (settings.Spotify, error)
+	auditor     auditor
+	invalidate  func(context.Context)
+}
+
+// auditor appends audit log entries (implemented by *store.Store).
+type auditor interface {
+	Audit(ctx context.Context, actor, action string, detail any, ip string) error
 }
 
 const (
@@ -102,7 +119,11 @@ func (a *API) audit(r *http.Request, action string, detail any) {
 	if u, ok := UserFrom(r.Context()); ok {
 		actor = u.Email
 	}
-	if err := a.Store.Audit(r.Context(), actor, action, detail, clientIP(r)); err != nil {
+	var aud auditor = a.Store
+	if a.auditor != nil {
+		aud = a.auditor
+	}
+	if err := aud.Audit(r.Context(), actor, action, detail, clientIP(r)); err != nil {
 		a.Log.WarnContext(r.Context(), "audit write failed", logging.Err(err))
 	}
 }

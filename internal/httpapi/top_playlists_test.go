@@ -156,3 +156,38 @@ func TestTopPlaylistsDisabledAndLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestTopPlaylistsExcludeHidden(t *testing.T) {
+	week := func(start time.Time, hidden bool) domain.TopPlaylistRecord {
+		return domain.TopPlaylistRecord{Period: "week", PeriodStart: start, PeriodEnd: start.AddDate(0, 0, 7),
+			TimeZone: "UTC", Name: topplaylists.Name(topplaylists.Week, start), Status: domain.TopPlaylistCreated,
+			SpotifyPlaylistID: "pl" + start.Format("0102"), Hidden: hidden}
+	}
+	hiddenStart := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	shownStart := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
+	st := &fakeTopStore{limits: map[string]int{},
+		rows: map[string][]domain.TopPlaylistRecord{"week": {week(hiddenStart, true), week(shownStart, false)}}}
+	h := &Handler{top: st, log: slog.New(slog.DiscardHandler), opts: Options{
+		TopPlaylists: topplaylists.Config{Periods: []topplaylists.Period{topplaylists.Week}, Location: time.UTC},
+	}}
+	rec := httptest.NewRecorder()
+	h.topPlaylists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/playlists/top", nil))
+	var body struct {
+		Data struct {
+			Periods map[string][]struct {
+				SpotifyID string `json:"spotify_id"`
+			} `json:"periods"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	weeks := body.Data.Periods["week"]
+	if len(weeks) != 1 || weeks[0].SpotifyID != "pl1026" {
+		t.Fatalf("weeks = %+v, want only the visible playlist", weeks)
+	}
+	// The newest visible entry carries the tracks, not the hidden one.
+	if len(st.trackCalls) != 1 || !st.trackCalls[0].Equal(shownStart) {
+		t.Errorf("tracks loaded for %v", st.trackCalls)
+	}
+}

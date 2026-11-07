@@ -345,3 +345,51 @@ export type ServerZone = {
 	now: string;
 	source: string;
 };
+
+// ---------- top 50 playlists (admin) ----------
+
+export type TopPlaylistPeriod = 'week' | 'month' | 'year';
+export const TOP_PLAYLIST_PERIODS: readonly TopPlaylistPeriod[] = ['week', 'month', 'year'];
+
+export type TopPlaylistStatus = 'pending' | 'created' | 'empty' | 'waiting_auth' | 'failed';
+
+export type AdminTopPlaylist = {
+	period: TopPlaylistPeriod;
+	/** RFC 3339 in the row's zone; sent back verbatim (URL-encoded) as `{start}`. */
+	period_start: string;
+	period_end: string;
+	time_zone: string;
+	/** "Week of Nov 2, 2026" */
+	label: string;
+	name: string;
+	status: TopPlaylistStatus;
+	hidden: boolean;
+	spotify_id: string | null;
+	spotify_url: string | null;
+	track_count: number;
+	total_plays: number;
+	attempts: number;
+	last_error: string | null;
+	next_attempt_at: string | null;
+	published_at: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+/** One position of a stored snapshot (same JSON as the public endpoint). */
+export type TopPlaylistTrack = { position: number; plays: number; track: TrackView };
+
+export type AdminTopPlaylistDetail = AdminTopPlaylist & { tracks: TopPlaylistTrack[] };
+
+export type TopPlaylistsStatus = {
+	enabled: boolean;
+	/** Enabled kinds; [] when the feature is disabled. */
+	periods: TopPlaylistPeriod[];
+	/** Configured zone ("UTC" when disabled). */
+	time_zone: string;
+	/** Spotify connected and granted playlist-modify-public. */
+	authorized: boolean;
+	interval_seconds: number;
+};
+
+export type TopPlaylistsList = OffsetList<AdminTopPlaylist> & { status: TopPlaylistsStatus };

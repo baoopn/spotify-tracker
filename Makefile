@@ -49,13 +49,17 @@ cover: ## Run tests with coverage report
 	$(GO) test -count=1 -coverprofile=coverage.out ./... && $(GO) tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: ## Run golangci-lint, buf lint and the SPA linters
+lint: check-public ## Run golangci-lint, buf lint and the SPA linters
 	golangci-lint run ./...
 	buf lint
 	pnpm --dir web/admin check
 	pnpm --dir web/admin lint
 	pnpm --dir web/public check
 	pnpm --dir web/public lint
+
+.PHONY: check-public
+check-public: ## Fail if tracked files contain machine paths, keys or deployment details
+	sh scripts/check-public.sh
 
 .PHONY: fmt
 fmt: ## Format Go code

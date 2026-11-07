@@ -33,11 +33,19 @@ backups/
 tmp/
 *.log
 
-# Ruflo runtime state (config is committed, data is not)
+# Ruflo runtime state (config is committed, data is not). These files are
+# machine/session specific (absolute cache paths, timestamps, policy state).
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
 .claude-flow/metrics/
+.claude-flow/memory-package.json
+.claude-flow/policy/
+.claude-flow/swarm/
+.claude-flow/security/
+.claude-flow/harness-active-policy.json
+.claude/proven-config.json
+.claude/.proven-config-version
 .swarm/
 .hive-mind/
 .claude/settings.local.json

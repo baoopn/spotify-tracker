@@ -14,6 +14,7 @@ import type {
 	SortOrder,
 	StatsRange,
 	TopArtist,
+	TopPlaylistPeriod,
 	TopTrack,
 	TrackSort
 } from './types';
@@ -50,6 +51,8 @@ export type ArtistsParams = {
 	offset: number;
 };
 export type PlaylistsParams = { limit: number; offset: number };
+/** `period: ''` lists every kind; `page` is zero-based. */
+export type TopPlaylistsParams = { period: TopPlaylistPeriod | ''; page: number; limit: number };
 
 export const qk = {
 	overview: ['overview'] as const,
@@ -81,6 +84,13 @@ export const qk = {
 		lists: ['playlists', 'list'] as const,
 		list: (p: PlaylistsParams) => ['playlists', 'list', p] as const,
 		recent: (limit: number) => ['playlists', 'recent', limit] as const
+	},
+	topPlaylists: {
+		all: ['top-playlists'] as const,
+		list: (period: TopPlaylistPeriod | '', page: number) =>
+			['top-playlists', period, page] as const,
+		detail: (period: TopPlaylistPeriod, start: string) =>
+			['top-playlists', 'detail', period, start] as const
 	},
 	history: (q: string, limit: number) => ['history', { q, limit }] as const,
 	audit: (limit: number) => ['audit', { limit }] as const
@@ -200,6 +210,27 @@ export const queries = {
 			queryFn: ({ signal }) => api.playlists(p, { signal }),
 			placeholderData: keepPreviousData,
 			refetchInterval: REFRESH.list
+		}),
+
+	/** Polls every 30 s while a row is still pending, else every 2 min. */
+	topPlaylists: (p: TopPlaylistsParams) =>
+		queryOptions({
+			queryKey: qk.topPlaylists.list(p.period, p.page),
+			queryFn: ({ signal }) =>
+				api.topPlaylists(
+					{ period: p.period, limit: p.limit, offset: p.page * p.limit },
+					{ signal }
+				),
+			placeholderData: keepPreviousData,
+			refetchInterval: (query) =>
+				query.state.data?.data.some((r) => r.status === 'pending') ? REFRESH.list : 120_000
+		}),
+
+	/** A row's stored track snapshot; only fetched once its details are expanded. */
+	topPlaylist: (period: TopPlaylistPeriod, start: string) =>
+		queryOptions({
+			queryKey: qk.topPlaylists.detail(period, start),
+			queryFn: ({ signal }) => api.topPlaylist(period, start, { signal })
 		}),
 
 	/** Cursor-paged; a refetch re-reads every loaded page from the newest one. */

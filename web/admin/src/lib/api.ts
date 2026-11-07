@@ -3,6 +3,8 @@
 
 import type {
 	AdminConfig,
+	AdminTopPlaylist,
+	AdminTopPlaylistDetail,
 	Analytics,
 	AnalyticsRange,
 	ArtistRow,
@@ -27,6 +29,8 @@ import type {
 	SpotifyTestResponse,
 	StatsRange,
 	TopArtist,
+	TopPlaylistPeriod,
+	TopPlaylistsList,
 	TopTrack,
 	TrackAdminDetail,
 	TrackRow,
@@ -83,7 +87,7 @@ export function configureAuth(provider: TokenProvider, handler: AuthFailureHandl
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 type RequestOptions = {
-	method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+	method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 	query?: Query;
 	body?: unknown;
 	signal?: AbortSignal;
@@ -164,6 +168,11 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
 // ---------- endpoints ----------
 
+/** `{start}` is the row's period_start exactly as returned, URL-encoded. */
+function topPlaylistPath(period: TopPlaylistPeriod, start: string): string {
+	return `${ADMIN_API}/top-playlists/${period}/${encodeURIComponent(start)}`;
+}
+
 type Signal = { signal?: AbortSignal };
 
 export const api = {
@@ -238,6 +247,33 @@ export const api = {
 		request<Playlist>(`${ADMIN_API}/playlists/${encodeURIComponent(id)}/refresh`, {
 			method: 'POST'
 		}),
+	// top 50 playlists
+	topPlaylists: (
+		q: { period?: TopPlaylistPeriod | ''; limit?: number; offset?: number },
+		{ signal }: Signal = {}
+	) => request<TopPlaylistsList>(`${ADMIN_API}/top-playlists`, { query: q, signal }),
+	topPlaylist: (period: TopPlaylistPeriod, start: string, { signal }: Signal = {}) =>
+		request<V1Item<AdminTopPlaylistDetail>>(topPlaylistPath(period, start), { signal }).then(
+			(r) => r.data
+		),
+	runTopPlaylists: () =>
+		request<TopPlaylistsList>(`${ADMIN_API}/top-playlists/run`, { method: 'POST' }),
+	/** `date`: YYYY-MM-DD anywhere inside the (completed) period, in the configured zone. */
+	generateTopPlaylist: (period: TopPlaylistPeriod, date: string) =>
+		request<V1Item<AdminTopPlaylist>>(`${ADMIN_API}/top-playlists/generate`, {
+			method: 'POST',
+			body: { period, date }
+		}).then((r) => r.data),
+	regenerateTopPlaylist: (period: TopPlaylistPeriod, start: string) =>
+		request<V1Item<AdminTopPlaylist>>(`${topPlaylistPath(period, start)}/regenerate`, {
+			method: 'POST'
+		}).then((r) => r.data),
+	setTopPlaylistHidden: (period: TopPlaylistPeriod, start: string, hidden: boolean) =>
+		request<V1Item<AdminTopPlaylist>>(topPlaylistPath(period, start), {
+			method: 'PATCH',
+			body: { hidden }
+		}).then((r) => r.data),
+
 	/** The server's current view of a zone (its tz data can be newer than the browser's). */
 	timezone: (tz: string, { signal }: Signal = {}) =>
 		request<V1Item<ServerZone>>(`${PUBLIC_API}/timezone`, { query: { tz }, signal }),

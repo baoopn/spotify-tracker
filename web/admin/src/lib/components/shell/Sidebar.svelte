@@ -6,6 +6,7 @@
 		ChartLine,
 		History,
 		KeyRound,
+		ListOrdered,
 		Mail,
 		MicVocal,
 		Palette,
@@ -40,7 +41,8 @@
 				{ href: resolve('data/history'), label: 'History', icon: History, exact: false },
 				{ href: resolve('data/tracks'), label: 'Tracks', brand: 'track', exact: false },
 				{ href: resolve('data/artists'), label: 'Artists', icon: MicVocal, exact: false },
-				{ href: resolve('data/playlists'), label: 'Playlists', brand: 'playlist', exact: false }
+				{ href: resolve('data/playlists'), label: 'Playlists', brand: 'playlist', exact: false },
+				{ href: resolve('data/top-playlists'), label: 'Top 50', icon: ListOrdered, exact: false }
 			]
 		},
 		{

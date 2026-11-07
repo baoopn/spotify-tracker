@@ -12,6 +12,39 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/spotify"
 )
 
+const (
+	// FinalizeGrace is how long after its end a live period is finalized,
+	// so plays recorded late still count. Forced finalization ignores it.
+	FinalizeGrace = 15 * time.Minute
+	// finalizeBatch bounds the ended live playlists finalized per tick.
+	finalizeBatch = 3
+)
+
+// finalizeEnded finalizes created live playlists whose period ended at least
+// FinalizeGrace ago (oldest first, a few per tick), including ones a long
+// outage left behind. It reports whether Spotify rate-limited a request.
+func (r *Runner) finalizeEnded(ctx context.Context, now time.Time) bool {
+	rows, err := r.Store.EndedLiveTopPlaylists(ctx, now.Add(-FinalizeGrace), now, finalizeBatch)
+	if err != nil {
+		r.Log.WarnContext(ctx, "list ended live top playlists failed", logging.Err(err))
+		return false
+	}
+	for _, rec := range rows {
+		loc := r.Config.Location
+		if l, err := time.LoadLocation(rec.TimeZone); err == nil && rec.TimeZone != "" {
+			loc = l // finalize in the zone the period was generated in
+		}
+		if loc == nil {
+			loc = time.UTC
+		}
+		p := Period(rec.Period)
+		if limited, _ := r.finalize(ctx, p, rec, rec.PeriodStart.In(loc), rec.PeriodEnd.In(loc), loc, now); limited {
+			return true
+		}
+	}
+	return false
+}
+
 // live advances the current period's live playlist on a tick: it is created
 // on the period's first plays, then re-ranked every Config.Refresh(). A live
 // row whose creation failed is retried like any other attempt. It reports
@@ -29,7 +62,10 @@ func (r *Runner) live(ctx context.Context, p Period, now time.Time) bool {
 	}
 	switch rec.Status {
 	case domain.TopPlaylistCreated:
-		if !rec.Live || (rec.RefreshedAt != nil && now.Sub(*rec.RefreshedAt) < r.Config.Refresh()) {
+		switch {
+		case !rec.Live,
+			rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now), // a failed refresh waits
+			rec.RefreshedAt != nil && now.Sub(*rec.RefreshedAt) < r.Config.Refresh():
 			return false
 		}
 		limited, _ := r.refreshLive(ctx, p, rec, start, now) // stored on the row and logged
@@ -47,8 +83,8 @@ func (r *Runner) live(ctx context.Context, p Period, now time.Time) bool {
 // ever unpublishing it. An unchanged order makes no Spotify call (only the
 // snapshot's plays are updated); a new order replaces the playlist's items
 // first and saves the snapshot after Spotify accepted them. A failure only
-// records last_error and refreshed_at, so the next try waits a full refresh
-// interval.
+// records last_error and next_attempt_at (a full refresh interval later);
+// refreshed_at advances on success only.
 func (r *Runner) refreshLive(ctx context.Context, p Period, rec domain.TopPlaylistRecord, start, now time.Time) (limited bool, err error) {
 	msg, err := r.authProblem(ctx)
 	if err != nil {
@@ -80,7 +116,7 @@ func (r *Runner) refreshLive(ctx context.Context, p Period, rec domain.TopPlayli
 	next := rec
 	setTotals(&next, tracks)
 	refreshed := now.UTC()
-	next.RefreshedAt, next.LastError = &refreshed, ""
+	next.RefreshedAt, next.LastError, next.NextAttemptAt = &refreshed, "", nil
 	if err := r.saveSnapshot(ctx, next, tracks); err != nil {
 		return false, r.liveFailed(ctx, rec, "save snapshot: "+err.Error(), err, now)
 	}
@@ -103,10 +139,11 @@ func (r *Runner) liveSpotifyFailed(ctx context.Context, rec domain.TopPlaylistRe
 }
 
 // liveFailed records a failed live refresh: the row stays created, live and
-// published with its old snapshot; only last_error and refreshed_at change.
+// published with its old snapshot; only last_error and next_attempt_at (one
+// refresh interval later) change.
 func (r *Runner) liveFailed(ctx context.Context, rec domain.TopPlaylistRecord, msg string, cause error, now time.Time) error {
-	refreshed := now.UTC()
-	rec.LastError, rec.RefreshedAt = truncateError(msg), &refreshed
+	retry := now.Add(r.Config.Refresh()).UTC()
+	rec.LastError, rec.NextAttemptAt = truncateError(msg), &retry
 	if err := r.upsert(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist state failed", slog.String("name", rec.Name), logging.Err(err))
 		return errors.Join(cause, err)
@@ -120,7 +157,7 @@ func (r *Runner) liveFailed(ctx context.Context, rec domain.TopPlaylistRecord, m
 // in place: it re-ranks the full period [start, end), replaces the items if
 // the order changed, sets the final description and clears live. A failure
 // keeps the row live and published, records last_error and backs off
-// (attempts / next_attempt_at) before the next tick retries.
+// (attempts / next_attempt_at) before a later tick retries.
 func (r *Runner) finalize(ctx context.Context, p Period, rec domain.TopPlaylistRecord, start, end time.Time,
 	loc *time.Location, now time.Time) (limited bool, err error) {
 	msg, err := r.authProblem(ctx)

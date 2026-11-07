@@ -145,6 +145,25 @@ func (q *Queries) PublishedTopPlaylists(ctx context.Context, period string, limi
 	return out, err
 }
 
+// EndedLiveTopPlaylists lists created live top playlists whose period ended
+// at or before endedBy and that are not backing off a failed finalization at
+// now, oldest period first.
+func (q *Queries) EndedLiveTopPlaylists(ctx context.Context, endedBy, now time.Time, limit int) ([]domain.TopPlaylistRecord, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE status = 'created' AND live AND period_end <= $1
+			AND (attempts = 0 OR next_attempt_at IS NULL OR next_attempt_at <= $2)
+		ORDER BY period_start, period
+		LIMIT $3`, endedBy, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ended live top playlists: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.TopPlaylistRecord, error) {
+		var p domain.TopPlaylistRecord
+		err := r.Scan(topPlaylistTargets(&p)...)
+		return p, err
+	})
+}
+
 // AdminTopPlaylists lists top playlists of every status (period "" = every
 // kind), newest period first, with the total row count.
 func (q *Queries) AdminTopPlaylists(ctx context.Context, period string, limit, offset int) ([]domain.TopPlaylistRecord, int, error) {

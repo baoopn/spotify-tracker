@@ -81,7 +81,7 @@ type adminTopPlaylist struct {
 	Name          string     `json:"name"`
 	Status        string     `json:"status"`
 	Hidden        bool       `json:"hidden"`
-	Live          bool       `json:"live"`
+	Live          bool       `json:"live"` // live playlist of a period that is still running
 	RefreshedAt   *time.Time `json:"refreshed_at"`
 	SpotifyID     *string    `json:"spotify_id"`
 	SpotifyURL    *string    `json:"spotify_url"`
@@ -144,7 +144,9 @@ func (a *API) toAdminTopPlaylist(row domain.TopPlaylistRecord) adminTopPlaylist 
 	return adminTopPlaylist{
 		Period: row.Period, PeriodStart: start, PeriodEnd: row.PeriodEnd.In(zone), TimeZone: zone.String(),
 		Label: topplaylists.Label(topplaylists.Period(row.Period), start), Name: row.Name,
-		Status: row.Status, Hidden: row.Hidden, Live: row.Live, RefreshedAt: optUTC(row.RefreshedAt),
+		Status: row.Status, Hidden: row.Hidden,
+		// An ended period whose live playlist is not finalized yet is finished.
+		Live: row.Live && a.clock().Before(row.PeriodEnd), RefreshedAt: optUTC(row.RefreshedAt),
 		SpotifyID: optString(row.SpotifyPlaylistID), SpotifyURL: optString(row.SpotifyURL),
 		TrackCount: row.TrackCount, TotalPlays: row.TotalPlays, Attempts: row.Attempts,
 		LastError: optString(row.LastError), NextAttemptAt: optUTC(row.NextAttemptAt),

@@ -76,7 +76,7 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/stats/genres?range=&limit=` | Genre breakdown (root + sub-genres, share of plays). |
 | `GET /api/v1/stats/audio-profile?range=` | Play-weighted average audio features. |
 | `GET /api/v1/playlists/recent?limit=` | Public playlists recently played from (name, cover, owner, plays). |
-| `GET /api/v1/playlists/top?limit=` | Auto-generated "Top 50" playlists per `week` / `month` / `year`, newest first; `limit` (1–24, default 6) older entries per kind; only the newest carries its `tracks`. Each entry has `live` (the current period's playlist, still updating) and `refreshed_at` (UTC or `null`). |
+| `GET /api/v1/playlists/top?limit=` | Auto-generated "Top 50" playlists per `week` / `month` / `year`, newest first; `limit` (1–24, default 6) older entries per kind; only the newest carries its `tracks`. Each entry has `live` (the playlist of a period still running, still updating) and `refreshed_at` (UTC or `null`). |
 | `POST /api/v1/events` | Cookieless page-view beacon from the public page (see `docs/admin-api.md`). |
 
 **Top 50 playlists.** When a week (ISO, Monday–Sunday), month or year ends, the
@@ -85,7 +85,7 @@ period (`TOP_PLAYLISTS_PERIODS`, boundaries in `TOP_PLAYLISTS_TIME_ZONE`) and
 the public page embeds it. The current week also gets its playlist right away
 (`TOP_PLAYLISTS_LIVE`, default `week`): it is refreshed hourly while you listen
 (`TOP_PLAYLISTS_LIVE_REFRESH`) and finalized in place — same Spotify playlist —
-when the week ends. It needs the `playlist-modify-public` scope:
+15 minutes after the week ends. It needs the `playlist-modify-public` scope:
 re-authorize Spotify once in the admin (Settings → Spotify). The admin's
 Data → Top 50 page lists every period with its status and track snapshot, runs
 the generator on demand, backfills older periods, regenerates a playlist in

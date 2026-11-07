@@ -167,8 +167,22 @@ func TestLiveDescription(t *testing.T) {
 		Year:  "The 50 most-played tracks of 2026 so far, updated hourly from listening history.",
 	}
 	for p, start := range cases {
-		if got := LiveDescription(p, start); got != want[p] {
+		if got := LiveDescription(p, start, time.Hour); got != want[p] {
 			t.Errorf("LiveDescription(%s) = %q, want %q", p, got, want[p])
+		}
+	}
+}
+
+func TestLiveDescriptionCadence(t *testing.T) {
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	cases := map[time.Duration]string{
+		time.Hour: "hourly", 0: "hourly", 24 * time.Hour: "daily", 2 * time.Hour: "every 2 hours",
+		90 * time.Minute: "every 90 minutes", 10 * time.Minute: "every 10 minutes", 10*time.Minute + 30*time.Second: "every 10m30s",
+	}
+	for d, c := range cases {
+		want := "The 50 most-played tracks of November 2026 so far, updated " + c + " from listening history."
+		if got := LiveDescription(Month, start, d); got != want {
+			t.Errorf("LiveDescription(%s) = %q, want %q", d, got, want)
 		}
 	}
 }

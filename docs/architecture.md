@@ -105,19 +105,28 @@ Kinds in `TOP_PLAYLISTS_LIVE` (default `week`) also get a **live** playlist of
 the running period, handled by the same tick under the same advisory lock. On
 the period's first plays the playlist is created with a "so far" description
 (row `created`, `live = true`), ranking `[start, now)`. Every
-`TOP_PLAYLISTS_LIVE_REFRESH` (default 1 h, min 10 min; tracked in
-`refreshed_at`) it is re-ranked: an unchanged order writes nothing to Spotify
+`TOP_PLAYLISTS_LIVE_REFRESH` (default 1 h, min 10 min; `refreshed_at` is the
+last success) it is re-ranked: an unchanged order writes nothing to Spotify
 and only updates the snapshot's plays; a new order replaces the items first and
 saves the snapshot after Spotify accepted them. Failures never unpublish: the
 row keeps `created` / `live` / `published_at` and its old snapshot, and only
-`last_error` and `refreshed_at` change. A failed initial creation follows the
-normal `failed` / `waiting_auth` retries. When the period ends, the
-completed-period handling finalizes the live row in place — full-period
-ranking, items replaced if the order changed, `PUT /playlists/{id}` with the
-final description, then `live = false` — retrying failures with the usual
-backoff while the row stays live and published. A live row whose finalize was
-missed because the API was down longer than a whole period can be finalized
-from the admin (Regenerate).
+`last_error` and `next_attempt_at` (one interval later) change. A failed
+initial creation follows the normal `failed` / `waiting_auth` retries.
+
+Each tick first finalizes ended live rows in place (a store query for
+`created AND live AND period_end <= now - 15 min`, not backing off, oldest
+first, three per tick, so rows a long outage left behind are caught up too):
+full-period ranking, items replaced if the order changed, `PUT /playlists/{id}`
+with the final description, then `live = false`. Failures back off
+(`attempts` / `next_attempt_at`) while the row stays live and published. The
+15-minute grace lets late plays count; the admin's Regenerate finalizes
+immediately. The next period's live playlist starts at its own start
+regardless. The APIs report `live` only while the period is running. When a
+final publish reuses an existing playlist (possibly created live), its
+description is updated too; if that update fails, the row is published anyway
+and left live (backing off) for the finalizer to retry. If saving a new
+playlist ID fails after Spotify created it, the runner keeps the ID in memory
+and the next attempt saves and reuses it instead of creating another.
 
 ## Admin dashboard
 

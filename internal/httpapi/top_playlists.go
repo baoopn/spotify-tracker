@@ -28,7 +28,7 @@ type topPlaylist struct {
 	TrackCount  int                       `json:"track_count"`
 	TotalPlays  int64                     `json:"total_plays"`
 	PublishedAt *time.Time                `json:"published_at"`
-	Live        bool                      `json:"live"`         // the period is still running
+	Live        bool                      `json:"live"`         // a live playlist whose period is still running
 	RefreshedAt *time.Time                `json:"refreshed_at"` // last live refresh (UTC)
 	Tracks      []domain.TopPlaylistTrack `json:"tracks"`
 }
@@ -74,6 +74,7 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 		return nil, err
 	}
 	out := make([]topPlaylist, 0, len(rows))
+	now := h.clock()
 	for _, row := range rows {
 		if row.Hidden {
 			continue // the store filters hidden rows too; never publish one
@@ -87,7 +88,9 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 			Period: row.Period, PeriodStart: start, PeriodEnd: row.PeriodEnd.In(zone), TimeZone: zone.String(),
 			Label: topplaylists.Label(p, start), Name: row.Name,
 			SpotifyID: row.SpotifyPlaylistID, SpotifyURL: row.SpotifyURL,
-			TrackCount: row.TrackCount, TotalPlays: row.TotalPlays, Live: row.Live,
+			TrackCount: row.TrackCount, TotalPlays: row.TotalPlays,
+			// An ended period not finalized yet is shown as finished.
+			Live:   row.Live && now.Before(row.PeriodEnd),
 			Tracks: []domain.TopPlaylistTrack{},
 		}
 		if row.PublishedAt != nil {

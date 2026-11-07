@@ -69,7 +69,7 @@
 				<BrandIcon name="headphones" class="size-6" />
 				My top 5
 			</h2>
-			<p class="label text-ink-soft">{rangeLabel}</p>
+			<p class="label text-ink-soft" data-testid="top5-range">{rangeLabel}</p>
 		</div>
 
 		<!-- Segmented control: native radios give arrow-key navigation for free. -->

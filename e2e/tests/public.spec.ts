@@ -323,7 +323,8 @@ test.describe('my top 5', () => {
 		const section = page.locator('section[aria-labelledby="top5-heading"]');
 		await expect(section.getByRole('heading', { name: 'My top 5', level: 2 })).toBeVisible();
 		await expect(section).toHaveAttribute('aria-busy', 'false');
-		await expect(section.getByText('Last 7 days', { exact: true })).toBeVisible();
+		const rangeLine = section.getByTestId('top5-range');
+		await expect(rangeLine).toHaveText('Last 7 days');
 
 		const group = section.getByRole('group', { name: 'Top 5 range' });
 		const d7 = group.getByRole('radio', { name: '7D Last 7 days', exact: true });
@@ -362,7 +363,7 @@ test.describe('my top 5', () => {
 		await d30.check({ force: true });
 		await Promise.all([tracks30, artists30]);
 		await expect(d30).toBeChecked();
-		await expect(section.getByText('Last 30 days', { exact: true })).toBeVisible();
+		await expect(rangeLine).toHaveText('Last 30 days');
 		await expect(tracks.getByRole('listitem')).toHaveCount(2);
 		await expect(artists.getByRole('listitem')).toHaveCount(1);
 		await expect(tracks.getByRole('link', { name: 'Top 30d song 1' })).toBeVisible();
@@ -371,7 +372,7 @@ test.describe('my top 5', () => {
 		// 365D: empty in both columns, the control stays usable.
 		await d365.check({ force: true });
 		await expect(d365).toBeChecked();
-		await expect(section.getByText('Last 365 days', { exact: true })).toBeVisible();
+		await expect(rangeLine).toHaveText('Last 365 days');
 		await expect(section.getByText('No plays in this range yet.')).toHaveCount(2);
 		await expect(section.getByRole('list', { name: 'Tracks' })).toHaveCount(0);
 		await expect(section.getByRole('list', { name: 'Artists' })).toHaveCount(0);

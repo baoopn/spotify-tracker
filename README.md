@@ -104,3 +104,7 @@ and `/api/v1` is rate limited per client IP.
 - [Admin dashboard & Clerk setup](docs/admin.md) · [Admin API contract](docs/admin-api.md)
 - [Spotify developer setup & authorization](docs/spotify-token.md) (requires Spotify Premium)
 - [Migrating from the Directus version](docs/migration-from-directus.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).

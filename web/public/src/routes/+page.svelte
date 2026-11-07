@@ -6,6 +6,7 @@
 	import RecentPlaylists from '#lib/components/RecentPlaylists.svelte';
 	import SongStats from '#lib/components/stats/SongStats.svelte';
 	import TopPlaylists from '#lib/components/TopPlaylists.svelte';
+	import TopTracks from '#lib/components/TopTracks.svelte';
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
 	import { live } from '#lib/live.svelte.js';
@@ -51,6 +52,7 @@
 	<div class="space-y-16 sm:space-y-20">
 		<NowPlayingHero />
 		<SongStats />
+		<TopTracks />
 		<TopPlaylists />
 		<RecentList />
 		<RecentPlaylists />

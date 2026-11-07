@@ -139,6 +139,12 @@ export type AudioProfile = {
 	valence: number | null;
 };
 
+/** Range of the rolling top lists: last 7 days, 30 days or 12 months. */
+export type StatsRange = '7d' | '30d' | '365d';
+
+export type TopTrack = { plays: number; last_played: string; track: TrackView };
+export type TopArtist = { plays: number; last_played: string; artist: Artist };
+
 export type ItemResponse<T> = { data: T };
 export type ListResponse<T> = { data: T[]; next_cursor?: string };
 export type ErrorResponse = { error: { code: string; message: string } };

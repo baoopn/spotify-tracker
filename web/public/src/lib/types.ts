@@ -60,6 +60,34 @@ export type Playlist = {
 
 export type RecentPlaylist = { playlist: Playlist; plays: number; last_played: string };
 
+export type TopPeriod = 'week' | 'month' | 'year';
+
+export type TopPlaylistTrack = { position: number; plays: number; track: TrackView };
+
+/** An auto-generated "Top 50" playlist for one completed week, month or year. */
+export type TopPlaylist = {
+	period: TopPeriod;
+	/** RFC 3339 instant; the period is half-open [period_start, period_end). */
+	period_start: string;
+	period_end: string;
+	label: string;
+	name: string;
+	spotify_id: string;
+	spotify_url: string;
+	track_count: number;
+	total_plays: number;
+	published_at: string;
+	/** Filled only for the newest entry of each period; older entries have []. */
+	tracks: TopPlaylistTrack[];
+};
+
+export type TopPlaylists = {
+	/** IANA zone the period boundaries are defined in. */
+	time_zone: string;
+	/** Newest first; every key is always present (possibly empty). */
+	periods: Record<TopPeriod, TopPlaylist[]>;
+};
+
 export type AudioFeatureValues = {
 	acousticness: number | null;
 	danceability: number | null;

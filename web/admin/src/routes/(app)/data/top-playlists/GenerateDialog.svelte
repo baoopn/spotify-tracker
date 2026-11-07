@@ -9,10 +9,13 @@
 	let {
 		open = $bindable(false),
 		status,
+		blocked = false,
 		ongenerate
 	}: {
 		open?: boolean;
 		status: TopPlaylistsStatus;
+		/** Another generator action (Run now / Regenerate) is in flight. */
+		blocked?: boolean;
 		/** Resolves once generated; rejects with the API error (shown inline). */
 		ongenerate: (period: TopPlaylistPeriod, date: string) => Promise<void>;
 	} = $props();
@@ -34,6 +37,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
+		if (blocked) return;
 		if (!date) {
 			error = 'Pick a date inside the period.';
 			return;
@@ -94,7 +98,7 @@
 		<button type="button" class="btn btn-secondary" onclick={() => (open = false)} disabled={busy}>
 			Cancel
 		</button>
-		<button type="submit" form="tpa-generate" class="btn btn-primary" disabled={busy}>
+		<button type="submit" form="tpa-generate" class="btn btn-primary" disabled={busy || blocked}>
 			{#if busy}<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />{/if}
 			Generate
 		</button>

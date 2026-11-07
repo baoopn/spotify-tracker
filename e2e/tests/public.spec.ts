@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { expect, expectClean, history, test } from './fixtures';
 
 test.describe('public page', () => {
@@ -266,6 +266,133 @@ test.describe('top 50 playlists', () => {
 		await answered;
 		await expect(page.locator('section[aria-labelledby="top-heading"]')).toHaveCount(0);
 		await expect(page.locator('iframe[src*="open.spotify.com"]')).toHaveCount(0);
+		expectClean(problems);
+	});
+});
+
+// My top 5: range-keyed fixtures for tracks and artists.
+type TopRange = '7d' | '30d' | '365d';
+const TOP5_TRACK_COUNTS: Record<TopRange, number> = { '7d': 5, '30d': 2, '365d': 0 };
+const TOP5_ARTIST_COUNTS: Record<TopRange, number> = { '7d': 5, '30d': 1, '365d': 0 };
+
+function top5Tracks(range: TopRange) {
+	return Array.from({ length: TOP5_TRACK_COUNTS[range] }, (_, i) => ({
+		plays: 10 - i * 2 - (i === 4 ? 1 : 0),
+		last_played: '2026-11-07T03:04:06Z',
+		track: {
+			id: `top-${range}-t${i + 1}`,
+			name: `Top ${range} song ${i + 1}`,
+			duration_ms: 200_000,
+			explicit: i === 0,
+			external_url: `https://open.spotify.com/track/top${range}t${i + 1}`,
+			artists: [{ id: `a${i + 1}`, name: `Singer ${i + 1}`, external_url: `https://open.spotify.com/artist/a${i + 1}` }]
+		}
+	}));
+}
+
+function top5Artists(range: TopRange) {
+	return Array.from({ length: TOP5_ARTIST_COUNTS[range] }, (_, i) => ({
+		plays: 20 - i * 3,
+		last_played: '2026-11-07T03:04:06Z',
+		artist: {
+			id: `top-${range}-a${i + 1}`,
+			name: `Top ${range} artist ${i + 1}`,
+			external_url: `https://open.spotify.com/artist/top${range}a${i + 1}`
+		}
+	}));
+}
+
+async function routeTop5(page: Page) {
+	const ranges = { tracks: [] as string[], artists: [] as string[] };
+	const serve = (kind: 'tracks' | 'artists') => async (route: Route) => {
+		const url = new URL(route.request().url());
+		const range = (url.searchParams.get('range') ?? '7d') as TopRange;
+		ranges[kind].push(range);
+		const data = kind === 'tracks' ? top5Tracks(range) : top5Artists(range);
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data, range }) });
+	};
+	await page.route('**/api/v1/stats/top-tracks*', serve('tracks'));
+	await page.route('**/api/v1/stats/top-artists*', serve('artists'));
+	return ranges;
+}
+
+test.describe('my top 5', () => {
+	test('lists top tracks and artists and switches ranges together', async ({ page, problems }) => {
+		const ranges = await routeTop5(page);
+		await page.goto('/');
+		const section = page.locator('section[aria-labelledby="top5-heading"]');
+		await expect(section.getByRole('heading', { name: 'My top 5', level: 2 })).toBeVisible();
+		await expect(section).toHaveAttribute('aria-busy', 'false');
+		await expect(section.getByText('Last 7 days', { exact: true })).toBeVisible();
+
+		const group = section.getByRole('group', { name: 'Top 5 range' });
+		const d7 = group.getByRole('radio', { name: 'Last 7 days' });
+		const d30 = group.getByRole('radio', { name: 'Last 30 days' });
+		const d365 = group.getByRole('radio', { name: 'Last 365 days' });
+		await expect(d7).toBeChecked();
+		await expect(d30).not.toBeChecked();
+		await expect(d365).not.toBeChecked();
+
+		const tracks = section.getByRole('list', { name: 'Tracks' });
+		const artists = section.getByRole('list', { name: 'Artists' });
+		await expect(section.getByRole('heading', { name: 'Tracks', level: 3 })).toBeVisible();
+		await expect(section.getByRole('heading', { name: 'Artists', level: 3 })).toBeVisible();
+		await expect(tracks.getByRole('listitem')).toHaveCount(5);
+		await expect(artists.getByRole('listitem')).toHaveCount(5);
+		await expect(tracks.getByRole('listitem').first()).toContainText('01');
+		await expect(tracks.getByRole('listitem').first()).toContainText('Top 7d song 1');
+		await expect(tracks.getByRole('listitem').first()).toContainText('10 plays');
+		await expect(tracks.getByRole('listitem').nth(4)).toContainText('05');
+		await expect(tracks.getByRole('listitem').nth(4)).toContainText('1 play');
+		await expect(tracks.getByRole('listitem').nth(4)).not.toContainText('1 plays');
+		await expect(artists.getByRole('listitem').first()).toContainText('20 plays');
+
+		const trackLink = tracks.getByRole('link', { name: 'Top 7d song 1' });
+		await expect(trackLink).toHaveAttribute('href', 'https://open.spotify.com/track/top7dt1');
+		await expect(trackLink).toHaveAttribute('target', '_blank');
+		await expect(trackLink).toHaveAttribute('rel', 'noopener noreferrer');
+		const artistLink = artists.getByRole('link', { name: 'Top 7d artist 1' });
+		await expect(artistLink).toHaveAttribute('href', 'https://open.spotify.com/artist/top7da1');
+		await expect(artistLink).toHaveAttribute('target', '_blank');
+		await expect(artistLink).toHaveAttribute('rel', 'noopener noreferrer');
+
+		// 30D: both lists follow the one control.
+		const tracks30 = page.waitForRequest((r) => r.url().includes('/api/v1/stats/top-tracks') && r.url().includes('range=30d'));
+		const artists30 = page.waitForRequest((r) => r.url().includes('/api/v1/stats/top-artists') && r.url().includes('range=30d'));
+		await section.getByText('30D', { exact: true }).click();
+		await Promise.all([tracks30, artists30]);
+		await expect(d30).toBeChecked();
+		await expect(section.getByText('Last 30 days', { exact: true })).toBeVisible();
+		await expect(tracks.getByRole('listitem')).toHaveCount(2);
+		await expect(artists.getByRole('listitem')).toHaveCount(1);
+		await expect(tracks.getByRole('link', { name: 'Top 30d song 1' })).toBeVisible();
+		await expect(artists.getByRole('link', { name: 'Top 30d artist 1' })).toBeVisible();
+
+		// 365D: empty in both columns, the control stays usable.
+		await section.getByText('365D', { exact: true }).click();
+		await expect(d365).toBeChecked();
+		await expect(section.getByText('Last 365 days', { exact: true })).toBeVisible();
+		await expect(section.getByText('No plays in this range yet.')).toHaveCount(2);
+		await expect(section.getByRole('list', { name: 'Tracks' })).toHaveCount(0);
+		await expect(section.getByRole('list', { name: 'Artists' })).toHaveCount(0);
+		expect(ranges.tracks).toContain('365d');
+		expect(ranges.artists).toContain('365d');
+
+		// Keyboard: arrow keys move back through the segmented control.
+		await d365.focus();
+		await page.keyboard.press('ArrowLeft');
+		await expect(d30).toBeChecked();
+		await expect(tracks.getByRole('listitem')).toHaveCount(2);
+		expectClean(problems);
+	});
+
+	test('is absent when both first loads fail', async ({ page, problems }) => {
+		await page.route('**/api/v1/stats/top-tracks*', (route) => route.fulfill({ status: 500, body: '' }));
+		await page.route('**/api/v1/stats/top-artists*', (route) => route.fulfill({ status: 500, body: '' }));
+		await page.goto('/');
+		await expect(page.getByRole('heading', { name: 'Recently played', exact: true })).toBeVisible();
+		// Retries (2) finish, then the optional section is gone.
+		await expect(page.locator('section[aria-labelledby="top5-heading"]')).toHaveCount(0, { timeout: 20_000 });
 		expectClean(problems);
 	});
 });

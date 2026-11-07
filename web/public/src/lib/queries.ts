@@ -4,23 +4,27 @@
 // Now playing is pushed over SSE into this cache (see live.svelte.ts).
 
 import { browser } from '$app/env';
-import { QueryClient, queryOptions, skipToken } from '@tanstack/svelte-query';
+import { QueryClient, keepPreviousData, queryOptions, skipToken } from '@tanstack/svelte-query';
 import {
 	ApiError,
 	fetchAudioProfile,
 	fetchHistory,
 	fetchNowPlaying,
 	fetchRecentPlaylists,
+	fetchTopArtists,
+	fetchTopTracks,
 	fetchTopPlaylists,
 	fetchTrackDetail
 } from './api';
-import type { NowPlaying, TrackDetail } from './types';
+import type { NowPlaying, StatsRange, TopArtist, TopTrack, TrackDetail } from './types';
 
 export const HISTORY_LIMIT = 6;
 export const PLAYLIST_LIMIT = 5;
 /** Older entries per period (besides the newest one). */
 export const TOP_PLAYLIST_LIMIT = 6;
 export const PROFILE_RANGE = '30d';
+/** Entries in each "My top 5" list. */
+export const TOP_LIMIT = 5;
 
 /** Now-playing poll while the stream is down (SSE is the live source otherwise). */
 export const NOW_POLL_MS = 10_000;
@@ -31,6 +35,7 @@ const PLAYLISTS_REFRESH_MS = 30_000;
 const TOP_PLAYLISTS_REFRESH_MS = 5 * 60_000;
 const PROFILE_REFRESH_MS = 60_000;
 const TRACK_REFRESH_MS = 60_000;
+const TOP_REFRESH_MS = 60_000;
 /** Fast poll while the enricher is still analysing the track on show. */
 const TRACK_PENDING_MS = 4_000;
 
@@ -43,6 +48,8 @@ export const queryKeys = {
 	playlistsAll: ['playlists'] as const,
 	track: (id: string | null) => ['track', id] as const,
 	audioProfile: (range: string) => ['stats', 'audio-profile', range] as const,
+	topTracks: (range: StatsRange, limit: number) => ['stats', 'top-tracks', range, limit] as const,
+	topArtists: (range: StatsRange, limit: number) => ['stats', 'top-artists', range, limit] as const,
 	statsAll: ['stats'] as const
 };
 
@@ -130,6 +137,26 @@ export function audioProfileQuery(range = PROFILE_RANGE) {
 		queryKey: queryKeys.audioProfile(range),
 		queryFn: ({ signal }) => fetchAudioProfile(range, signal),
 		refetchInterval: PROFILE_REFRESH_MS
+	});
+}
+
+// Top lists: keep the previous range on screen while the next one loads.
+// Explicit return types: keepPreviousData confuses TData inference.
+export function topTracksQuery(range: StatsRange) {
+	return queryOptions({
+		queryKey: queryKeys.topTracks(range, TOP_LIMIT),
+		queryFn: ({ signal }): Promise<TopTrack[]> => fetchTopTracks(range, TOP_LIMIT, signal),
+		placeholderData: keepPreviousData,
+		refetchInterval: TOP_REFRESH_MS
+	});
+}
+
+export function topArtistsQuery(range: StatsRange) {
+	return queryOptions({
+		queryKey: queryKeys.topArtists(range, TOP_LIMIT),
+		queryFn: ({ signal }): Promise<TopArtist[]> => fetchTopArtists(range, TOP_LIMIT, signal),
+		placeholderData: keepPreviousData,
+		refetchInterval: TOP_REFRESH_MS
 	});
 }
 

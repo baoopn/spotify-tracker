@@ -51,33 +51,39 @@ test.describe('public page', () => {
 	});
 
 	test('the progress bar glides every frame while playing', async ({ page }) => {
-		await routePlaying(page, 0.25);
+		const { startedAt, durationMs } = await routePlaying(page, 0.25);
 		await page.goto('/');
 		const bar = page.getByRole('progressbar', { name: 'Playback progress' });
 		await expect(bar).toBeVisible();
-		// Sample the dot's position (as a share of the bar's width) for ~1 s of frames.
-		const xs = await page.evaluate(
-			() =>
-				new Promise<number[]>((resolve) => {
+		// Sample the dot's position (as a share of the bar's width) for ~1 s of frames,
+		// and where the fixture's player is at the first sample.
+		const { xs, expected } = await page.evaluate(
+			({ startedAt, durationMs }) =>
+				new Promise<{ xs: number[]; expected: number }>((resolve) => {
 					const bar = document.querySelector<HTMLElement>('[role="progressbar"]');
 					const dot = bar?.querySelector<HTMLElement>('.rounded-full');
 					const out: number[] = [];
+					let expected = NaN;
 					const t0 = performance.now();
 					const frame = () => {
 						if (bar && dot) {
 							const b = bar.getBoundingClientRect();
 							const d = dot.getBoundingClientRect();
+							if (out.length === 0) {
+								expected = Math.min(100, ((Date.now() - startedAt) / durationMs) * 100);
+							}
 							out.push(((d.left + d.width / 2 - b.left) / b.width) * 100);
 						}
 						if (performance.now() - t0 < 1000) requestAnimationFrame(frame);
-						else resolve(out);
+						else resolve({ xs: out, expected });
 					};
 					requestAnimationFrame(frame);
-				})
+				}),
+			{ startedAt, durationMs }
 		);
-		// The dot sits where the fill ends: ~25% (60 s of 240 s, plus the load time).
-		// If 100cqw resolved against the viewport instead of the bar, it would be off.
-		expect(Math.abs(xs[0] - 25)).toBeLessThanOrEqual(2);
+		// The dot sits where the player is (the fill's end), however long the page took
+		// to load. If 100cqw resolved against the viewport instead of the bar, it would be off.
+		expect(Math.abs(xs[0] - expected)).toBeLessThanOrEqual(2);
 		const distinct = new Set(xs).size;
 		// A 1 s stepping clock would give 1-2 positions; frames give dozens.
 		expect(distinct).toBeGreaterThan(15);
@@ -143,7 +149,7 @@ test.describe('public page', () => {
  * Deterministic playback at `at` (0-1) of a 240 s track: no stream (falls back
  * to polling), and each poll reports the position a real player would be at.
  */
-async function routePlaying(page: Page, at: number) {
+async function routePlaying(page: Page, at: number): Promise<{ startedAt: number; durationMs: number }> {
 	const durationMs = 240_000;
 	await page.route('**/api/v1/now-playing/stream', (route) => route.abort());
 	const startedAt = Date.now() - at * durationMs;
@@ -159,6 +165,7 @@ async function routePlaying(page: Page, at: number) {
 			}
 		})
 	);
+	return { startedAt, durationMs };
 }
 
 /** The page can't scroll sideways and nothing sticks out past the viewport (1 px slack). */

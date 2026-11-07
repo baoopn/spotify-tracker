@@ -406,6 +406,7 @@ func TestTopPlaylistGenerateBadInput(t *testing.T) {
 		`{"period":"day","date":"2026-10-01"}`:   "invalid_period",
 		`{"period":"week","date":"10/01/2026"}`:  "invalid_date",
 		`{"period":"week"}`:                      "invalid_date",
+		`{"period":"year","date":"1999-12-31"}`:  "invalid_date",
 	} {
 		code, resp := h.do(t, http.MethodPost, "/admin/api/top-playlists/generate", body)
 		if code != http.StatusBadRequest || errCode(t, resp) != want {
@@ -422,6 +423,8 @@ func TestTopPlaylistGenerateErrors(t *testing.T) {
 	waiting.Status, waiting.LastError = domain.TopPlaylistWaitingAuth, "re-authorize Spotify in the admin"
 	failed := createdRow()
 	failed.Status, failed.LastError = domain.TopPlaylistFailed, "spotify: replace playlist items failed (502)"
+	keptRow := createdRow()
+	keptRow.LastError = "spotify: replace failed (500)"
 	cases := []struct {
 		name   string
 		rec    domain.TopPlaylistRecord
@@ -439,6 +442,10 @@ func TestTopPlaylistGenerateErrors(t *testing.T) {
 			412, "spotify_not_authorized", 1, "re-authorize Spotify"},
 		{"spotify failure", failed, errors.New("spotify: 502"), 502, "spotify_error", 1, "replace playlist items failed (502)"},
 		{"internal", domain.TopPlaylistRecord{}, errors.New("db down"), 500, "internal", 0, ""},
+		{"no plays", createdRow(), topplaylists.ErrNoPlays, 409, "no_plays", 1, "playlist left unchanged"},
+		{"published kept", keptRow, errors.New("spotify: 500"), 502, "spotify_error", 1, "replace failed (500)"},
+		{"published, not authorized", createdRow(), fmt.Errorf("%w: connect Spotify", topplaylists.ErrNotAuthorized),
+			412, "spotify_not_authorized", 1, "connect Spotify"},
 	}
 	for _, c := range cases {
 		h := newTopHarness(t, true)

@@ -178,7 +178,9 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	if len(tracks) == 0 {
 		rec.Status, rec.TrackCount, rec.TotalPlays = domain.TopPlaylistEmpty, 0, 0
 		rec.LastError, rec.NextAttemptAt = "", nil
-		if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+		wctx, cancel := storeCtx(ctx)
+		defer cancel()
+		if err := r.Store.UpsertTopPlaylist(wctx, rec); err != nil {
 			r.Log.WarnContext(ctx, "save empty top playlist failed", slog.String("name", rec.Name), logging.Err(err))
 			return false, err
 		}
@@ -191,7 +193,7 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	for _, t := range tracks {
 		rec.TotalPlays += t.Plays
 	}
-	if err := r.Store.SaveTopPlaylistSnapshot(ctx, rec, tracks); err != nil {
+	if err := r.saveSnapshot(ctx, rec, tracks); err != nil {
 		return r.fail(ctx, rec, err, now), err
 	}
 
@@ -216,7 +218,7 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	published := now.UTC()
 	rec.Status, rec.PublishedAt, rec.Attempts = domain.TopPlaylistCreated, &published, 0
 	rec.LastError, rec.NextAttemptAt = "", nil
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+	if err := r.upsert(ctx, rec); err != nil {
 		return r.fail(ctx, rec, err, now), err
 	}
 	r.Log.InfoContext(ctx, "top playlist published", slog.String("name", rec.Name),
@@ -270,23 +272,33 @@ func (r *Runner) authProblem(ctx context.Context) (string, error) {
 // re-authorization (the returned error wraps ErrNotAuthorized and the cause),
 // everything else is retried with backoff.
 func (r *Runner) spotifyError(ctx context.Context, rec domain.TopPlaylistRecord, prev string, err error, now time.Time) (bool, error) {
-	var msg string
-	var retryAt *time.Time
-	switch {
-	case errors.Is(err, spotify.ErrForbidden):
-		retry := now.Add(forbiddenRetry).UTC()
-		msg, retryAt = msgMissingScope, &retry
-	case errors.Is(err, spotify.ErrMissingScope):
-		msg = msgMissingScope
-	case errors.Is(err, spotify.ErrInvalidGrant):
-		msg = msgRevoked
-	case errors.Is(err, spotify.ErrNotConnected):
-		msg = msgNotConnected
-	default:
+	msg, backoff, ok := authMessage(err)
+	if !ok {
 		return r.fail(ctx, rec, err, now), err
+	}
+	var retryAt *time.Time
+	if backoff {
+		retry := now.Add(forbiddenRetry).UTC()
+		retryAt = &retry
 	}
 	r.waitAuth(ctx, rec, prev, msg, retryAt)
 	return false, fmt.Errorf("%w: %s: %w", ErrNotAuthorized, msg, err)
+}
+
+// authMessage maps a Spotify authorization error to the waiting_auth message.
+// backoff is set after a 403, whose retry is spaced out by forbiddenRetry.
+func authMessage(err error) (msg string, backoff, ok bool) {
+	switch {
+	case errors.Is(err, spotify.ErrForbidden):
+		return msgMissingScope, true, true
+	case errors.Is(err, spotify.ErrMissingScope):
+		return msgMissingScope, false, true
+	case errors.Is(err, spotify.ErrInvalidGrant):
+		return msgRevoked, false, true
+	case errors.Is(err, spotify.ErrNotConnected):
+		return msgNotConnected, false, true
+	}
+	return "", false, false
 }
 
 // waitAuth stores status waiting_auth, logging only when the status changes.
@@ -296,7 +308,7 @@ func (r *Runner) waitAuth(ctx context.Context, rec domain.TopPlaylistRecord, pre
 		return // unchanged; nothing to write or log
 	}
 	rec.Status, rec.LastError, rec.NextAttemptAt = domain.TopPlaylistWaitingAuth, msg, retryAt
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+	if err := r.upsert(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist state failed", slog.String("name", rec.Name), logging.Err(err))
 		return
 	}
@@ -319,7 +331,7 @@ func (r *Runner) fail(ctx context.Context, rec domain.TopPlaylistRecord, cause e
 	next := now.Add(delay).UTC()
 	rec.Status, rec.NextAttemptAt = domain.TopPlaylistFailed, &next
 	rec.LastError = truncateError(cause.Error())
-	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
+	if err := r.upsert(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist failure failed", slog.String("name", rec.Name), logging.Err(err))
 	}
 	r.Log.WarnContext(ctx, "top playlist generation failed", slog.String("name", rec.Name),

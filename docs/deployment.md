@@ -103,6 +103,9 @@ gunzip -c backups/daily/spotify_tracker-YYYYMMDD.sql.gz | \
 Upgrade: `IMAGE_TAG=sha-xxxxxxx docker compose -f docker-compose.prod.yml up -d`
 (or `make prod-up` for `latest`).
 
+The Top 50 playlist generator (`TOP_PLAYLISTS_PERIODS`) defaults to `none` in
+local dev and to `week,month,year` in the production compose files.
+
 ## Operations
 
 - Logs: JSON on stdout (`docker compose logs -f api`).

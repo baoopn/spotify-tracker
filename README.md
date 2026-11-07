@@ -90,7 +90,9 @@ re-authorize Spotify once in the admin (Settings → Spotify). The admin's
 Data → Top 50 page lists every period with its status and track snapshot, runs
 the generator on demand, backfills older periods, regenerates a playlist in
 place (same Spotify playlist, new tracks) and hides or shows it on the public
-page (see `docs/admin-api.md`).
+page (see `docs/admin-api.md`). Local dev (`docker-compose.yml`, `.env.example`)
+defaults `TOP_PLAYLISTS_PERIODS` to `none` so it never writes playlists to your
+Spotify account; the production compose files default to `week,month,year`.
 
 `range` is `7d`, `30d` (default), `90d`, `180d`, `365d` or `all`. Responses are
 `{"data": …}`; errors are `{"error": {"code", "message"}}`. Stats are cached in

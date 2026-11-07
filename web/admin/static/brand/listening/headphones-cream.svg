@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="listening">
   <title>listening</title>
   <g fill="none" stroke="#fff5eb" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M59 95.5a25 25 0 1 1 0 50a25 25 0 1 1 0-50z"/>
-    <path d="M141 95.5a25 25 0 1 1 0 50a25 25 0 1 1 0-50z"/>
-    <path d="M34 120.5a66 66 0 0 1 132 0"/>
+    <path d="M37 135a25 25 0 1 1 25 25H61.2"/>
+    <path d="M37 135V103a63 63 0 0 1 126 0V160"/>
+    <path d="M113 160V135a25 25 0 0 1 50 0"/>
   </g>
 </svg>

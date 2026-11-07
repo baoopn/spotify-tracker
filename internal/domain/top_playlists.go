@@ -28,6 +28,10 @@ type TopPlaylistRecord struct {
 	LastError         string
 	NextAttemptAt     *time.Time
 	PublishedAt       *time.Time
+	// Hidden rows are left out of the public API (toggled by admins).
+	Hidden    bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // RankedTrack is a track's play count within a period.

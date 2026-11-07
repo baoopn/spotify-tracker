@@ -77,6 +77,13 @@ test('admin API rejects unauthenticated requests with JSON 401', async ({ reques
 	expect(res.headers()['content-type']).toContain('application/json');
 });
 
+test('admin top playlists API requires authentication', async ({ request }) => {
+	const res = await request.get('/admin/api/top-playlists');
+	expect(res.status()).toBe(401);
+	expect(res.headers()['content-type']).toContain('application/json');
+	expect(await res.json()).toMatchObject({ error: { code: 'unauthorized' } });
+});
+
 test('admin config exposes only the publishable key', async ({ request }) => {
 	const res = await request.get('/admin/api/config');
 	expect(res.status()).toBe(200);

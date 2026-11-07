@@ -13,12 +13,12 @@ import (
 
 const topPlaylistColumns = `period, period_start, period_end, time_zone, name, status,
 	COALESCE(spotify_playlist_id, ''), COALESCE(spotify_url, ''), track_count, total_plays,
-	attempts, COALESCE(last_error, ''), next_attempt_at, published_at`
+	attempts, COALESCE(last_error, ''), next_attempt_at, published_at, hidden, created_at, updated_at`
 
 func topPlaylistTargets(p *domain.TopPlaylistRecord) []any {
 	return []any{&p.Period, &p.PeriodStart, &p.PeriodEnd, &p.TimeZone, &p.Name, &p.Status,
 		&p.SpotifyPlaylistID, &p.SpotifyURL, &p.TrackCount, &p.TotalPlays, &p.Attempts,
-		&p.LastError, &p.NextAttemptAt, &p.PublishedAt}
+		&p.LastError, &p.NextAttemptAt, &p.PublishedAt, &p.Hidden, &p.CreatedAt, &p.UpdatedAt}
 }
 
 // TopPlaylist returns the generation state of one period's top playlist,
@@ -107,11 +107,11 @@ func (q *Queries) RankTracks(ctx context.Context, start, end time.Time, limit in
 	})
 }
 
-// PublishedTopPlaylists lists created top playlists of one period kind,
-// newest first.
+// PublishedTopPlaylists lists created, visible top playlists of one period
+// kind, newest first.
 func (q *Queries) PublishedTopPlaylists(ctx context.Context, period string, limit int) ([]domain.TopPlaylistRecord, error) {
 	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
-		WHERE period = $1 AND status = 'created'
+		WHERE period = $1 AND status = 'created' AND NOT hidden
 		ORDER BY period_start DESC
 		LIMIT $2`, period, limit)
 	if err != nil {
@@ -126,6 +126,48 @@ func (q *Queries) PublishedTopPlaylists(ctx context.Context, period string, limi
 		out = []domain.TopPlaylistRecord{}
 	}
 	return out, err
+}
+
+// AdminTopPlaylists lists top playlists of every status (period "" = every
+// kind), newest period first, with the total row count.
+func (q *Queries) AdminTopPlaylists(ctx context.Context, period string, limit, offset int) ([]domain.TopPlaylistRecord, int, error) {
+	var total int
+	if err := q.db.QueryRow(ctx, `SELECT COUNT(*) FROM top_playlists
+		WHERE $1::text = '' OR period = $1`, period).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("admin top playlists count: %w", err)
+	}
+	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE $1::text = '' OR period = $1
+		ORDER BY period_start DESC, period
+		LIMIT $2 OFFSET $3`, period, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("admin top playlists: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.TopPlaylistRecord, error) {
+		var p domain.TopPlaylistRecord
+		err := r.Scan(topPlaylistTargets(&p)...)
+		return p, err
+	})
+	if out == nil {
+		out = []domain.TopPlaylistRecord{}
+	}
+	return out, total, err
+}
+
+// SetTopPlaylistHidden shows or hides a top playlist on the public page and
+// returns the updated row (domain.ErrNotFound when it does not exist).
+func (q *Queries) SetTopPlaylistHidden(ctx context.Context, period string, start time.Time, hidden bool) (domain.TopPlaylistRecord, error) {
+	var p domain.TopPlaylistRecord
+	err := q.db.QueryRow(ctx, `UPDATE top_playlists SET hidden = $3
+		WHERE period = $1 AND period_start = $2
+		RETURNING `+topPlaylistColumns, period, start, hidden).Scan(topPlaylistTargets(&p)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, domain.ErrNotFound
+	}
+	if err != nil {
+		return p, fmt.Errorf("set top playlist hidden %s %s: %w", period, start.Format(time.RFC3339), err)
+	}
+	return p, nil
 }
 
 // TopPlaylistTracks returns a top playlist's snapshot with hydrated tracks.

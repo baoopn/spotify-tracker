@@ -49,6 +49,51 @@ test.describe('public page', () => {
 		expectClean(problems);
 	});
 
+	test('the progress bar glides every frame while playing', async ({ page }) => {
+		// Deterministic playback: no stream (falls back to polling), fixed track.
+		await page.route('**/api/v1/now-playing/stream', (route) => route.abort());
+		// Each poll reports the position a real player would be at by then.
+		const startedAt = Date.now() - 60_000;
+		await page.route('**/api/v1/now-playing', (route) =>
+			route.fulfill({
+				json: {
+					data: {
+						is_playing: true,
+						progress_ms: Date.now() - startedAt,
+						fetched_at: new Date().toISOString(),
+						track: { id: 'glide1', name: 'Glide test', duration_ms: 240_000, explicit: false, artists: [] }
+					}
+				}
+			})
+		);
+		await page.goto('/');
+		const bar = page.getByRole('progressbar', { name: 'Playback progress' });
+		await expect(bar).toBeVisible();
+		// Sample the dot rail for ~1 s of animation frames.
+		const xs = await page.evaluate(
+			() =>
+				new Promise<number[]>((resolve) => {
+					const rail = document.querySelector<HTMLElement>('[role="progressbar"] .rail');
+					const out: number[] = [];
+					const t0 = performance.now();
+					const frame = () => {
+						const m = /translateX\(([\d.]+)%\)/.exec(rail?.style.transform ?? '');
+						if (m) out.push(Number(m[1]));
+						if (performance.now() - t0 < 1000) requestAnimationFrame(frame);
+						else resolve(out);
+					};
+					requestAnimationFrame(frame);
+				})
+		);
+		const distinct = new Set(xs).size;
+		// A 1 s stepping clock would give 1-2 positions; frames give dozens.
+		expect(distinct).toBeGreaterThan(15);
+		for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThanOrEqual(xs[i - 1]);
+		// ~1 s of a 240 s track moves the dot ~0.42% of the width.
+		expect(xs.at(-1)! - xs[0]).toBeGreaterThan(0.2);
+		expect(xs.at(-1)! - xs[0]).toBeLessThan(1);
+	});
+
 	test('a pending track keeps polling its stats every few seconds', async ({ page }) => {
 		const plays = await history(page);
 		test.skip(plays.length === 0, 'no listening history in this database');

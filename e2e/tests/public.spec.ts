@@ -51,41 +51,39 @@ test.describe('public page', () => {
 	});
 
 	test('the progress bar glides every frame while playing', async ({ page }) => {
-		// Deterministic playback: no stream (falls back to polling), fixed track.
-		await page.route('**/api/v1/now-playing/stream', (route) => route.abort());
-		// Each poll reports the position a real player would be at by then.
-		const startedAt = Date.now() - 60_000;
-		await page.route('**/api/v1/now-playing', (route) =>
-			route.fulfill({
-				json: {
-					data: {
-						is_playing: true,
-						progress_ms: Date.now() - startedAt,
-						fetched_at: new Date().toISOString(),
-						track: { id: 'glide1', name: 'Glide test', duration_ms: 240_000, explicit: false, artists: [] }
-					}
-				}
-			})
-		);
+		const { startedAt, durationMs } = await routePlaying(page, 0.25);
 		await page.goto('/');
 		const bar = page.getByRole('progressbar', { name: 'Playback progress' });
 		await expect(bar).toBeVisible();
-		// Sample the dot rail for ~1 s of animation frames.
-		const xs = await page.evaluate(
-			() =>
-				new Promise<number[]>((resolve) => {
-					const rail = document.querySelector<HTMLElement>('[role="progressbar"] .rail');
+		// Sample the dot's position (as a share of the bar's width) for ~1 s of frames,
+		// and where the fixture's player is at the first sample.
+		const { xs, expected } = await page.evaluate(
+			({ startedAt, durationMs }) =>
+				new Promise<{ xs: number[]; expected: number }>((resolve) => {
+					const bar = document.querySelector<HTMLElement>('[role="progressbar"]');
+					const dot = bar?.querySelector<HTMLElement>('.rounded-full');
 					const out: number[] = [];
+					let expected = NaN;
 					const t0 = performance.now();
 					const frame = () => {
-						const m = /translateX\(([\d.]+)%\)/.exec(rail?.style.transform ?? '');
-						if (m) out.push(Number(m[1]));
+						if (bar && dot) {
+							const b = bar.getBoundingClientRect();
+							const d = dot.getBoundingClientRect();
+							if (out.length === 0) {
+								expected = Math.min(100, ((Date.now() - startedAt) / durationMs) * 100);
+							}
+							out.push(((d.left + d.width / 2 - b.left) / b.width) * 100);
+						}
 						if (performance.now() - t0 < 1000) requestAnimationFrame(frame);
-						else resolve(out);
+						else resolve({ xs: out, expected });
 					};
 					requestAnimationFrame(frame);
-				})
+				}),
+			{ startedAt, durationMs }
 		);
+		// The dot sits where the player is (the fill's end), however long the page took
+		// to load. If 100cqw resolved against the viewport instead of the bar, it would be off.
+		expect(Math.abs(xs[0] - expected)).toBeLessThanOrEqual(2);
 		const distinct = new Set(xs).size;
 		// A 1 s stepping clock would give 1-2 positions; frames give dozens.
 		expect(distinct).toBeGreaterThan(15);
@@ -93,6 +91,32 @@ test.describe('public page', () => {
 		// ~1 s of a 240 s track moves the dot ~0.42% of the width.
 		expect(xs.at(-1)! - xs[0]).toBeGreaterThan(0.2);
 		expect(xs.at(-1)! - xs[0]).toBeLessThan(1);
+	});
+
+	for (const at of [0.05, 0.95]) {
+		test(`the progress dot at ${at * 100}% does not widen the page`, async ({ page }) => {
+			await routePlaying(page, at);
+			await page.goto('/');
+			await expect(page.getByRole('progressbar', { name: 'Playback progress' })).toBeVisible();
+			await expectNoHorizontalOverflow(page);
+		});
+	}
+
+	test('the live page has no horizontal scroll on phones', async ({ page }, testInfo) => {
+		test.skip(testInfo.project.name !== 'mobile', 'phone layout only');
+		await page.goto('/');
+		await expect(page.locator('section[aria-labelledby="now-heading"]')).toHaveAttribute(
+			'aria-busy',
+			'false'
+		);
+		await expect(page.locator('section[aria-labelledby="recent-heading"]')).toHaveAttribute(
+			'aria-busy',
+			'false'
+		);
+		const stats = page.locator('section[aria-labelledby="stats-heading"]');
+		if (await stats.count()) await expect(stats).toHaveAttribute('aria-busy', 'false');
+		await page.evaluate(() => document.fonts.ready.then(() => undefined));
+		await expectNoHorizontalOverflow(page);
 	});
 
 	test('a pending track keeps polling its stats every few seconds', async ({ page }) => {
@@ -120,6 +144,53 @@ test.describe('public page', () => {
 		expectClean(problems);
 	});
 });
+
+/**
+ * Deterministic playback at `at` (0-1) of a 240 s track: no stream (falls back
+ * to polling), and each poll reports the position a real player would be at.
+ */
+async function routePlaying(page: Page, at: number): Promise<{ startedAt: number; durationMs: number }> {
+	const durationMs = 240_000;
+	await page.route('**/api/v1/now-playing/stream', (route) => route.abort());
+	const startedAt = Date.now() - at * durationMs;
+	await page.route('**/api/v1/now-playing', (route) =>
+		route.fulfill({
+			json: {
+				data: {
+					is_playing: true,
+					progress_ms: Date.now() - startedAt,
+					fetched_at: new Date().toISOString(),
+					track: { id: 'glide1', name: 'Glide test', duration_ms: durationMs, explicit: false, artists: [] }
+				}
+			}
+		})
+	);
+	return { startedAt, durationMs };
+}
+
+/** The page can't scroll sideways and nothing sticks out past the viewport (1 px slack). */
+async function expectNoHorizontalOverflow(page: Page) {
+	const { scrollWidth, clientWidth, offenders } = await page.evaluate(() => {
+		const root = document.documentElement;
+		const vw = root.clientWidth;
+		// Content inside a clipping ancestor can't widen the page; the ancestor is checked itself.
+		const clipped = (el: Element) => {
+			for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+				if (getComputedStyle(p).overflowX !== 'visible') return true;
+			}
+			return false;
+		};
+		const offenders = [...document.querySelectorAll<HTMLElement>('body *')]
+			.filter((el) => el.getBoundingClientRect().right > vw + 1 && !clipped(el))
+			.map(
+				(el) =>
+					`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} right=${Math.round(el.getBoundingClientRect().right)}`
+			);
+		return { scrollWidth: root.scrollWidth, clientWidth: vw, offenders };
+	});
+	expect(offenders, 'elements past the right edge').toEqual([]);
+	expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
 
 test('automated browsers are not counted', async ({ page }) => {
 	const beacons: string[] = [];

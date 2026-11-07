@@ -1,6 +1,7 @@
 {
 	"name": "spotify-tracker-e2e",
 	"private": true,
+	"license": "MIT",
 	"type": "module",
 	"scripts": {
 		"test": "playwright test"

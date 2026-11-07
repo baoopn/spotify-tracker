@@ -183,7 +183,7 @@
 				<!-- Thin ink progress line with a dot. -->
 				<div class="mt-6">
 					<div
-						class="relative h-3"
+						class="@container relative h-3"
 						role="progressbar"
 						aria-label="Playback progress"
 						aria-valuemin={0}
@@ -198,11 +198,12 @@
 							class="fill absolute top-1/2 left-0 h-0.5 w-full origin-left bg-ink"
 							style:transform="translateY(-50%) scaleX({ratio})"
 						></div>
-						<!-- Full-width rail moved with transform (compositor only), so
-						     translateX(%) is a share of the bar's width. -->
+						<!-- Zero-width anchor moved with transform (compositor only); the
+						     bar is a size container, so 100cqw is the bar's width and the
+						     anchor never extends past it (only the dot's half-width can). -->
 						<div
-							class="rail pointer-events-none absolute inset-0"
-							style:transform="translateX({ratio * 100}%)"
+							class="knob pointer-events-none absolute inset-y-0 left-0 w-0"
+							style:transform="translateX(calc({ratio} * 100cqw))"
 						>
 							<div
 								class="absolute top-1/2 -left-1.5 size-3 -translate-y-1/2 rounded-full border-2 border-paper bg-ink"
@@ -303,7 +304,7 @@
 	/* Moved every frame from script: no CSS transition (it would lag behind and
 	   restart on each update), just a compositor-only transform. */
 	.fill,
-	.rail {
+	.knob {
 		will-change: transform;
 	}
 </style>

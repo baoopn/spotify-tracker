@@ -35,10 +35,14 @@
 		month: 'This month so far',
 		year: 'This year so far'
 	};
+	// Defensive: a "live" entry whose period has ended is shown as a finished one.
+	const latestLive = $derived(
+		!!latest && latest.live && Date.parse(latest.period_end) > Date.now()
+	);
 	const latestZone = $derived(latest?.time_zone || timeZone);
 	const latestRange = $derived(
 		latest
-			? latest.live
+			? latestLive
 				? liveRange(latest.period_start, latestZone)
 				: periodRange(latest.period_start, latest.period_end, latestZone)
 			: ''
@@ -126,7 +130,7 @@
 					<h3 class="min-w-0 font-display text-xl leading-snug font-semibold break-words">
 						{latest.name}
 					</h3>
-					{#if latest.live}
+					{#if latestLive}
 						<p class="chip label shrink-0 [--chip:var(--spot-mint)]">
 							<span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>
 							{SO_FAR[latest.period]}
@@ -135,7 +139,7 @@
 				</div>
 				<p class="mt-1 flex flex-wrap gap-x-2 text-ink-soft">
 					<time datetime={latest.period_start}>{latestRange}</time>
-					{#if latest.live && latest.refreshed_at}
+					{#if latestLive && latest.refreshed_at}
 						<span aria-hidden="true">·</span>
 						<span class="whitespace-nowrap">updated <RelTime value={latest.refreshed_at} /></span>
 					{/if}

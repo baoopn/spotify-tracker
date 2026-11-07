@@ -8,3 +8,4 @@ gen/** linguist-generated=true
 .claude-flow/** linguist-vendored
 .mcp.json linguist-vendored
 CLAUDE.md linguist-documentation
+docs/** linguist-documentation

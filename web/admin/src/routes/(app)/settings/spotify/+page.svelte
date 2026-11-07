@@ -68,8 +68,15 @@
 	const s = $derived(status.data);
 	const health = $derived(tokenHealth(s));
 	const daysLeft = $derived(tokenDaysLeft(s, relativeClock.now));
-	const missingPrivatePlaylists = $derived(
-		!!s?.connected && !s.scopes.includes('playlist-read-private')
+	// Scopes added after the first authorization; each needs a re-authorize.
+	const OPTIONAL_SCOPES = [
+		{ scope: 'playlist-read-private', feature: 'private playlists' },
+		{ scope: 'playlist-modify-public', feature: 'the Top 50 playlists' }
+	];
+	const missingFeatures = $derived(
+		s?.connected
+			? OPTIONAL_SCOPES.filter((o) => !s.scopes.includes(o.scope)).map((o) => o.feature)
+			: []
 	);
 </script>
 
@@ -159,13 +166,13 @@
 					{#each s.scopes as scope (scope)}<span class="chip font-mono">{scope}</span>{:else}<span
 							class="text-muted">–</span
 						>{/each}
-					{#if missingPrivatePlaylists}
+					{#if missingFeatures.length > 0}
 						<p
 							class="mt-1 flex w-full items-center gap-2 rounded-xl bg-spot-butter px-3 py-2 text-sm text-on-spot"
 							role="status"
 						>
 							<Info class="size-4 shrink-0" aria-hidden="true" />
-							<span class="flex-1">Re-authorize to include private playlists.</span>
+							<span class="flex-1">Re-authorize to enable {missingFeatures.join(' and ')}.</span>
 							<button
 								type="button"
 								class="btn btn-secondary btn-sm"

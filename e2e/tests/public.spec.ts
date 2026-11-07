@@ -75,6 +75,9 @@ test.describe('public page', () => {
 					requestAnimationFrame(frame);
 				})
 		);
+		// The dot sits where the fill ends: ~25% (60 s of 240 s, plus the load time).
+		// If 100cqw resolved against the viewport instead of the bar, it would be off.
+		expect(Math.abs(xs[0] - 25)).toBeLessThanOrEqual(2);
 		const distinct = new Set(xs).size;
 		// A 1 s stepping clock would give 1-2 positions; frames give dozens.
 		expect(distinct).toBeGreaterThan(15);
@@ -104,6 +107,9 @@ test.describe('public page', () => {
 			'aria-busy',
 			'false'
 		);
+		const stats = page.locator('section[aria-labelledby="stats-heading"]');
+		if (await stats.count()) await expect(stats).toHaveAttribute('aria-busy', 'false');
+		await page.evaluate(() => document.fonts.ready.then(() => undefined));
 		await expectNoHorizontalOverflow(page);
 	});
 

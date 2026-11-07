@@ -6,6 +6,9 @@ import type {
 	AudioProfile,
 	NowPlaying,
 	RecentPlaylist,
+	StatsRange,
+	TopArtist,
+	TopTrack,
 	TopPlaylists,
 	TrackDetail
 } from './types';
@@ -61,7 +64,11 @@ export const API = {
 	recentPlaylists: (limit: number) => `/api/v1/playlists/recent?limit=${limit}`,
 	topPlaylists: (limit: number) => `/api/v1/playlists/top?limit=${limit}`,
 	track: (id: string) => `/api/v1/tracks/${encodeURIComponent(id)}`,
-	audioProfile: (range: string) => `/api/v1/stats/audio-profile?range=${range}`
+	audioProfile: (range: string) => `/api/v1/stats/audio-profile?range=${range}`,
+	topTracks: (range: StatsRange, limit: number) =>
+		`/api/v1/stats/top-tracks?range=${range}&limit=${limit}`,
+	topArtists: (range: StatsRange, limit: number) =>
+		`/api/v1/stats/top-artists?range=${range}&limit=${limit}`
 } as const;
 
 export async function fetchNowPlaying(signal?: AbortSignal): Promise<NowPlaying | null> {
@@ -97,6 +104,22 @@ export async function fetchAudioProfile(
 	signal?: AbortSignal
 ): Promise<AudioProfile | null> {
 	return (await getJson<ItemResponse<AudioProfile | null>>(API.audioProfile(range), signal)).data;
+}
+
+export async function fetchTopTracks(
+	range: StatsRange,
+	limit: number,
+	signal?: AbortSignal
+): Promise<TopTrack[]> {
+	return (await getJson<ListResponse<TopTrack>>(API.topTracks(range, limit), signal)).data ?? [];
+}
+
+export async function fetchTopArtists(
+	range: StatsRange,
+	limit: number,
+	signal?: AbortSignal
+): Promise<TopArtist[]> {
+	return (await getJson<ListResponse<TopArtist>>(API.topArtists(range, limit), signal)).data ?? [];
 }
 
 export function errorMessage(err: unknown): string {

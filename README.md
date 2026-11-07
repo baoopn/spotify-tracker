@@ -83,7 +83,11 @@ make test lint # quality gates (same as CI)
 API creates a public Spotify playlist of the 50 most-played tracks of that
 period (`TOP_PLAYLISTS_PERIODS`, boundaries in `TOP_PLAYLISTS_TIME_ZONE`) and
 the public page embeds it. It needs the `playlist-modify-public` scope:
-re-authorize Spotify once in the admin (Settings → Spotify).
+re-authorize Spotify once in the admin (Settings → Spotify). The admin's
+Data → Top 50 page lists every period with its status and track snapshot, runs
+the generator on demand, backfills older periods, regenerates a playlist in
+place (same Spotify playlist, new tracks) and hides or shows it on the public
+page (see `docs/admin-api.md`).
 
 `range` is `7d`, `30d` (default), `90d`, `180d`, `365d` or `all`. Responses are
 `{"data": …}`; errors are `{"error": {"code", "message"}}`. Stats are cached in

@@ -372,6 +372,10 @@ export type AdminTopPlaylist = {
 	last_error: string | null;
 	next_attempt_at: string | null;
 	published_at: string | null;
+	/** The current, unfinished period: updated while it runs, finalized in place when it ends. */
+	live: boolean;
+	/** RFC 3339; last live re-rank or finalize (null if never). */
+	refreshed_at: string | null;
 	created_at: string;
 	updated_at: string;
 };
@@ -390,6 +394,10 @@ export type TopPlaylistsStatus = {
 	/** Spotify connected and granted playlist-modify-public. */
 	authorized: boolean;
 	interval_seconds: number;
+	/** Kinds that get a live playlist for the running period; [] when off. */
+	live_periods: TopPlaylistPeriod[];
+	/** How often a live playlist is re-ranked. */
+	live_refresh_seconds: number;
 };
 
 export type TopPlaylistsList = OffsetList<AdminTopPlaylist> & { status: TopPlaylistsStatus };

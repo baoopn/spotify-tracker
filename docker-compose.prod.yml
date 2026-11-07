@@ -82,6 +82,8 @@ services:
       PUBLIC_URL: https://${API_DOMAIN}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+      TOP_PLAYLISTS_PERIODS: ${TOP_PLAYLISTS_PERIODS:-week,month,year}
+      TOP_PLAYLISTS_TIME_ZONE: ${TOP_PLAYLISTS_TIME_ZONE:-UTC}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

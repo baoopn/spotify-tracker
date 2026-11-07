@@ -34,6 +34,7 @@ artists ─┐                 ┌─ albums
                                     ├── track_features      1:1, enrichment status + backoff
                                     └── current_playback    singleton row
 settings (encrypted secrets) · admin_audit · api_request_stats (hourly aggregates)
+top_playlists ── top_playlist_tracks   (one generated playlist per completed week/month/year)
 ```
 
 Migrations are plain SQL in `migrations/` (goose, embedded in the binary,
@@ -82,6 +83,23 @@ never been checked (most recently played first), 2 s apart, then re-checks
 each one every 30 days. A 429 pauses it for `Retry-After`. A refused lookup or
 an artist with no image keeps any image stored earlier. Clients fall back to
 the artist's initial when there is no image.
+
+## Top 50 playlists
+
+`internal/topplaylists` runs in the API (first tick a minute after start,
+then every 10 minutes). For each enabled kind (`TOP_PLAYLISTS_PERIODS`) it
+handles only the most recently completed period — ISO week, calendar month
+or year, half-open `[start, end)` at local midnights in
+`TOP_PLAYLISTS_TIME_ZONE` (DST-safe). Tracks are ranked by
+`SUM(replay_count)` in that range (ties: most recently played). The row in
+`top_playlists` is the state machine: `pending` → `created` (or `empty` when
+nothing was played); `waiting_auth` while the stored scopes lack
+`playlist-modify-public` (or Spotify answers 403); `failed` retries with
+backoff (5 min doubling to 6 h, or Spotify's `Retry-After`). The Spotify
+playlist ID is stored right after `POST /me/playlists`, so a retry only
+re-runs the idempotent `PUT /playlists/{id}/items` and never creates a
+duplicate. The ranked snapshot is kept in `top_playlist_tracks`. Invalid
+settings are logged and disable the feature without stopping the API.
 
 ## Admin dashboard
 

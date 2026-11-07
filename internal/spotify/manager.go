@@ -29,6 +29,9 @@ type Manager struct {
 	// OwnerID, when set, restricts Connect to this Spotify user ID.
 	OwnerID string
 
+	// tokens overrides AccessToken (tests only).
+	tokens func(ctx context.Context, force bool) (string, time.Time, error)
+
 	mu sync.Mutex
 }
 
@@ -92,6 +95,18 @@ func (m *Manager) AccessToken(ctx context.Context, force bool) (string, time.Tim
 	}
 	m.cache(ctx, tok.AccessToken, tok.ExpiresAt)
 	return tok.AccessToken, tok.ExpiresAt, nil
+}
+
+// token returns an access token for Web API calls made by the Manager.
+func (m *Manager) token(ctx context.Context, force bool) (string, error) {
+	var tok string
+	var err error
+	if m.tokens != nil {
+		tok, _, err = m.tokens(ctx, force)
+	} else {
+		tok, _, err = m.AccessToken(ctx, force)
+	}
+	return tok, err
 }
 
 // Connect stores the result of a completed Authorization Code flow.

@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/baoopn/spotify-tracker/internal/store"
+	"github.com/baoopn/spotify-tracker/internal/topplaylists"
 )
 
 // Options configures the router.
@@ -33,6 +34,8 @@ type Options struct {
 	Mount func(r chi.Router)
 	// ShowPrivatePlaylists exposes private playlists on the public API.
 	ShowPrivatePlaylists bool
+	// TopPlaylists lists the enabled "Top 50" playlist kinds and their zone.
+	TopPlaylists topplaylists.Config
 	// Events receives public-page analytics beacons (POST /api/v1/events).
 	Events http.HandlerFunc
 	// Site serves the public frontend at "/" and every non-API path that
@@ -43,6 +46,7 @@ type Options struct {
 // Handler serves the public API.
 type Handler struct {
 	store *store.Store
+	top   topPlaylistStore
 	rdb   *redis.Client
 	log   *slog.Logger
 	opts  Options
@@ -51,6 +55,9 @@ type Handler struct {
 // NewRouter builds the HTTP router.
 func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Options) http.Handler {
 	h := &Handler{store: st, rdb: rdb, log: log, opts: opts}
+	if st != nil {
+		h.top = st
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -100,6 +107,7 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 			r.Get("/stats/genres", h.cached(h.genres))
 			r.Get("/stats/audio-profile", h.cached(h.audioProfile))
 			r.Get("/playlists/recent", h.cached(h.recentPlaylists))
+			r.Get("/playlists/top", h.cached(h.topPlaylists))
 			r.Get("/timezone", h.timezone)
 			if opts.Events != nil {
 				r.Post("/events", opts.Events)

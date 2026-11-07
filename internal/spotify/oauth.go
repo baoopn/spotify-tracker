@@ -23,6 +23,8 @@ const (
 	defaultAccountsBase = "https://accounts.spotify.com"
 	// RequiredScope is needed for the currently-playing endpoint.
 	RequiredScope = "user-read-currently-playing"
+	// PlaylistWriteScope is needed to create and fill the public top playlists.
+	PlaylistWriteScope = "playlist-modify-public"
 )
 
 // Scopes requested when (re)authorizing.
@@ -30,6 +32,8 @@ var Scopes = []string{
 	RequiredScope, "user-read-playback-state", "user-read-recently-played",
 	// Playlist metadata for private / collaborative playlists you play from.
 	"playlist-read-private", "playlist-read-collaborative",
+	// Creating and filling the auto-generated public "Top 50" playlists.
+	PlaylistWriteScope,
 }
 
 // ErrInvalidGrant means the refresh token was revoked or expired (Spotify
@@ -38,6 +42,10 @@ var ErrInvalidGrant = errors.New("spotify: refresh token rejected (invalid_grant
 
 // ErrMissingScope means the token lacks user-read-currently-playing.
 var ErrMissingScope = errors.New("spotify: token is missing scope " + RequiredScope)
+
+// ErrForbidden means Spotify refused a write (HTTP 403), typically because
+// the token lacks the needed scope. Returned wrapped; test with errors.Is.
+var ErrForbidden = errors.New("spotify: forbidden")
 
 // ErrNotConnected means no refresh token is configured.
 var ErrNotConnected = errors.New("spotify: not connected; authorize it from the admin dashboard")

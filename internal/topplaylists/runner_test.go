@@ -26,6 +26,8 @@ type fakeStore struct {
 	ranked    []domain.RankedTrack
 	rankErr   error
 	upserts   int
+	locked    bool // another instance holds the lock
+	unlocks   int
 }
 
 func newFakeStore() *fakeStore {
@@ -40,8 +42,18 @@ func (f *fakeStore) TopPlaylist(_ context.Context, period string, start time.Tim
 	return r, nil
 }
 
-func (f *fakeStore) UpsertTopPlaylist(_ context.Context, p domain.TopPlaylistRecord) error {
+func (f *fakeStore) LockTopPlaylists(context.Context) (func(), bool, error) {
+	if f.locked {
+		return nil, false, nil
+	}
+	return func() { f.unlocks++ }, true, nil
+}
+
+func (f *fakeStore) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error {
 	f.upserts++
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	k := key{p.Period, p.PeriodStart.Unix()}
 	if old, ok := f.rows[k]; ok && p.SpotifyPlaylistID == "" { // mirrors the COALESCE in SQL
 		p.SpotifyPlaylistID, p.SpotifyURL = old.SpotifyPlaylistID, old.SpotifyURL
@@ -63,13 +75,17 @@ func (f *fakeStore) RankTracks(_ context.Context, _, _ time.Time, limit int) ([]
 }
 
 type fakeSpotify struct {
+	onCreate  func() // runs after a successful create (e.g. to cancel the tick)
 	creates   []string
 	replaces  map[string][]string
 	createErr error
 	replErr   error
 }
 
-func (f *fakeSpotify) CreatePlaylist(_ context.Context, name, _ string, public bool) (string, string, error) {
+func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, _ string, public bool) (string, string, error) {
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
 	if f.createErr != nil {
 		return "", "", f.createErr
 	}
@@ -78,6 +94,9 @@ func (f *fakeSpotify) CreatePlaylist(_ context.Context, name, _ string, public b
 	}
 	f.creates = append(f.creates, name)
 	id := fmt.Sprintf("pl%d", len(f.creates))
+	if f.onCreate != nil {
+		f.onCreate()
+	}
 	return id, "https://open.spotify.com/playlist/" + id, nil
 }
 
@@ -319,5 +338,69 @@ func TestRunStopsOnCancel(t *testing.T) {
 	}
 	if h.week().Status != domain.TopPlaylistEmpty {
 		t.Error("one tick expected between the waits")
+	}
+}
+
+func TestRunnerSkipsWhenLockHeld(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(3)
+	h.st.locked = true
+	h.r.RunOnce(context.Background())
+	if len(h.sp.creates) != 0 || h.st.upserts != 0 {
+		t.Fatalf("worked without the lock: creates=%d upserts=%d", len(h.sp.creates), h.st.upserts)
+	}
+	h.st.locked = false
+	h.r.RunOnce(context.Background())
+	if len(h.sp.creates) != 1 || h.st.unlocks != 1 {
+		t.Fatalf("creates=%d unlocks=%d, want 1 and 1", len(h.sp.creates), h.st.unlocks)
+	}
+}
+
+// A shutdown right after Spotify created the playlist must still record its
+// ID, so the next run reuses it instead of creating a duplicate.
+func TestRunnerCreateSurvivesShutdown(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(3)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.sp.onCreate = cancel
+	h.r.RunOnce(ctx)
+	if got := h.week().SpotifyPlaylistID; got != "pl1" {
+		t.Fatalf("playlist id after shutdown = %q, want pl1", got)
+	}
+	h.r.RunOnce(context.Background())
+	if len(h.sp.creates) != 1 || h.week().Status != domain.TopPlaylistCreated {
+		t.Fatalf("creates=%d status=%s, want 1 create and created", len(h.sp.creates), h.week().Status)
+	}
+}
+
+func TestRunnerForbiddenBacksOff(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(3)
+	h.sp.createErr = fmt.Errorf("create: %w", spotify.ErrForbidden)
+	h.r.RunOnce(context.Background())
+	w := h.week()
+	if w.Status != domain.TopPlaylistWaitingAuth || w.NextAttemptAt == nil || !w.NextAttemptAt.Equal(h.now.Add(time.Hour)) {
+		t.Fatalf("after 403: status=%s next=%v", w.Status, w.NextAttemptAt)
+	}
+	h.sp.createErr = nil
+	h.now = h.now.Add(30 * time.Minute)
+	h.r.RunOnce(context.Background())
+	if len(h.sp.creates) != 0 {
+		t.Fatal("retried before the 403 back-off elapsed")
+	}
+	h.now = h.now.Add(31 * time.Minute)
+	h.r.RunOnce(context.Background())
+	if len(h.sp.creates) != 1 || h.week().Status != domain.TopPlaylistCreated {
+		t.Fatalf("creates=%d status=%s after back-off", len(h.sp.creates), h.week().Status)
+	}
+}
+
+func TestRunnerRevokedToken(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(3)
+	h.sp.createErr = spotify.ErrInvalidGrant
+	h.r.RunOnce(context.Background())
+	if w := h.week(); w.Status != domain.TopPlaylistWaitingAuth || w.LastError != msgRevoked {
+		t.Fatalf("status=%s err=%q", w.Status, w.LastError)
 	}
 }

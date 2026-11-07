@@ -163,3 +163,35 @@ func (q *Queries) TopPlaylistTracks(ctx context.Context, period string, start ti
 	}
 	return out, q.hydrate(ctx, views...)
 }
+
+// topPlaylistsLockKey is the pg advisory lock key for the top playlists
+// generator ("topplist" as an int64).
+const topPlaylistsLockKey int64 = 0x746f70706c697374
+
+// LockTopPlaylists takes a session-level advisory lock on a dedicated
+// connection so two API instances never generate at once. ok is false when
+// another instance holds it. unlock releases the lock and the connection.
+func (s *Store) LockTopPlaylists(ctx context.Context) (unlock func(), ok bool, err error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("top playlists lock: %w", err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, topPlaylistsLockKey).Scan(&ok); err != nil {
+		conn.Release()
+		return nil, false, fmt.Errorf("top playlists lock: %w", err)
+	}
+	if !ok {
+		conn.Release()
+		return nil, false, nil
+	}
+	return func() {
+		// Unlock even if the tick's context was cancelled.
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(uctx, `SELECT pg_advisory_unlock($1)`, topPlaylistsLockKey); err != nil {
+			// The lock dies with the session: drop the connection instead of reusing it.
+			_ = conn.Conn().Close(uctx)
+		}
+		conn.Release()
+	}, true, nil
+}

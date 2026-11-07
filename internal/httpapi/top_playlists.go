@@ -20,6 +20,7 @@ type topPlaylist struct {
 	Period      string                    `json:"period"`
 	PeriodStart time.Time                 `json:"period_start"`
 	PeriodEnd   time.Time                 `json:"period_end"`
+	TimeZone    string                    `json:"time_zone"` // zone the period was generated in
 	Label       string                    `json:"label"`
 	Name        string                    `json:"name"`
 	SpotifyID   string                    `json:"spotify_id"`
@@ -77,7 +78,7 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 		}
 		start := row.PeriodStart.In(zone)
 		item := topPlaylist{
-			Period: row.Period, PeriodStart: start, PeriodEnd: row.PeriodEnd.In(zone),
+			Period: row.Period, PeriodStart: start, PeriodEnd: row.PeriodEnd.In(zone), TimeZone: zone.String(),
 			Label: topplaylists.Label(p, start), Name: row.Name,
 			SpotifyID: row.SpotifyPlaylistID, SpotifyURL: row.SpotifyURL,
 			TrackCount: row.TrackCount, TotalPlays: row.TotalPlays,

@@ -70,6 +70,8 @@ export type TopPlaylist = {
 	/** RFC 3339 instant; the period is half-open [period_start, period_end). */
 	period_start: string;
 	period_end: string;
+	/** IANA zone this period was generated in (its boundaries and label). */
+	time_zone: string;
 	label: string;
 	name: string;
 	spotify_id: string;

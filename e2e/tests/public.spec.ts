@@ -118,6 +118,7 @@ function topPlaylist(
 		period,
 		period_start: start,
 		period_end: end,
+		time_zone: 'UTC',
 		label,
 		name: `Top 50 · ${label}`,
 		spotify_id: id,
@@ -193,7 +194,7 @@ test.describe('top 50 playlists', () => {
 		await expect(open).toHaveAttribute('rel', 'noopener noreferrer');
 
 		const iframe = section.locator('iframe');
-		await expect(iframe).toHaveAttribute('src', new RegExp(`^https://open\.spotify\.com/embed/playlist/${WEEK_ID}\?utm_source=generator`));
+		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${WEEK_ID}\?utm_source=generator(&theme=0)?$`));
 		await expect(iframe).toHaveAttribute('title', /Week of Nov 2, 2026/);
 		await expect(iframe).toHaveAttribute('loading', 'lazy');
 
@@ -208,7 +209,7 @@ test.describe('top 50 playlists', () => {
 		await expect(month).toBeChecked();
 		await expect(section.getByRole('heading', { name: 'Top 50 · October 2026' })).toBeVisible();
 		await expect(section.getByText(/Oct 1\s*[–-]\s*31, 2026/)).toBeVisible();
-		await expect(iframe).toHaveAttribute('src', new RegExp(`/embed/playlist/${MONTH_ID}\?`));
+		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${MONTH_ID}\?utm_source=generator(&theme=0)?$`));
 		await expect(section.getByRole('link', { name: 'Week of Oct 26, 2026' })).toHaveCount(0);
 		expectClean(problems);
 	});

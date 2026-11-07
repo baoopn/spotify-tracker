@@ -16,12 +16,20 @@ import (
 const (
 	msgMissingScope = "re-authorize Spotify in the admin to grant " + spotify.PlaylistWriteScope
 	msgNotConnected = "connect Spotify in the admin to grant " + spotify.PlaylistWriteScope
+	msgRevoked      = "the Spotify authorization expired or was revoked; re-authorize in the admin"
 )
 
 const (
 	maxErrorLen = 300
 	baseBackoff = 5 * time.Minute
 	maxBackoff  = 6 * time.Hour
+	// forbiddenRetry spaces out attempts after Spotify answered 403 even though
+	// the stored scopes look right (e.g. the account is not allow-listed).
+	forbiddenRetry = time.Hour
+	// createTimeout bounds a playlist create plus saving its ID. It runs on a
+	// context that ignores shutdown, so a create that reached Spotify is
+	// always recorded and never repeated.
+	createTimeout = 30 * time.Second
 )
 
 // Store is the persistence the runner needs (implemented by *store.Store).
@@ -30,6 +38,9 @@ type Store interface {
 	UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error
 	SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylistRecord, tracks []domain.RankedTrack) error
 	RankTracks(ctx context.Context, start, end time.Time, limit int) ([]domain.RankedTrack, error)
+	// LockTopPlaylists takes a cluster-wide lock so overlapping instances
+	// (e.g. during a rolling deploy) never generate at the same time.
+	LockTopPlaylists(ctx context.Context) (unlock func(), ok bool, err error)
 }
 
 // Spotify writes playlists (implemented by *spotify.Manager).
@@ -83,6 +94,15 @@ func (r *Runner) Run(ctx context.Context) error {
 
 // RunOnce handles the last completed period of every enabled kind.
 func (r *Runner) RunOnce(ctx context.Context) {
+	unlock, ok, err := r.Store.LockTopPlaylists(ctx)
+	if err != nil {
+		r.Log.WarnContext(ctx, "top playlists lock failed", logging.Err(err))
+		return
+	}
+	if !ok {
+		return // another instance is generating
+	}
+	defer unlock()
 	now := r.clock()
 	for _, p := range r.Config.Periods {
 		if rateLimited := r.generate(ctx, p, now); rateLimited {
@@ -107,7 +127,7 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	switch rec.Status {
 	case domain.TopPlaylistCreated, domain.TopPlaylistEmpty:
 		return false
-	case domain.TopPlaylistFailed:
+	case domain.TopPlaylistFailed, domain.TopPlaylistWaitingAuth:
 		if rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now) {
 			return false
 		}
@@ -122,7 +142,7 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 		return false
 	}
 	if msg != "" {
-		r.waitAuth(ctx, rec, prev, msg)
+		r.waitAuth(ctx, rec, prev, msg, nil)
 		return false
 	}
 
@@ -151,16 +171,12 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	}
 
 	if rec.SpotifyPlaylistID == "" {
-		id, link, err := r.Spotify.CreatePlaylist(ctx, rec.Name, Description(p, start), true)
-		if err != nil {
+		var err error
+		if rec, err = r.create(ctx, rec, p, start); err != nil {
+			if rec.SpotifyPlaylistID != "" {
+				return false // created but not saved: logged; retried next tick
+			}
 			return r.spotifyError(ctx, rec, prev, err, now)
-		}
-		rec.SpotifyPlaylistID, rec.SpotifyURL = id, link
-		// Persist the ID before anything else can fail, so a retry reuses it.
-		if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
-			r.Log.ErrorContext(ctx, "save created spotify playlist id failed",
-				slog.String("name", rec.Name), slog.String("spotify_id", id), logging.Err(err))
-			return false
 		}
 	}
 
@@ -186,6 +202,26 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	return false
 }
 
+// create makes the Spotify playlist and persists its ID before anything
+// else can fail, so a retry reuses it. Both steps run detached from shutdown
+// (bounded by createTimeout): a create that reached Spotify is always saved.
+// On a save error the returned record carries the new ID and err is set.
+func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, p Period, start time.Time) (domain.TopPlaylistRecord, error) {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
+	defer cancel()
+	id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, Description(p, start), true)
+	if err != nil {
+		return rec, err
+	}
+	rec.SpotifyPlaylistID, rec.SpotifyURL = id, link
+	if err := r.Store.UpsertTopPlaylist(cctx, rec); err != nil {
+		r.Log.ErrorContext(ctx, "save created spotify playlist id failed",
+			slog.String("name", rec.Name), slog.String("spotify_id", id), logging.Err(err))
+		return rec, err
+	}
+	return rec, nil
+}
+
 // authProblem returns a waiting_auth message when Spotify is not connected
 // or the stored scopes lack playlist-modify-public. Unknown scopes (a token
 // seeded from the environment, never refreshed) are given a try: a 403
@@ -209,22 +245,30 @@ func (r *Runner) authProblem(ctx context.Context) (string, error) {
 // re-authorization, everything else is retried with backoff.
 func (r *Runner) spotifyError(ctx context.Context, rec domain.TopPlaylistRecord, prev string, err error, now time.Time) bool {
 	switch {
-	case errors.Is(err, spotify.ErrForbidden), errors.Is(err, spotify.ErrMissingScope), errors.Is(err, spotify.ErrInvalidGrant):
-		r.waitAuth(ctx, rec, prev, msgMissingScope)
+	case errors.Is(err, spotify.ErrForbidden):
+		retry := now.Add(forbiddenRetry).UTC()
+		r.waitAuth(ctx, rec, prev, msgMissingScope, &retry)
+		return false
+	case errors.Is(err, spotify.ErrMissingScope):
+		r.waitAuth(ctx, rec, prev, msgMissingScope, nil)
+		return false
+	case errors.Is(err, spotify.ErrInvalidGrant):
+		r.waitAuth(ctx, rec, prev, msgRevoked, nil)
 		return false
 	case errors.Is(err, spotify.ErrNotConnected):
-		r.waitAuth(ctx, rec, prev, msgNotConnected)
+		r.waitAuth(ctx, rec, prev, msgNotConnected, nil)
 		return false
 	}
 	return r.fail(ctx, rec, err, now)
 }
 
 // waitAuth stores status waiting_auth, logging only when the status changes.
-func (r *Runner) waitAuth(ctx context.Context, rec domain.TopPlaylistRecord, prev, msg string) {
-	if prev == domain.TopPlaylistWaitingAuth && rec.LastError == msg {
+// retryAt, when set, holds off the next attempt (used after a 403).
+func (r *Runner) waitAuth(ctx context.Context, rec domain.TopPlaylistRecord, prev, msg string, retryAt *time.Time) {
+	if prev == domain.TopPlaylistWaitingAuth && rec.LastError == msg && retryAt == nil && rec.NextAttemptAt == nil {
 		return // unchanged; nothing to write or log
 	}
-	rec.Status, rec.LastError, rec.NextAttemptAt = domain.TopPlaylistWaitingAuth, msg, nil
+	rec.Status, rec.LastError, rec.NextAttemptAt = domain.TopPlaylistWaitingAuth, msg, retryAt
 	if err := r.Store.UpsertTopPlaylist(ctx, rec); err != nil {
 		r.Log.WarnContext(ctx, "save top playlist state failed", slog.String("name", rec.Name), logging.Err(err))
 		return

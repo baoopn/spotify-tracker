@@ -111,7 +111,11 @@
 				</h3>
 				<p class="mt-1 text-ink-soft">
 					<time datetime={latest.period_start}
-						>{periodRange(latest.period_start, latest.period_end, timeZone)}</time
+						>{periodRange(
+							latest.period_start,
+							latest.period_end,
+							latest.time_zone || timeZone
+						)}</time
 					>
 				</p>
 				<p class="label mt-2 flex flex-wrap gap-x-2 text-ink-soft">
@@ -136,7 +140,11 @@
 					<ul class="divide-y divide-rule">
 						{#each earlier as item (item.period_start)}
 							{@const href = spotifyUrl(item.spotify_url)}
-							{@const range = periodRange(item.period_start, item.period_end, timeZone)}
+							{@const range = periodRange(
+								item.period_start,
+								item.period_end,
+								item.time_zone || timeZone
+							)}
 							<li class="flex min-h-11 flex-wrap items-baseline justify-between gap-x-4 py-2">
 								{#if href}
 									<a {href} target="_blank" rel="noopener noreferrer" class="link font-medium"

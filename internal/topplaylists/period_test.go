@@ -156,6 +156,66 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestLiveDescription(t *testing.T) {
+	cases := map[Period]time.Time{
+		Week: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), Month: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+		Year: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	want := map[Period]string{
+		Week:  "The 50 most-played tracks of the week of Nov 2, 2026 so far, updated hourly from listening history.",
+		Month: "The 50 most-played tracks of November 2026 so far, updated hourly from listening history.",
+		Year:  "The 50 most-played tracks of 2026 so far, updated hourly from listening history.",
+	}
+	for p, start := range cases {
+		if got := LiveDescription(p, start); got != want[p] {
+			t.Errorf("LiveDescription(%s) = %q, want %q", p, got, want[p])
+		}
+	}
+}
+
+func TestParseLive(t *testing.T) {
+	all := []Period{Week, Month, Year}
+	live, ignored, err := ParseLive("week", all)
+	if err != nil || len(live) != 1 || live[0] != Week || len(ignored) != 0 {
+		t.Fatalf("default: %v %v %v", live, ignored, err)
+	}
+	for _, off := range []string{"", "none", " Off "} {
+		if live, ignored, err = ParseLive(off, all); err != nil || len(live) != 0 || len(ignored) != 0 {
+			t.Errorf("%q: %v %v %v", off, live, ignored, err)
+		}
+	}
+	// Kinds that are not generated at all are ignored (and reported).
+	live, ignored, err = ParseLive("year, week ,month", []Period{Week, Year})
+	if err != nil || len(live) != 2 || live[0] != Week || live[1] != Year || len(ignored) != 1 || ignored[0] != Month {
+		t.Fatalf("subset: %v %v %v", live, ignored, err)
+	}
+	if live, _, err = ParseLive("week,hourly", all); err == nil || len(live) != 0 {
+		t.Errorf("invalid: %v %v", live, err)
+	}
+	cfg := Config{Periods: []Period{Week, Month}, Location: time.UTC, Live: []Period{Week, Year}}
+	if !cfg.IsLive(Week) || cfg.IsLive(Month) || cfg.IsLive(Year) || cfg.Refresh() != time.Hour {
+		t.Errorf("IsLive/Refresh wrong for %+v", cfg)
+	}
+}
+
+func TestParseLiveRefresh(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+		bad  bool
+	}{
+		{"", time.Hour, false}, {"1h", time.Hour, false}, {"10m", 10 * time.Minute, false},
+		{"90m", 90 * time.Minute, false}, {"9m59s", time.Hour, true}, {"0", time.Hour, true},
+		{"-1h", time.Hour, true}, {"soon", time.Hour, true},
+	}
+	for _, c := range cases {
+		got, err := ParseLiveRefresh(c.in)
+		if got != c.want || (err != nil) != c.bad {
+			t.Errorf("ParseLiveRefresh(%q) = %s, %v", c.in, got, err)
+		}
+	}
+}
+
 func TestBackoff(t *testing.T) {
 	cases := map[int]time.Duration{
 		1: 5 * time.Minute, 2: 10 * time.Minute, 3: 20 * time.Minute, 4: 40 * time.Minute,

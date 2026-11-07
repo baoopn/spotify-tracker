@@ -130,6 +130,13 @@ type TopPlaylists struct {
 	Periods string `env:"TOP_PLAYLISTS_PERIODS" envDefault:"week,month,year"`
 	// TimeZone is the IANA zone that defines period boundaries and labels.
 	TimeZone string `env:"TOP_PLAYLISTS_TIME_ZONE" envDefault:"UTC"`
+	// Live lists the kinds whose current period gets a live playlist,
+	// refreshed while listening and finalized when the period ends; "none"
+	// disables live playlists.
+	Live string `env:"TOP_PLAYLISTS_LIVE" envDefault:"week"`
+	// LiveRefresh is the time between two refreshes of a live playlist (Go
+	// duration, at least 10m; kept as text so a typo falls back to 1h).
+	LiveRefresh string `env:"TOP_PLAYLISTS_LIVE_REFRESH" envDefault:"1h"`
 }
 
 // Admin configures the admin dashboard (Clerk authentication).

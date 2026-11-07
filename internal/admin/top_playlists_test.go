@@ -29,6 +29,7 @@ type fakeRunner struct {
 	genRec  domain.TopPlaylistRecord
 	genErr  error
 	genCall []string // "period start"
+	regCall []string // Regenerate calls, "period start"
 }
 
 func (f *fakeRunner) RunNow(ctx context.Context) error {
@@ -44,6 +45,14 @@ func (f *fakeRunner) Generate(ctx context.Context, p topplaylists.Period, start 
 		return domain.TopPlaylistRecord{}, errors.New("Generate without a deadline")
 	}
 	f.genCall = append(f.genCall, string(p)+" "+start.UTC().Format(time.RFC3339))
+	return f.genRec, f.genErr
+}
+
+func (f *fakeRunner) Regenerate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return domain.TopPlaylistRecord{}, errors.New("Regenerate without a deadline")
+	}
+	f.regCall = append(f.regCall, string(p)+" "+start.UTC().Format(time.RFC3339))
 	return f.genRec, f.genErr
 }
 
@@ -206,7 +215,7 @@ func TestTopPlaylistsList(t *testing.T) {
 	want := map[string]string{
 		"period": `"week"`, "period_start": `"2026-11-02T00:00:00-05:00"`, "period_end": `"2026-11-09T00:00:00-05:00"`,
 		"time_zone": `"America/New_York"`, "label": `"Week of Nov 2, 2026"`, "name": `"Top 50 · Week of Nov 2, 2026"`,
-		"status": `"created"`, "hidden": "false", "spotify_id": `"pl1"`,
+		"status": `"created"`, "hidden": "false", "live": "false", "refreshed_at": "null", "spotify_id": `"pl1"`,
 		"spotify_url": `"https://open.spotify.com/playlist/pl1"`, "track_count": "2", "total_plays": "9",
 		"attempts": "1", "last_error": `"old"`, "next_attempt_at": `"2026-11-09T06:01:12Z"`,
 		"published_at": `"2026-11-09T05:01:12Z"`, "created_at": `"2026-11-09T04:01:12Z"`, "updated_at": `"2026-11-09T05:01:12Z"`,
@@ -230,7 +239,7 @@ func TestTopPlaylistsList(t *testing.T) {
 	var st map[string]json.RawMessage
 	_ = json.Unmarshal(body["status"], &st)
 	wantSt := map[string]string{"enabled": "true", "periods": `["week","month"]`, "time_zone": `"America/New_York"`,
-		"authorized": "true", "interval_seconds": "600"}
+		"authorized": "true", "interval_seconds": "600", "live_periods": "[]", "live_refresh_seconds": "3600"}
 	for k, v := range wantSt {
 		if got := string(st[k]); got != v {
 			t.Errorf("status.%s = %s, want %s", k, got, v)
@@ -249,7 +258,8 @@ func TestTopPlaylistsListDisabledAndEmpty(t *testing.T) {
 	if h.tops.listArgs != `"" 50 0` {
 		t.Errorf("defaults = %s", h.tops.listArgs)
 	}
-	want := `{"enabled":false,"periods":[],"time_zone":"UTC","authorized":false,"interval_seconds":600}`
+	want := `{"enabled":false,"periods":[],"time_zone":"UTC","authorized":false,"interval_seconds":600,` +
+		`"live_periods":[],"live_refresh_seconds":3600}`
 	if string(body["status"]) != want {
 		t.Errorf("status = %s", body["status"])
 	}
@@ -470,8 +480,8 @@ func TestTopPlaylistRegenerate(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status %d %s", code, errCode(t, body))
 	}
-	if len(h.runner.genCall) != 1 || h.runner.genCall[0] != "week 2026-11-02T05:00:00Z" {
-		t.Errorf("generate calls = %v", h.runner.genCall)
+	if len(h.runner.regCall) != 1 || h.runner.regCall[0] != "week 2026-11-02T05:00:00Z" || len(h.runner.genCall) != 0 {
+		t.Errorf("regenerate calls = %v, generate calls = %v", h.runner.regCall, h.runner.genCall)
 	}
 	if len(h.audit.calls) != 1 || h.audit.calls[0].action != "top_playlists.regenerated" ||
 		h.audit.calls[0].detail["spotify_id"] != "pl1" || h.audit.calls[0].detail["period_start"] != "2026-11-02T00:00:00-05:00" {
@@ -479,7 +489,7 @@ func TestTopPlaylistRegenerate(t *testing.T) {
 	}
 
 	code, body = h.do(t, http.MethodPost, "/admin/api/top-playlists/week/2026-10-26T04:00:00Z/regenerate", "")
-	if code != http.StatusNotFound || errCode(t, body) != "not_found" || len(h.runner.genCall) != 1 {
+	if code != http.StatusNotFound || errCode(t, body) != "not_found" || len(h.runner.regCall) != 1 {
 		t.Errorf("missing row: %d %s", code, errCode(t, body))
 	}
 }

@@ -42,7 +42,8 @@ var (
 // stored row is returned after the attempt, together with the attempt's
 // error: failures are stored exactly like a tick stores them (failed or
 // waiting_auth), except for a published (created) row, which is never
-// unpublished (see refreshPublished).
+// unpublished (see refreshPublished). A created live row of the ended period
+// is finalized in place (see finalize).
 func (r *Runner) Generate(ctx context.Context, p Period, start time.Time) (domain.TopPlaylistRecord, error) {
 	if !r.Config.Enabled() || !r.Config.Has(p) {
 		return domain.TopPlaylistRecord{}, ErrPeriodDisabled
@@ -83,10 +84,13 @@ func (r *Runner) Generate(ctx context.Context, p Period, start time.Time) (domai
 	// before anything else, so a retry never creates a duplicate.
 	ctx = context.WithValue(ctx, detachedWritesKey{}, true)
 	var aerr error
-	if rec.Status == domain.TopPlaylistCreated && rec.SpotifyPlaylistID != "" {
+	switch {
+	case rec.Status == domain.TopPlaylistCreated && rec.SpotifyPlaylistID != "" && rec.Live:
+		_, aerr = r.finalize(ctx, p, rec, s, e, loc, now) // forced: ignores the finalize backoff
+	case rec.Status == domain.TopPlaylistCreated && rec.SpotifyPlaylistID != "":
 		aerr = r.refreshPublished(ctx, p, rec, s, e, loc, now)
-	} else {
-		_, aerr = r.attempt(ctx, p, rec, s, e, loc, now)
+	default:
+		_, aerr = r.attempt(ctx, p, rec, s, e, loc, now, false)
 	}
 	rctx, cancel := storeCtx(ctx)
 	defer cancel()

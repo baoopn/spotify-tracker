@@ -25,6 +25,8 @@ type fakeStore struct {
 	snapshots map[key][]domain.RankedTrack
 	ranked    []domain.RankedTrack
 	rankErr   error
+	rankEnd   time.Time // end of the last ranking window
+	snapErr   error
 	upserts   int
 	locked    bool // another instance holds the lock
 	unlocks   int
@@ -67,11 +69,16 @@ func (f *fakeStore) SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPla
 	return f.UpsertTopPlaylist(ctx, p)
 }
 
-func (f *fakeStore) RankTracks(_ context.Context, _, _ time.Time, limit int) ([]domain.RankedTrack, error) {
+func (f *fakeStore) RankTracks(_ context.Context, _, end time.Time, limit int) ([]domain.RankedTrack, error) {
 	if limit != TrackLimit {
 		return nil, fmt.Errorf("limit %d", limit)
 	}
+	f.rankEnd = end
 	return f.ranked, f.rankErr
+}
+
+func (f *fakeStore) TopPlaylistSnapshot(_ context.Context, period string, start time.Time) ([]domain.RankedTrack, error) {
+	return f.snapshots[key{period, start.Unix()}], f.snapErr
 }
 
 type fakeSpotify struct {
@@ -80,9 +87,12 @@ type fakeSpotify struct {
 	replaces  map[string][]string
 	createErr error
 	replErr   error
+	descrs    []string          // create descriptions, in order
+	details   map[string]string // id -> "name|description" of the last details update
+	detErr    error
 }
 
-func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, _ string, public bool) (string, string, error) {
+func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, descr string, public bool) (string, string, error) {
 	if ctx.Err() != nil {
 		return "", "", ctx.Err()
 	}
@@ -93,6 +103,7 @@ func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, _ string, public
 		return "", "", errors.New("want public")
 	}
 	f.creates = append(f.creates, name)
+	f.descrs = append(f.descrs, descr)
 	id := fmt.Sprintf("pl%d", len(f.creates))
 	if f.onCreate != nil {
 		f.onCreate()
@@ -108,6 +119,17 @@ func (f *fakeSpotify) ReplacePlaylistItems(_ context.Context, id string, uris []
 		f.replaces = map[string][]string{}
 	}
 	f.replaces[id] = uris
+	return nil
+}
+
+func (f *fakeSpotify) UpdatePlaylistDetails(_ context.Context, id, name, description string) error {
+	if f.detErr != nil {
+		return f.detErr
+	}
+	if f.details == nil {
+		f.details = map[string]string{}
+	}
+	f.details[id] = name + "|" + description
 	return nil
 }
 

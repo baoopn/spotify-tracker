@@ -101,6 +101,24 @@ re-runs the idempotent `PUT /playlists/{id}/items` and never creates a
 duplicate. The ranked snapshot is kept in `top_playlist_tracks`. Invalid
 settings are logged and disable the feature without stopping the API.
 
+Kinds in `TOP_PLAYLISTS_LIVE` (default `week`) also get a **live** playlist of
+the running period, handled by the same tick under the same advisory lock. On
+the period's first plays the playlist is created with a "so far" description
+(row `created`, `live = true`), ranking `[start, now)`. Every
+`TOP_PLAYLISTS_LIVE_REFRESH` (default 1 h, min 10 min; tracked in
+`refreshed_at`) it is re-ranked: an unchanged order writes nothing to Spotify
+and only updates the snapshot's plays; a new order replaces the items first and
+saves the snapshot after Spotify accepted them. Failures never unpublish: the
+row keeps `created` / `live` / `published_at` and its old snapshot, and only
+`last_error` and `refreshed_at` change. A failed initial creation follows the
+normal `failed` / `waiting_auth` retries. When the period ends, the
+completed-period handling finalizes the live row in place — full-period
+ranking, items replaced if the order changed, `PUT /playlists/{id}` with the
+final description, then `live = false` — retrying failures with the usual
+backoff while the row stays live and published. A live row whose finalize was
+missed because the API was down longer than a whole period can be finalized
+from the admin (Regenerate).
+
 ## Admin dashboard
 
 SvelteKit SPA built to static files and embedded with `go:embed`, served at

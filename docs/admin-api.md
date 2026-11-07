@@ -242,6 +242,20 @@ period has one row whose `status` is its state: `pending` → `created` |
 enabled kind; the endpoints below run it on demand, backfill older periods and
 regenerate existing ones.
 
+**Live playlists.** Kinds in `TOP_PLAYLISTS_LIVE` (default `week`; `none`
+disables) also get a playlist of the **current, unfinished** period: it is
+created (`created`, `live: true`) on the period's first plays, ranking
+`[period_start, now)`, and re-ranked by the same tick every
+`live_refresh_seconds` (`TOP_PLAYLISTS_LIVE_REFRESH`, default 1 h, min 10 min).
+An unchanged order only updates the stored plays; a new order replaces the
+items of the same playlist. A failed refresh keeps the row published and live,
+sets `last_error` and `refreshed_at`, and waits a full interval. When the
+period ends the next tick **finalizes it in place**: full-period ranking, items
+replaced if needed, the Spotify description changed to the final one, and
+`live: false` (`published_at` kept). A failed finalization keeps `live: true`,
+sets `last_error` and retries with backoff (`attempts` / `next_attempt_at`).
+The live and final playlist are the same Spotify playlist with the same name.
+
 ```ts
 type AdminTopPlaylist = {
   period: 'week' | 'month' | 'year';
@@ -259,7 +273,9 @@ type AdminTopPlaylist = {
   attempts: number;            // failed attempts since the last success
   last_error: string | null;
   next_attempt_at: string | null;  // UTC; earliest automatic retry
-  published_at: string | null;     // UTC; last successful publish
+  published_at: string | null;     // UTC; last successful publish (a live row keeps its first publish)
+  live: boolean;                   // the current period's live playlist, not finalized yet
+  refreshed_at: string | null;     // UTC; last live refresh or the finalization (null for rows never live)
   created_at: string;
   updated_at: string;
 };
@@ -270,6 +286,8 @@ type TopPlaylistsStatus = {
   time_zone: string;                       // configured zone ("UTC" when disabled)
   authorized: boolean;                     // Spotify connected and playlist-modify-public granted (unknown scopes count as granted)
   interval_seconds: number;                // 600
+  live_periods: ('week' | 'month' | 'year')[];  // kinds with a live playlist ([] when none or disabled)
+  live_refresh_seconds: number;            // live refresh interval, 3600 by default
 };
 ```
 
@@ -283,7 +301,7 @@ the same instant is accepted.
 | GET | `/admin/api/top-playlists/{period}/{start}` | – | `{ data: AdminTopPlaylist & { tracks: TopPlaylistTrack[] } }` — with the stored snapshot (`[]` when none) |
 | POST | `/admin/api/top-playlists/run` | – | `{ data, total, status }` (first page, after the run) — runs one generator tick now |
 | POST | `/admin/api/top-playlists/generate` | `{ "period": "month", "date": "2026-07-15" }` | `{ data: AdminTopPlaylist }` — generates (or refreshes) the completed period containing `date` (a calendar date in the configured zone) |
-| POST | `/admin/api/top-playlists/{period}/{start}/regenerate` | – | `{ data: AdminTopPlaylist }` — regenerate / retry an existing row |
+| POST | `/admin/api/top-playlists/{period}/{start}/regenerate` | – | `{ data: AdminTopPlaylist }` — regenerate / retry an existing row; on a live row of the running period: refresh now (ignores the interval); on a live row whose period ended: finalize now (ignores the backoff) |
 | PATCH | `/admin/api/top-playlists/{period}/{start}` | `{ "hidden": true }` | `{ data: AdminTopPlaylist }` — hide or show it on the public page |
 
 Generate and regenerate are forced: they ignore the created / empty / backoff
@@ -310,7 +328,7 @@ account. There is no delete.
 Errors: `400 invalid_period | invalid_start | invalid_date | invalid_body |
 invalid_limit | invalid_offset` (`date` must be a `YYYY-MM-DD` date from
 2000-01-01 on), `400 period_not_completed` (the period is still running or in
-the future), `400 invalid_period` also when the kind is not in
+the future; for regenerate only when the kind has no live playlist), `400 invalid_period` also when the kind is not in
 `TOP_PLAYLISTS_PERIODS`, `404 not_found`, `409 busy` (another generation holds
 the lock; retry shortly), `409 no_plays` (regenerating a published playlist
 whose period has no plays; message "no plays in this period; playlist left

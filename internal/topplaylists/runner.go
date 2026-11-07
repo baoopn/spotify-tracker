@@ -40,6 +40,8 @@ type Store interface {
 	TopPlaylist(ctx context.Context, period string, start time.Time) (domain.TopPlaylistRecord, error)
 	UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error
 	SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylistRecord, tracks []domain.RankedTrack) error
+	// TopPlaylistSnapshot returns the stored ranking in position order.
+	TopPlaylistSnapshot(ctx context.Context, period string, start time.Time) ([]domain.RankedTrack, error)
 	RankTracks(ctx context.Context, start, end time.Time, limit int) ([]domain.RankedTrack, error)
 	// LockTopPlaylists takes a cluster-wide lock so overlapping instances
 	// (e.g. during a rolling deploy) never generate at the same time.
@@ -50,6 +52,7 @@ type Store interface {
 type Spotify interface {
 	CreatePlaylist(ctx context.Context, name, description string, public bool) (id, url string, err error)
 	ReplacePlaylistItems(ctx context.Context, id string, uris []string) error
+	UpdatePlaylistDetails(ctx context.Context, id, name, description string) error
 }
 
 // Auth reads the stored Spotify authorization (implemented by *settings.Store).
@@ -58,8 +61,10 @@ type Auth interface {
 }
 
 // Runner creates the top playlist of the most recently completed period of
-// every enabled kind. Each period's row in top_playlists is its state, so the
-// runner is safe to restart at any point and never creates duplicates.
+// every enabled kind, and keeps the live playlist of the current period of
+// every live kind up to date (finalizing it in place once the period ends).
+// Each period's row in top_playlists is its state, so the runner is safe to
+// restart at any point and never creates duplicates.
 type Runner struct {
 	Config  Config
 	Store   Store
@@ -120,13 +125,19 @@ func (r *Runner) RunNow(ctx context.Context) error {
 		if rateLimited := r.generate(ctx, p, now); rateLimited {
 			return nil // the other kinds would be refused too; try next tick
 		}
+		if r.Config.IsLive(p) {
+			if rateLimited := r.live(ctx, p, now); rateLimited {
+				return nil
+			}
+		}
 	}
 	return nil
 }
 
-// generate advances one period's state machine on a tick: finished periods
-// (created, empty) and failures still backing off are skipped. It reports
-// whether Spotify rate-limited the request.
+// generate advances the last completed period's state machine on a tick:
+// finished periods (created, empty) and failures still backing off are
+// skipped, except a created live playlist, which is finalized (with its own
+// backoff). It reports whether Spotify rate-limited the request.
 func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	loc := r.Config.Location
 	start, end := LastCompleted(p, now, loc)
@@ -139,14 +150,20 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 		return false
 	}
 	switch rec.Status {
-	case domain.TopPlaylistCreated, domain.TopPlaylistEmpty:
+	case domain.TopPlaylistCreated:
+		if !rec.Live || (rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now)) {
+			return false
+		}
+		limited, _ := r.finalize(ctx, p, rec, start, end, loc, now) // stored on the row and logged
+		return limited
+	case domain.TopPlaylistEmpty:
 		return false
 	case domain.TopPlaylistFailed, domain.TopPlaylistWaitingAuth:
 		if rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now) {
 			return false
 		}
 	}
-	limited, _ := r.attempt(ctx, p, rec, start, end, loc, now) // outcome stored on the row and logged
+	limited, _ := r.attempt(ctx, p, rec, start, end, loc, now, false) // outcome stored on the row and logged
 	return limited
 }
 
@@ -155,11 +172,29 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 // has none, otherwise it replaces the items of the same playlist. Every
 // outcome is stored on the row; the error is also returned (errors.Is
 // ErrNotAuthorized for waiting_auth) and limited reports a rate limit.
+//
+// With live set the period is still running: it ranks [start, now), writes
+// nothing when that ranks no tracks (ErrNoPlays) and publishes a live row
+// with the live description.
 func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRecord, start, end time.Time,
-	loc *time.Location, now time.Time) (limited bool, err error) {
+	loc *time.Location, now time.Time, live bool) (limited bool, err error) {
 	rec.PeriodStart, rec.PeriodEnd, rec.TimeZone = start, end, loc.String()
 	rec.Name = Name(p, start)
 	prev := rec.Status
+	// A playlist created by a live attempt still has the live description.
+	staleDetails := !live && rec.SpotifyPlaylistID != "" && rec.RefreshedAt != nil
+
+	var tracks []domain.RankedTrack
+	if live {
+		// Rank first: a period without plays yet gets no row at all.
+		if tracks, err = r.Store.RankTracks(ctx, start, now, TrackLimit); err != nil {
+			r.Log.WarnContext(ctx, "rank live top playlist failed", slog.String("name", rec.Name), logging.Err(err))
+			return false, err
+		}
+		if len(tracks) == 0 {
+			return false, ErrNoPlays
+		}
+	}
 
 	msg, err := r.authProblem(ctx)
 	if err != nil {
@@ -171,9 +206,10 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 		return false, fmt.Errorf("%w: %s", ErrNotAuthorized, msg)
 	}
 
-	tracks, err := r.Store.RankTracks(ctx, start, end, TrackLimit)
-	if err != nil {
-		return r.fail(ctx, rec, err, now), err
+	if !live {
+		if tracks, err = r.Store.RankTracks(ctx, start, end, TrackLimit); err != nil {
+			return r.fail(ctx, rec, err, now), err
+		}
 	}
 	if len(tracks) == 0 {
 		rec.Status, rec.TrackCount, rec.TotalPlays = domain.TopPlaylistEmpty, 0, 0
@@ -199,7 +235,13 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 
 	if rec.SpotifyPlaylistID == "" {
 		var err error
-		if rec, err = r.create(ctx, rec, p, start); err != nil {
+		descr := Description(p, start)
+		if live {
+			descr = LiveDescription(p, start)
+			refreshed := now.UTC()
+			rec.RefreshedAt = &refreshed // marks the playlist as created live
+		}
+		if rec, err = r.create(ctx, rec, descr); err != nil {
 			if rec.SpotifyPlaylistID != "" {
 				return false, err // created but not saved: logged; retried next tick
 			}
@@ -214,10 +256,19 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, uris); err != nil {
 		return r.spotifyError(ctx, rec, prev, err, now)
 	}
+	if staleDetails {
+		if err := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, rec.Name, Description(p, start)); err != nil {
+			return r.spotifyError(ctx, rec, prev, err, now)
+		}
+	}
 
 	published := now.UTC()
 	rec.Status, rec.PublishedAt, rec.Attempts = domain.TopPlaylistCreated, &published, 0
 	rec.LastError, rec.NextAttemptAt = "", nil
+	rec.Live = live
+	if live || staleDetails {
+		rec.RefreshedAt = &published
+	}
 	if err := r.upsert(ctx, rec); err != nil {
 		return r.fail(ctx, rec, err, now), err
 	}
@@ -233,10 +284,10 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 // else can fail, so a retry reuses it. Both steps run detached from shutdown
 // (bounded by createTimeout): a create that reached Spotify is always saved.
 // On a save error the returned record carries the new ID and err is set.
-func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, p Period, start time.Time) (domain.TopPlaylistRecord, error) {
+func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, description string) (domain.TopPlaylistRecord, error) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
 	defer cancel()
-	id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, Description(p, start), true)
+	id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, description, true)
 	if err != nil {
 		return rec, err
 	}

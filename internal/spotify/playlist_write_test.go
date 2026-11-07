@@ -83,6 +83,57 @@ func TestReplacePlaylistItems(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaylistDetails(t *testing.T) {
+	m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/playlists/pl1" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Authorization") != "Bearer at" {
+			t.Errorf("bad headers %v", r.Header)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) != 2 || body["name"] != "Top 50 · 2026" || body["description"] != "final" {
+			t.Errorf("bad body %v", body)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := m.UpdatePlaylistDetails(context.Background(), "pl1", "Top 50 · 2026", "final"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdatePlaylistDetailsErrors(t *testing.T) {
+	var calls atomic.Int32
+	m, forced := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := m.UpdatePlaylistDetails(context.Background(), "pl1", "n", "d"); err != nil || forced.Load() != 1 || calls.Load() != 2 {
+		t.Fatalf("401 retry: err=%v forced=%d calls=%d", err, forced.Load(), calls.Load())
+	}
+
+	m, _ = writeManager(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if err := m.UpdatePlaylistDetails(context.Background(), "pl1", "n", "d"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+
+	m, _ = writeManager(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	var rl *RateLimitError
+	if err := m.UpdatePlaylistDetails(context.Background(), "pl1", "n", "d"); !errors.As(err, &rl) || rl.RetryAfter != 7*time.Second {
+		t.Fatalf("want RateLimitError(7s), got %v", err)
+	}
+}
+
 func TestReplacePlaylistItemsTooMany(t *testing.T) {
 	var calls atomic.Int32
 	m, _ := writeManager(t, func(http.ResponseWriter, *http.Request) { calls.Add(1) })

@@ -1,9 +1,12 @@
 // Package topplaylists generates a public Spotify playlist of the 50 most
-// played tracks of every completed week, month and year.
+// played tracks of every completed week, month and year. Kinds listed in
+// TOP_PLAYLISTS_LIVE also get a live playlist of the current period, kept up
+// to date while listening and finalized in place when the period ends.
 package topplaylists
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,24 +27,44 @@ var AllPeriods = []Period{Week, Month, Year}
 // TrackLimit is the size of a top playlist.
 const TrackLimit = 50
 
+const (
+	// DefaultLiveRefresh is the default time between two refreshes of a live
+	// playlist (TOP_PLAYLISTS_LIVE_REFRESH).
+	DefaultLiveRefresh = time.Hour
+	// MinLiveRefresh is the shortest accepted live refresh interval.
+	MinLiveRefresh = 10 * time.Minute
+)
+
 // Config is the parsed feature configuration.
 type Config struct {
 	Periods  []Period // enabled kinds in display order; empty = disabled
 	Location *time.Location
+	// Live lists the enabled kinds whose current period gets a live
+	// playlist (display order); empty = none.
+	Live []Period
+	// LiveRefresh is the time between two refreshes of a live playlist
+	// (0 = DefaultLiveRefresh).
+	LiveRefresh time.Duration
+}
+
+// IsLive reports whether the current period of kind p gets a live playlist.
+func (c Config) IsLive(p Period) bool {
+	return c.Has(p) && slices.Contains(c.Live, p)
+}
+
+// Refresh returns the live refresh interval.
+func (c Config) Refresh() time.Duration {
+	if c.LiveRefresh <= 0 {
+		return DefaultLiveRefresh
+	}
+	return c.LiveRefresh
 }
 
 // Enabled reports whether any period kind is generated.
 func (c Config) Enabled() bool { return len(c.Periods) > 0 && c.Location != nil }
 
 // Has reports whether p is enabled.
-func (c Config) Has(p Period) bool {
-	for _, q := range c.Periods {
-		if q == p {
-			return true
-		}
-	}
-	return false
-}
+func (c Config) Has(p Period) bool { return slices.Contains(c.Periods, p) }
 
 // ParseConfig parses TOP_PLAYLISTS_PERIODS (comma-separated week, month,
 // year; "", "none" or "off" disables the feature) and TOP_PLAYLISTS_TIME_ZONE
@@ -60,7 +83,46 @@ func ParseConfig(periods, zone string) (Config, error) {
 
 // ParsePeriods parses a comma-separated list of period kinds. The result is
 // de-duplicated and in display order.
-func ParsePeriods(s string) ([]Period, error) {
+func ParsePeriods(s string) ([]Period, error) { return parseKinds("TOP_PLAYLISTS_PERIODS", s) }
+
+// ParseLive parses TOP_PLAYLISTS_LIVE (comma-separated week, month, year;
+// "", "none" or "off" = no live playlists) against the enabled kinds: kinds
+// that are not enabled are dropped from live and returned in ignored. On
+// error live is empty.
+func ParseLive(s string, enabled []Period) (live, ignored []Period, err error) {
+	kinds, err := parseKinds("TOP_PLAYLISTS_LIVE", s)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, p := range kinds {
+		if slices.Contains(enabled, p) {
+			live = append(live, p)
+		} else {
+			ignored = append(ignored, p)
+		}
+	}
+	return live, ignored, nil
+}
+
+// ParseLiveRefresh parses TOP_PLAYLISTS_LIVE_REFRESH (a Go duration, at least
+// MinLiveRefresh; "" = DefaultLiveRefresh). An invalid or too short value
+// returns DefaultLiveRefresh together with the error.
+func ParseLiveRefresh(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return DefaultLiveRefresh, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return DefaultLiveRefresh, fmt.Errorf("TOP_PLAYLISTS_LIVE_REFRESH: invalid duration %q: %w", s, err)
+	}
+	if d < MinLiveRefresh {
+		return DefaultLiveRefresh, fmt.Errorf("TOP_PLAYLISTS_LIVE_REFRESH: %s is shorter than the minimum %s", d, MinLiveRefresh)
+	}
+	return d, nil
+}
+
+func parseKinds(name, s string) ([]Period, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" || s == "none" || s == "off" {
 		return nil, nil
@@ -72,7 +134,7 @@ func ParsePeriods(s string) ([]Period, error) {
 			continue
 		}
 		if p != Week && p != Month && p != Year {
-			return nil, fmt.Errorf("TOP_PLAYLISTS_PERIODS: unknown period %q (want week, month, year or none)", part)
+			return nil, fmt.Errorf("%s: unknown period %q (want week, month, year or none)", name, part)
 		}
 		seen[p] = true
 	}
@@ -151,11 +213,20 @@ func Label(p Period, start time.Time) string {
 // Name is the Spotify playlist name, e.g. "Top 50 · November 2026".
 func Name(p Period, start time.Time) string { return "Top 50 · " + Label(p, start) }
 
-// Description is the Spotify playlist description.
+// Description is the Spotify playlist description of a finished period.
 func Description(p Period, start time.Time) string {
-	of := Label(p, start)
+	return "The 50 most-played tracks of " + descriptionOf(p, start) + ", generated automatically from listening history."
+}
+
+// LiveDescription is the Spotify playlist description of a live (unfinished)
+// period.
+func LiveDescription(p Period, start time.Time) string {
+	return "The 50 most-played tracks of " + descriptionOf(p, start) + " so far, updated hourly from listening history."
+}
+
+func descriptionOf(p Period, start time.Time) string {
 	if p == Week {
-		of = "the week of " + start.Format("Jan 2, 2006")
+		return "the week of " + start.Format("Jan 2, 2006")
 	}
-	return "The 50 most-played tracks of " + of + ", generated automatically from listening history."
+	return Label(p, start)
 }

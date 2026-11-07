@@ -86,13 +86,20 @@ func TestLoadAPITopPlaylists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TopPlaylists.Periods != "week,month,year" || cfg.TopPlaylists.TimeZone != "UTC" {
+	if cfg.TopPlaylists.Periods != "week,month,year" || cfg.TopPlaylists.TimeZone != "UTC" ||
+		cfg.TopPlaylists.Live != "week" || cfg.TopPlaylists.LiveRefresh != "1h" {
 		t.Errorf("defaults = %+v", cfg.TopPlaylists)
 	}
 	set()
 	t.Setenv("TOP_PLAYLISTS_PERIODS", "none")
 	t.Setenv("TOP_PLAYLISTS_TIME_ZONE", "America/New_York")
 	if cfg, err = Load[API](); err != nil || cfg.TopPlaylists.Periods != "none" || cfg.TopPlaylists.TimeZone != "America/New_York" {
+		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
+	}
+	set()
+	t.Setenv("TOP_PLAYLISTS_LIVE", "none")
+	t.Setenv("TOP_PLAYLISTS_LIVE_REFRESH", "not-a-duration") // parsed (and rejected) later, never fatal
+	if cfg, err = Load[API](); err != nil || cfg.TopPlaylists.Live != "none" || cfg.TopPlaylists.LiveRefresh != "not-a-duration" {
 		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
 	}
 }

@@ -95,7 +95,7 @@ func TestTopPlaylistsResponse(t *testing.T) {
 		t.Fatalf("weeks = %d", len(weeks))
 	}
 	for _, f := range []string{"period", "period_start", "period_end", "label", "name", "spotify_id", "spotify_url",
-		"track_count", "total_plays", "published_at", "tracks"} {
+		"track_count", "total_plays", "published_at", "live", "refreshed_at", "tracks"} {
 		if _, ok := weeks[0][f]; !ok {
 			t.Errorf("field %q missing", f)
 		}
@@ -189,5 +189,52 @@ func TestTopPlaylistsExcludeHidden(t *testing.T) {
 	// The newest visible entry carries the tracks, not the hidden one.
 	if len(st.trackCalls) != 1 || !st.trackCalls[0].Equal(shownStart) {
 		t.Errorf("tracks loaded for %v", st.trackCalls)
+	}
+}
+
+func TestTopPlaylistsLiveEntry(t *testing.T) {
+	ny, _ := time.LoadLocation("America/New_York")
+	liveStart := time.Date(2026, 11, 9, 0, 0, 0, 0, ny)
+	doneStart := time.Date(2026, 11, 2, 0, 0, 0, 0, ny)
+	refreshed := time.Date(2026, 11, 11, 9, 30, 0, 0, ny)
+	pub := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
+	live := domain.TopPlaylistRecord{Period: "week", PeriodStart: liveStart.UTC(), PeriodEnd: liveStart.AddDate(0, 0, 7).UTC(),
+		TimeZone: "America/New_York", Name: topplaylists.Name(topplaylists.Week, liveStart), Status: domain.TopPlaylistCreated,
+		SpotifyPlaylistID: "live1", Live: true, RefreshedAt: &refreshed, PublishedAt: &pub}
+	done := domain.TopPlaylistRecord{Period: "week", PeriodStart: doneStart.UTC(), PeriodEnd: liveStart.UTC(),
+		TimeZone: "America/New_York", Name: topplaylists.Name(topplaylists.Week, doneStart), Status: domain.TopPlaylistCreated,
+		SpotifyPlaylistID: "done1", PublishedAt: &pub}
+	st := &fakeTopStore{limits: map[string]int{}, rows: map[string][]domain.TopPlaylistRecord{"week": {live, done}}}
+	h := &Handler{top: st, log: slog.New(slog.DiscardHandler), opts: Options{
+		TopPlaylists: topplaylists.Config{Periods: []topplaylists.Period{topplaylists.Week}, Location: ny},
+	}}
+	rec := httptest.NewRecorder()
+	h.topPlaylists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/playlists/top", nil))
+	var body struct {
+		Data struct {
+			Periods map[string][]map[string]json.RawMessage `json:"periods"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	weeks := body.Data.Periods["week"]
+	if len(weeks) != 2 {
+		t.Fatalf("weeks = %d", len(weeks))
+	}
+	want := []map[string]string{
+		{"spotify_id": `"live1"`, "live": "true", "refreshed_at": `"2026-11-11T14:30:00Z"`,
+			"period_end": `"2026-11-16T00:00:00-05:00"`},
+		{"spotify_id": `"done1"`, "live": "false", "refreshed_at": "null"},
+	}
+	for i, w := range want {
+		for k, v := range w {
+			if got := string(weeks[i][k]); got != v {
+				t.Errorf("week %d %s = %s, want %s", i, k, got, v)
+			}
+		}
+	}
+	if len(st.trackCalls) != 1 || !st.trackCalls[0].Equal(liveStart) {
+		t.Errorf("tracks loaded for %v, want the live entry", st.trackCalls)
 	}
 }

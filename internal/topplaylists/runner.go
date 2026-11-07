@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
@@ -42,6 +43,9 @@ type Store interface {
 	SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylistRecord, tracks []domain.RankedTrack) error
 	// TopPlaylistSnapshot returns the stored ranking in position order.
 	TopPlaylistSnapshot(ctx context.Context, period string, start time.Time) ([]domain.RankedTrack, error)
+	// EndedLiveTopPlaylists lists created live rows whose period ended at or
+	// before endedBy and that are not backing off at now, oldest first.
+	EndedLiveTopPlaylists(ctx context.Context, endedBy, now time.Time, limit int) ([]domain.TopPlaylistRecord, error)
 	RankTracks(ctx context.Context, start, end time.Time, limit int) ([]domain.RankedTrack, error)
 	// LockTopPlaylists takes a cluster-wide lock so overlapping instances
 	// (e.g. during a rolling deploy) never generate at the same time.
@@ -78,6 +82,42 @@ type Runner struct {
 
 	now   func() time.Time
 	sleep func(ctx context.Context, d time.Duration) bool
+
+	// unsaved holds Spotify playlists that were created but whose ID could
+	// not be stored, by period, so the next attempt reuses them.
+	mu      sync.Mutex
+	unsaved map[periodKey]unsavedPlaylist
+}
+
+type periodKey struct {
+	period string
+	start  int64 // unix seconds of period_start
+}
+
+type unsavedPlaylist struct{ id, url string }
+
+func keyOf(rec domain.TopPlaylistRecord) periodKey {
+	return periodKey{rec.Period, rec.PeriodStart.Unix()}
+}
+
+func (r *Runner) unsavedPlaylist(k periodKey) (unsavedPlaylist, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.unsaved[k]
+	return u, ok
+}
+
+func (r *Runner) setUnsaved(k periodKey, u *unsavedPlaylist) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u == nil {
+		delete(r.unsaved, k)
+		return
+	}
+	if r.unsaved == nil {
+		r.unsaved = map[periodKey]unsavedPlaylist{}
+	}
+	r.unsaved[k] = *u
 }
 
 // New returns a Runner with production timings: first tick a minute after
@@ -121,6 +161,9 @@ func (r *Runner) RunNow(ctx context.Context) error {
 	}
 	defer unlock()
 	now := r.clock()
+	if rateLimited := r.finalizeEnded(ctx, now); rateLimited {
+		return nil
+	}
 	for _, p := range r.Config.Periods {
 		if rateLimited := r.generate(ctx, p, now); rateLimited {
 			return nil // the other kinds would be refused too; try next tick
@@ -136,8 +179,8 @@ func (r *Runner) RunNow(ctx context.Context) error {
 
 // generate advances the last completed period's state machine on a tick:
 // finished periods (created, empty) and failures still backing off are
-// skipped, except a created live playlist, which is finalized (with its own
-// backoff). It reports whether Spotify rate-limited the request.
+// skipped (a created live playlist is finalized by finalizeEnded). It reports
+// whether Spotify rate-limited the request.
 func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 	loc := r.Config.Location
 	start, end := LastCompleted(p, now, loc)
@@ -150,13 +193,7 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 		return false
 	}
 	switch rec.Status {
-	case domain.TopPlaylistCreated:
-		if !rec.Live || (rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now)) {
-			return false
-		}
-		limited, _ := r.finalize(ctx, p, rec, start, end, loc, now) // stored on the row and logged
-		return limited
-	case domain.TopPlaylistEmpty:
+	case domain.TopPlaylistCreated, domain.TopPlaylistEmpty:
 		return false
 	case domain.TopPlaylistFailed, domain.TopPlaylistWaitingAuth:
 		if rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now) {
@@ -181,8 +218,10 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	rec.PeriodStart, rec.PeriodEnd, rec.TimeZone = start, end, loc.String()
 	rec.Name = Name(p, start)
 	prev := rec.Status
-	// A playlist created by a live attempt still has the live description.
-	staleDetails := !live && rec.SpotifyPlaylistID != "" && rec.RefreshedAt != nil
+	// A playlist that already exists may carry the live description (it was
+	// created by a live attempt): the final attempt sets the final one.
+	_, pending := r.unsavedPlaylist(keyOf(rec))
+	staleDetails := !live && (rec.SpotifyPlaylistID != "" || pending)
 
 	var tracks []domain.RankedTrack
 	if live {
@@ -237,9 +276,7 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 		var err error
 		descr := Description(p, start)
 		if live {
-			descr = LiveDescription(p, start)
-			refreshed := now.UTC()
-			rec.RefreshedAt = &refreshed // marks the playlist as created live
+			descr = LiveDescription(p, start, r.Config.Refresh())
 		}
 		if rec, err = r.create(ctx, rec, descr); err != nil {
 			if rec.SpotifyPlaylistID != "" {
@@ -256,18 +293,32 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, uris); err != nil {
 		return r.spotifyError(ctx, rec, prev, err, now)
 	}
-	if staleDetails {
-		if err := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, rec.Name, Description(p, start)); err != nil {
-			return r.spotifyError(ctx, rec, prev, err, now)
-		}
-	}
 
 	published := now.UTC()
 	rec.Status, rec.PublishedAt, rec.Attempts = domain.TopPlaylistCreated, &published, 0
 	rec.LastError, rec.NextAttemptAt = "", nil
 	rec.Live = live
-	if live || staleDetails {
+	if live {
 		rec.RefreshedAt = &published
+	}
+	err = nil
+	if staleDetails {
+		if derr := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, rec.Name, Description(p, start)); derr != nil {
+			// Not fatal: publish anyway and leave the row to finalizeEnded
+			// (live with a backoff), which retries the details update.
+			limited = isRateLimit(derr)
+			delay := Backoff(1)
+			var rl *spotify.RateLimitError
+			if errors.As(derr, &rl) && rl.RetryAfter > delay {
+				delay = rl.RetryAfter
+			}
+			next := now.Add(delay).UTC()
+			rec.Live, rec.Attempts, rec.NextAttemptAt = true, 1, &next
+			rec.LastError = truncateError("update playlist details: " + derr.Error())
+			err = derr
+			r.Log.WarnContext(ctx, "top playlist details update failed; published, retried later",
+				slog.String("name", rec.Name), logging.Err(derr))
+		}
 	}
 	if err := r.upsert(ctx, rec); err != nil {
 		return r.fail(ctx, rec, err, now), err
@@ -277,26 +328,35 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 	if r.Invalidate != nil {
 		r.Invalidate(ctx)
 	}
-	return false, nil
+	return limited, err
 }
 
 // create makes the Spotify playlist and persists its ID before anything
 // else can fail, so a retry reuses it. Both steps run detached from shutdown
 // (bounded by createTimeout): a create that reached Spotify is always saved.
-// On a save error the returned record carries the new ID and err is set.
+// On a save error the returned record carries the new ID and err is set; the
+// ID is also kept in memory, so the next attempt of this process saves and
+// reuses it instead of creating another playlist.
 func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, description string) (domain.TopPlaylistRecord, error) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
 	defer cancel()
-	id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, description, true)
-	if err != nil {
-		return rec, err
+	k := keyOf(rec)
+	u, ok := r.unsavedPlaylist(k)
+	if !ok {
+		id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, description, true)
+		if err != nil {
+			return rec, err
+		}
+		u = unsavedPlaylist{id: id, url: link}
 	}
-	rec.SpotifyPlaylistID, rec.SpotifyURL = id, link
+	rec.SpotifyPlaylistID, rec.SpotifyURL = u.id, u.url
 	if err := r.Store.UpsertTopPlaylist(cctx, rec); err != nil {
+		r.setUnsaved(k, &u)
 		r.Log.ErrorContext(ctx, "save created spotify playlist id failed",
-			slog.String("name", rec.Name), slog.String("spotify_id", id), logging.Err(err))
+			slog.String("name", rec.Name), slog.String("spotify_id", u.id), logging.Err(err))
 		return rec, err
 	}
+	r.setUnsaved(k, nil)
 	return rec, nil
 }
 

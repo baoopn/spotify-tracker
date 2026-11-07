@@ -219,9 +219,26 @@ func Description(p Period, start time.Time) string {
 }
 
 // LiveDescription is the Spotify playlist description of a live (unfinished)
-// period.
-func LiveDescription(p Period, start time.Time) string {
-	return "The 50 most-played tracks of " + descriptionOf(p, start) + " so far, updated hourly from listening history."
+// period refreshed every interval ("updated hourly" for 1h).
+func LiveDescription(p Period, start time.Time, every time.Duration) string {
+	return "The 50 most-played tracks of " + descriptionOf(p, start) + " so far, updated " +
+		cadence(every) + " from listening history."
+}
+
+// cadence describes a refresh interval: "hourly", "daily", "every 2 hours",
+// "every 90 minutes".
+func cadence(d time.Duration) string {
+	switch {
+	case d <= 0 || d == time.Hour:
+		return "hourly"
+	case d == 24*time.Hour:
+		return "daily"
+	case d%time.Hour == 0:
+		return fmt.Sprintf("every %d hours", d/time.Hour)
+	case d%time.Minute == 0:
+		return fmt.Sprintf("every %d minutes", d/time.Minute)
+	}
+	return "every " + d.String()
 }
 
 func descriptionOf(p Period, start time.Time) string {

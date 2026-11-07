@@ -205,20 +205,24 @@ func TestTopPlaylistsLiveEntry(t *testing.T) {
 		TimeZone: "America/New_York", Name: topplaylists.Name(topplaylists.Week, doneStart), Status: domain.TopPlaylistCreated,
 		SpotifyPlaylistID: "done1", PublishedAt: &pub}
 	st := &fakeTopStore{limits: map[string]int{}, rows: map[string][]domain.TopPlaylistRecord{"week": {live, done}}}
-	h := &Handler{top: st, log: slog.New(slog.DiscardHandler), opts: Options{
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, ny)
+	h := &Handler{top: st, log: slog.New(slog.DiscardHandler), now: func() time.Time { return now }, opts: Options{
 		TopPlaylists: topplaylists.Config{Periods: []topplaylists.Period{topplaylists.Week}, Location: ny},
 	}}
-	rec := httptest.NewRecorder()
-	h.topPlaylists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/playlists/top", nil))
-	var body struct {
-		Data struct {
-			Periods map[string][]map[string]json.RawMessage `json:"periods"`
-		} `json:"data"`
+	get := func() []map[string]json.RawMessage {
+		rec := httptest.NewRecorder()
+		h.topPlaylists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/playlists/top", nil))
+		var body struct {
+			Data struct {
+				Periods map[string][]map[string]json.RawMessage `json:"periods"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Data.Periods["week"]
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	weeks := body.Data.Periods["week"]
+	weeks := get()
 	if len(weeks) != 2 {
 		t.Fatalf("weeks = %d", len(weeks))
 	}
@@ -236,5 +240,11 @@ func TestTopPlaylistsLiveEntry(t *testing.T) {
 	}
 	if len(st.trackCalls) != 1 || !st.trackCalls[0].Equal(liveStart) {
 		t.Errorf("tracks loaded for %v, want the live entry", st.trackCalls)
+	}
+
+	// Ended but not finalized yet: shown as finished.
+	now = time.Date(2026, 11, 16, 0, 5, 0, 0, ny)
+	if weeks = get(); string(weeks[0]["live"]) != "false" || string(weeks[0]["refreshed_at"]) != `"2026-11-11T14:30:00Z"` {
+		t.Errorf("ended live entry: live=%s refreshed_at=%s", weeks[0]["live"], weeks[0]["refreshed_at"])
 	}
 }

@@ -17,6 +17,8 @@ func TestTopPlaylistsLive(t *testing.T) {
 	refreshed := time.Date(2026, 11, 4, 15, 0, 0, 0, ny)
 	row.Live, row.RefreshedAt = true, &refreshed
 	h.tops.rows[0] = row
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, ny) // the week of Nov 2 is running
+	h.api.now = func() time.Time { return now }
 
 	code, body := h.do(t, http.MethodGet, "/admin/api/top-playlists", "")
 	if code != http.StatusOK {
@@ -44,5 +46,13 @@ func TestTopPlaylistsLive(t *testing.T) {
 	_ = json.Unmarshal(body["data"], &d)
 	if string(d["live"]) != "true" {
 		t.Errorf("regenerate data = %s", body["data"])
+	}
+
+	// Ended but not finalized yet: reported as finished.
+	now = time.Date(2026, 11, 9, 0, 10, 0, 0, ny)
+	_, body = h.do(t, http.MethodGet, "/admin/api/top-playlists", "")
+	_ = json.Unmarshal(body["data"], &data)
+	if string(data[0]["live"]) != "false" || string(data[0]["refreshed_at"]) != `"2026-11-04T20:00:00Z"` {
+		t.Errorf("ended live row: live=%s refreshed_at=%s", data[0]["live"], data[0]["refreshed_at"])
 	}
 }

@@ -50,6 +50,14 @@ type Handler struct {
 	rdb   *redis.Client
 	log   *slog.Logger
 	opts  Options
+	now   func() time.Time // test seam; nil = time.Now
+}
+
+func (h *Handler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
 }
 
 // NewRouter builds the HTTP router.

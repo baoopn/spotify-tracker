@@ -248,13 +248,23 @@ created (`created`, `live: true`) on the period's first plays, ranking
 `[period_start, now)`, and re-ranked by the same tick every
 `live_refresh_seconds` (`TOP_PLAYLISTS_LIVE_REFRESH`, default 1 h, min 10 min).
 An unchanged order only updates the stored plays; a new order replaces the
-items of the same playlist. A failed refresh keeps the row published and live,
-sets `last_error` and `refreshed_at`, and waits a full interval. When the
-period ends the next tick **finalizes it in place**: full-period ranking, items
-replaced if needed, the Spotify description changed to the final one, and
-`live: false` (`published_at` kept). A failed finalization keeps `live: true`,
-sets `last_error` and retries with backoff (`attempts` / `next_attempt_at`).
-The live and final playlist are the same Spotify playlist with the same name.
+items of the same playlist. `refreshed_at` moves only on a successful refresh;
+a failed refresh keeps the row published and live, sets `last_error` and
+`next_attempt_at` (one interval later; `attempts` stays 0). The Spotify
+description says how often it is updated ("updated hourly", "every 2 hours",
+…). Once the period has ended for `FinalizeGrace` (15 min, so late plays still
+count) a tick **finalizes it in place**: full-period ranking, items replaced if
+needed, the Spotify description changed to the final one, and `live: false`
+(`published_at` kept). Every ended live row is finalized, oldest first and a
+few per tick, also ones a long outage left behind. A failed finalization keeps
+the row live, sets `last_error` and retries with backoff (`attempts` /
+`next_attempt_at`). A final publish whose description update failed is
+published anyway and finalized the same way later. The live and final playlist
+are the same Spotify playlist with the same name.
+
+`live` in responses (admin and public) is `true` only while the period is
+running: a row whose period ended but is not finalized yet is reported as
+finished (`live: false`).
 
 ```ts
 type AdminTopPlaylist = {
@@ -274,8 +284,8 @@ type AdminTopPlaylist = {
   last_error: string | null;
   next_attempt_at: string | null;  // UTC; earliest automatic retry
   published_at: string | null;     // UTC; last successful publish (a live row keeps its first publish)
-  live: boolean;                   // the current period's live playlist, not finalized yet
-  refreshed_at: string | null;     // UTC; last live refresh or the finalization (null for rows never live)
+  live: boolean;                   // live playlist of a period that is still running
+  refreshed_at: string | null;     // UTC; last successful live refresh or the finalization (null for rows never refreshed)
   created_at: string;
   updated_at: string;
 };
@@ -301,7 +311,7 @@ the same instant is accepted.
 | GET | `/admin/api/top-playlists/{period}/{start}` | – | `{ data: AdminTopPlaylist & { tracks: TopPlaylistTrack[] } }` — with the stored snapshot (`[]` when none) |
 | POST | `/admin/api/top-playlists/run` | – | `{ data, total, status }` (first page, after the run) — runs one generator tick now |
 | POST | `/admin/api/top-playlists/generate` | `{ "period": "month", "date": "2026-07-15" }` | `{ data: AdminTopPlaylist }` — generates (or refreshes) the completed period containing `date` (a calendar date in the configured zone) |
-| POST | `/admin/api/top-playlists/{period}/{start}/regenerate` | – | `{ data: AdminTopPlaylist }` — regenerate / retry an existing row; on a live row of the running period: refresh now (ignores the interval); on a live row whose period ended: finalize now (ignores the backoff) |
+| POST | `/admin/api/top-playlists/{period}/{start}/regenerate` | – | `{ data: AdminTopPlaylist }` — regenerate / retry an existing row; on a live row of the running period: refresh now (ignores the interval); on a live row whose period ended: finalize now (ignores the backoff and the 15 min grace) |
 | PATCH | `/admin/api/top-playlists/{period}/{start}` | `{ "hidden": true }` | `{ data: AdminTopPlaylist }` — hide or show it on the public page |
 
 Generate and regenerate are forced: they ignore the created / empty / backoff

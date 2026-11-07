@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ type fakeStore struct {
 	rankErr   error
 	rankEnd   time.Time // end of the last ranking window
 	snapErr   error
+	upsertErr func(p domain.TopPlaylistRecord) error // injected upsert failure
 	upserts   int
 	locked    bool // another instance holds the lock
 	unlocks   int
@@ -56,6 +58,11 @@ func (f *fakeStore) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistR
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if f.upsertErr != nil {
+		if err := f.upsertErr(p); err != nil {
+			return err
+		}
+	}
 	k := key{p.Period, p.PeriodStart.Unix()}
 	if old, ok := f.rows[k]; ok && p.SpotifyPlaylistID == "" { // mirrors the COALESCE in SQL
 		p.SpotifyPlaylistID, p.SpotifyURL = old.SpotifyPlaylistID, old.SpotifyURL
@@ -75,6 +82,21 @@ func (f *fakeStore) RankTracks(_ context.Context, _, end time.Time, limit int) (
 	}
 	f.rankEnd = end
 	return f.ranked, f.rankErr
+}
+
+func (f *fakeStore) EndedLiveTopPlaylists(_ context.Context, endedBy, now time.Time, limit int) ([]domain.TopPlaylistRecord, error) {
+	var out []domain.TopPlaylistRecord
+	for _, r := range f.rows {
+		backingOff := r.Attempts > 0 && r.NextAttemptAt != nil && r.NextAttemptAt.After(now)
+		if r.Status == domain.TopPlaylistCreated && r.Live && !r.PeriodEnd.After(endedBy) && !backingOff {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PeriodStart.Before(out[j].PeriodStart) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (f *fakeStore) TopPlaylistSnapshot(_ context.Context, period string, start time.Time) ([]domain.RankedTrack, error) {

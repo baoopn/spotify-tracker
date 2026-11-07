@@ -4,7 +4,8 @@
 	import BrandIcon from './BrandIcon.svelte';
 	import ExplicitBadge from './ExplicitBadge.svelte';
 	import RelTime from './RelTime.svelte';
-	import { secondClock } from '#lib/clock.svelte.js';
+	import { MediaQuery } from 'svelte/reactivity';
+	import { frameClock, secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear, spotifyUrl, toDate } from '#lib/format.js';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
@@ -28,14 +29,16 @@
 	const durationMs = $derived(track?.duration_ms ?? 0);
 
 	// Interpolated between server updates from the server's fetched_at instant
-	// (skew-corrected), reading the 1 s clock only while playing. Clamped to
+	// (skew-corrected). While playing it reads a per-frame clock so the bar
+	// glides; with reduced motion it steps once a second instead. Clamped to
 	// [0, duration] so a wrong system clock can't push it off either end.
+	const reducedMotion = new MediaQuery('prefers-reduced-motion: reduce');
 	const progressMs = $derived.by(() => {
 		if (!track || np?.progress_ms == null) return null;
 		const base = np.progress_ms;
 		const fetched = toDate(np.fetched_at)?.getTime();
-		const elapsed =
-			playing && fetched != null ? Math.max(0, live.serverNow(secondClock.now) - fetched) : 0;
+		const now = playing ? (reducedMotion.current ? secondClock.now : frameClock.now) : 0;
+		const elapsed = playing && fetched != null ? Math.max(0, live.serverNow(now) - fetched) : 0;
 		const p = base + elapsed;
 		return Math.max(0, durationMs > 0 ? Math.min(p, durationMs) : p);
 	});
@@ -195,10 +198,16 @@
 							class="fill absolute top-1/2 left-0 h-0.5 w-full origin-left bg-ink"
 							style:transform="translateY(-50%) scaleX({ratio})"
 						></div>
+						<!-- Full-width rail moved with transform (compositor only), so
+						     translateX(%) is a share of the bar's width. -->
 						<div
-							class="dot absolute top-1/2 size-3 rounded-full border-2 border-paper bg-ink"
-							style:left="calc({ratio * 100}% - 0.375rem)"
-						></div>
+							class="rail pointer-events-none absolute inset-0"
+							style:transform="translateX({ratio * 100}%)"
+						>
+							<div
+								class="absolute top-1/2 -left-1.5 size-3 -translate-y-1/2 rounded-full border-2 border-paper bg-ink"
+							></div>
+						</div>
 					</div>
 					<div
 						class="mt-2 flex justify-between font-mono text-xs text-ink-soft tabular-nums"
@@ -291,10 +300,10 @@
 			max-width: none;
 		}
 	}
+	/* Moved every frame from script: no CSS transition (it would lag behind and
+	   restart on each update), just a compositor-only transform. */
 	.fill,
-	.dot {
-		transition:
-			transform 1s linear,
-			left 1s linear;
+	.rail {
+		will-change: transform;
 	}
 </style>

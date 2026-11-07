@@ -29,10 +29,30 @@
 	export function rowAction(row: AdminTopPlaylist, now: number = Date.now()): RowAction {
 		if (isRetry(row)) return 'retry';
 		if (row.status === 'created' && row.live) {
-			const end = Date.parse(row.period_end);
-			return Number.isFinite(end) && end <= now ? 'finalize' : 'refresh';
+			return periodEnded(row, now) ? 'finalize' : 'refresh';
 		}
 		return 'regenerate';
+	}
+
+	/** The row's period is over (an unparsable end counts as not over). */
+	export function periodEnded(row: AdminTopPlaylist, now: number = Date.now()): boolean {
+		const end = Date.parse(row.period_end);
+		return Number.isFinite(end) && end <= now;
+	}
+
+	/**
+	 * The "Live playlist" details line, for published rows only: running (live, period not
+	 * over) or finalized (no longer live, period over, refreshed by the live runner); else none.
+	 */
+	export function liveState(
+		row: AdminTopPlaylist,
+		now: number = Date.now()
+	): 'running' | 'finalized' | null {
+		if (row.status !== 'created') return null;
+		const ended = periodEnded(row, now);
+		if (row.live && !ended) return 'running';
+		if (!row.live && ended && row.refreshed_at) return 'finalized';
+		return null;
 	}
 
 	export const ACTION_UI: Record<
@@ -104,6 +124,7 @@
 	const ui = $derived(STATUS_UI[row.status]);
 	const action = $derived(rowAction(row));
 	const actionUi = $derived(ACTION_UI[action]);
+	const live = $derived(liveState(row));
 	const zone = $derived({ timeZone: row.time_zone });
 	const href = $derived(spotifyHref(row.spotify_url));
 	// A failed regenerate of a published row keeps it published and only records the error.
@@ -228,12 +249,15 @@
 				<dd class="font-mono text-xs text-fg">{row.time_zone}</dd>
 				<dt class="text-muted">Spotify ID</dt>
 				<dd class="font-mono text-xs break-all text-fg">{row.spotify_id ?? '–'}</dd>
-				{#if row.live || row.refreshed_at}
+				{#if live === 'running'}
 					<dt class="text-muted">Live playlist</dt>
 					<dd class="text-fg">
-						{row.live ? 'Updated while the period runs' : 'Finalized'}{#if row.refreshed_at}
+						Updated while the period runs{#if row.refreshed_at}
 							· refreshed <RelTime value={row.refreshed_at} />{/if}
 					</dd>
+				{:else if live === 'finalized'}
+					<dt class="text-muted">Live playlist</dt>
+					<dd class="text-fg">Finalized</dd>
 				{/if}
 				<dt class="text-muted">Updated</dt>
 				<dd class="text-fg"><RelTime value={row.updated_at} /></dd>

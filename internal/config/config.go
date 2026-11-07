@@ -70,6 +70,7 @@ type API struct {
 	Spotify
 	Email
 	Admin
+	TopPlaylists
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -118,6 +119,17 @@ type Spotify struct {
 	// OwnerID, when set, is the only Spotify user ID that may be connected
 	// (prevents binding someone else's account by mistake).
 	OwnerID string `env:"SPOTIFY_OWNER_ID"`
+}
+
+// TopPlaylists configures the auto-generated "Top 50" Spotify playlists.
+// Values are parsed (and invalid ones reported) by internal/topplaylists, so
+// a typo disables the feature instead of stopping the API.
+type TopPlaylists struct {
+	// Periods is a comma-separated list of week, month, year; "none"
+	// disables the feature (an empty value falls back to the default).
+	Periods string `env:"TOP_PLAYLISTS_PERIODS" envDefault:"week,month,year"`
+	// TimeZone is the IANA zone that defines period boundaries and labels.
+	TimeZone string `env:"TOP_PLAYLISTS_TIME_ZONE" envDefault:"UTC"`
 }
 
 // Admin configures the admin dashboard (Clerk authentication).

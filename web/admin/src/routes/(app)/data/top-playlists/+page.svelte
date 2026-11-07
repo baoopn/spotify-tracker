@@ -53,6 +53,9 @@
 
 	const status = $derived(list.data?.status);
 	const enabled = $derived(status?.enabled ?? false);
+	// Spotify must have granted playlist-modify-public before anything is generated.
+	const unauthorized = $derived(!!status && status.enabled && !status.authorized);
+	const AUTH_HINT = 'Re-authorize Spotify first';
 
 	const keyOf = (r: Pick<AdminTopPlaylist, 'period' | 'period_start'>) =>
 		`${r.period}|${r.period_start}`;
@@ -92,7 +95,10 @@
 	}
 
 	function reportError(title: string, err: unknown) {
-		if (err instanceof ApiError && err.code === 'busy') {
+		if (err instanceof ApiError && err.code === 'no_plays') {
+			// Regenerate of a published playlist whose period now ranks nothing: left unchanged.
+			toasts.info('Playlist left unchanged', err.message);
+		} else if (err instanceof ApiError && err.code === 'busy') {
 			toasts.warning('Generator is busy', 'Another run is in progress. Try again in a moment.');
 		} else {
 			toasts.error(title, errorMessage(err));
@@ -136,6 +142,9 @@
 	const regeneratingKey = $derived(
 		regenerate.isPending && regenerate.variables ? keyOf(regenerate.variables) : null
 	);
+
+	/** Run / generate / regenerate share the generator lock: one at a time. */
+	const generatorBusy = $derived(run.isPending || generate.isPending || regenerate.isPending);
 
 	function askRegenerate(r: AdminTopPlaylist) {
 		confirmTarget = r;
@@ -185,7 +194,8 @@
 			type="button"
 			class="btn btn-secondary"
 			onclick={() => (generateOpen = true)}
-			disabled={!enabled || !status?.periods.length}
+			disabled={!enabled || !status?.periods.length || unauthorized || run.isPending}
+			title={unauthorized ? AUTH_HINT : undefined}
 		>
 			<CalendarPlus class="size-4" aria-hidden="true" /> Generate…
 		</button>
@@ -193,7 +203,8 @@
 			type="button"
 			class="btn btn-primary"
 			onclick={() => run.mutate()}
-			disabled={!enabled || run.isPending}
+			disabled={!enabled || generatorBusy || unauthorized}
+			title={unauthorized ? AUTH_HINT : undefined}
 		>
 			{#if run.isPending}<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />{:else}<Play
 					class="size-4"
@@ -287,6 +298,11 @@
 					busy={regeneratingKey === key}
 					toggling={togglingKey === key}
 					disabled={!enabled}
+					regenerateBlocked={unauthorized
+						? AUTH_HINT
+						: generatorBusy && regeneratingKey !== key
+							? 'Another generator run is in progress'
+							: null}
 					ontoggle={() => toggleExpanded(key)}
 					onregenerate={() => askRegenerate(row)}
 					onsethidden={(hidden) => setHidden.mutate({ row, hidden })}
@@ -307,7 +323,12 @@
 </div>
 
 {#if status && generateOpen}
-	<GenerateDialog bind:open={generateOpen} {status} ongenerate={onGenerate} />
+	<GenerateDialog
+		bind:open={generateOpen}
+		{status}
+		blocked={run.isPending || regenerate.isPending}
+		ongenerate={onGenerate}
+	/>
 {/if}
 
 <ConfirmDialog

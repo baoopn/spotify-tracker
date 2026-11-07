@@ -10,6 +10,11 @@
 		failed: { tone: 'danger', label: 'Failed' }
 	};
 
+	/** Only real Spotify playlist URLs are linked; anything else is omitted. */
+	export function spotifyHref(url: string | null): string | null {
+		return url?.startsWith('https://open.spotify.com/') ? url : null;
+	}
+
 	/** created / empty rows are regenerated; the rest are retried. */
 	export function isRetry(row: AdminTopPlaylist): boolean {
 		return row.status !== 'created' && row.status !== 'empty';
@@ -30,6 +35,7 @@
 		busy,
 		toggling,
 		disabled,
+		regenerateBlocked = null,
 		ontoggle,
 		onregenerate,
 		onsethidden
@@ -42,6 +48,8 @@
 		toggling: boolean;
 		/** Feature disabled server-side: every mutation would answer 503. */
 		disabled: boolean;
+		/** Why Regenerate / Retry is unavailable right now (shown as its tooltip), or null. */
+		regenerateBlocked?: string | null;
 		ontoggle: () => void;
 		onregenerate: () => void;
 		onsethidden: (hidden: boolean) => void;
@@ -51,6 +59,9 @@
 	const ui = $derived(STATUS_UI[row.status]);
 	const retry = $derived(isRetry(row));
 	const zone = $derived({ timeZone: row.time_zone });
+	const href = $derived(spotifyHref(row.spotify_url));
+	// A failed regenerate of a published row keeps it published and only records the error.
+	const staleError = $derived(row.status === 'created' && !!row.last_error);
 </script>
 
 <li class="flex flex-col gap-3 px-4 py-4 sm:px-5">
@@ -61,6 +72,9 @@
 			<p class="truncate text-xs text-muted" title={row.name}>{row.name}</p>
 			<div class="mt-2 flex flex-wrap items-center gap-1.5">
 				<Badge tone={ui.tone}>{ui.label}</Badge>
+				{#if staleError}<Badge tone="warn" dot={false} title={row.last_error ?? undefined}
+						>Last update failed</Badge
+					>{/if}
 				{#if row.status === 'created' && row.hidden}<Badge tone="plain" dot={false}>Hidden</Badge
 					>{/if}
 			</div>
@@ -105,12 +119,8 @@
 					Shown on public page
 				</button>
 			{/if}
-			{#if row.spotify_url}
-				<OutLink
-					href={row.spotify_url}
-					class="btn btn-ghost btn-sm"
-					label="Open {row.label} in Spotify"
-				>
+			{#if href}
+				<OutLink {href} class="btn btn-ghost btn-sm" label="Open {row.label} in Spotify">
 					<ExternalLink class="size-4" aria-hidden="true" /> Open in Spotify
 				</OutLink>
 			{/if}
@@ -118,7 +128,8 @@
 				type="button"
 				class="btn btn-secondary btn-sm"
 				onclick={onregenerate}
-				disabled={disabled || busy}
+				disabled={disabled || busy || !!regenerateBlocked}
+				title={regenerateBlocked ?? undefined}
 				aria-label="{retry ? 'Retry' : 'Regenerate'} {row.label}"
 			>
 				{#if busy}

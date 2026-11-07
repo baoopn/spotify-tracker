@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, expectClean, history, test } from './fixtures';
 
 test.describe('public page', () => {
@@ -143,4 +144,128 @@ test('the public page sends a page-view beacon', async ({ page }) => {
 	const body = JSON.parse((await beacon).postData() ?? '{}');
 	expect(body).toMatchObject({ type: 'pageview', path: '/' });
 	expect(typeof body.width).toBe('number');
+});
+
+// Top 50 playlists: fixtured API responses (the dev database has none).
+const WEEK_ID = '37i9dQZF1DXcBWIGoYBM5M';
+const OLD_WEEK_ID = '37i9dQZF1DX0XUsuxWHRQd';
+const MONTH_ID = '37i9dQZF1DWXRqgorJj26U';
+
+function topPlaylist(
+	period: 'week' | 'month' | 'year',
+	id: string,
+	start: string,
+	end: string,
+	label: string,
+	newest: boolean
+) {
+	return {
+		period,
+		period_start: start,
+		period_end: end,
+		time_zone: 'UTC',
+		label,
+		name: `Top 50 · ${label}`,
+		spotify_id: id,
+		spotify_url: `https://open.spotify.com/playlist/${id}`,
+		track_count: 50,
+		total_plays: 312,
+		published_at: end,
+		tracks: newest
+			? [
+					{
+						position: 1,
+						plays: 14,
+						track: { id: 'track1', name: 'Example song', duration_ms: 200_000, explicit: false, artists: [] }
+					}
+				]
+			: []
+	};
+}
+
+const TOP_POPULATED = {
+	data: {
+		time_zone: 'UTC',
+		periods: {
+			week: [
+				topPlaylist('week', WEEK_ID, '2026-11-02T00:00:00Z', '2026-11-09T00:00:00Z', 'Week of Nov 2, 2026', true),
+				topPlaylist('week', OLD_WEEK_ID, '2026-10-26T00:00:00Z', '2026-11-02T00:00:00Z', 'Week of Oct 26, 2026', false)
+			],
+			month: [
+				topPlaylist('month', MONTH_ID, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z', 'October 2026', true)
+			],
+			year: []
+		}
+	}
+};
+
+const TOP_EMPTY = { data: { time_zone: 'UTC', periods: { week: [], month: [], year: [] } } };
+
+async function routeTop(page: Page, body: unknown) {
+	await page.route('**/api/v1/playlists/top*', (route) =>
+		route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+	);
+	// Keep the Spotify embed offline: an empty document stands in for the player.
+	await page.route('https://open.spotify.com/**', (route) =>
+		route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>embed</title>' })
+	);
+}
+
+test.describe('top 50 playlists', () => {
+	test('lists the newest playlist per period with a Spotify embed', async ({ page, problems }) => {
+		await routeTop(page, TOP_POPULATED);
+		await page.goto('/');
+		const section = page.locator('section[aria-labelledby="top-heading"]');
+		await expect(section.getByRole('heading', { name: 'Top 50 playlists' })).toBeVisible();
+		await expect(section).toHaveAttribute('aria-busy', 'false');
+
+		// Only kinds with entries are offered; the first available (week) is selected.
+		const group = section.getByRole('group', { name: 'Playlist period' });
+		const week = group.getByRole('radio', { name: 'Week' });
+		const month = group.getByRole('radio', { name: 'Month' });
+		await expect(week).toBeChecked();
+		await expect(month).not.toBeChecked();
+		await expect(group.getByRole('radio', { name: 'Year' })).toHaveCount(0);
+
+		await expect(section.getByRole('heading', { name: 'Top 50 · Week of Nov 2, 2026' })).toBeVisible();
+		// The range is shown in the response's zone (UTC), not the browser's (America/Denver).
+		await expect(section.getByText(/Nov 2\s*[–-]\s*8, 2026/)).toBeVisible();
+		await expect(section.getByText('50 tracks')).toBeVisible();
+		await expect(section.getByText('312 plays')).toBeVisible();
+
+		const open = section.getByRole('link', { name: /Open in Spotify/ });
+		await expect(open).toHaveAttribute('href', `https://open.spotify.com/playlist/${WEEK_ID}`);
+		await expect(open).toHaveAttribute('target', '_blank');
+		await expect(open).toHaveAttribute('rel', 'noopener noreferrer');
+
+		const iframe = section.locator('iframe');
+		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${WEEK_ID}\?utm_source=generator(&theme=0)?$`));
+		await expect(iframe).toHaveAttribute('title', /Week of Nov 2, 2026/);
+		await expect(iframe).toHaveAttribute('loading', 'lazy');
+
+		// Older entries of the kind are plain links under "Earlier".
+		const older = section.getByRole('link', { name: 'Week of Oct 26, 2026' });
+		await expect(older).toHaveAttribute('href', `https://open.spotify.com/playlist/${OLD_WEEK_ID}`);
+		await expect(older).toHaveAttribute('rel', 'noopener noreferrer');
+
+		// Keyboard: arrow keys move through the segmented control.
+		await week.focus();
+		await page.keyboard.press('ArrowRight');
+		await expect(month).toBeChecked();
+		await expect(section.getByRole('heading', { name: 'Top 50 · October 2026' })).toBeVisible();
+		await expect(section.getByText(/Oct 1\s*[–-]\s*31, 2026/)).toBeVisible();
+		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${MONTH_ID}\?utm_source=generator(&theme=0)?$`));
+		await expect(section.getByRole('link', { name: 'Week of Oct 26, 2026' })).toHaveCount(0);
+		expectClean(problems);
+	});
+
+	test('is absent when every period is empty', async ({ page, problems }) => {
+		await routeTop(page, TOP_EMPTY);
+		const answered = page.waitForResponse((r) => r.url().includes('/api/v1/playlists/top'));
+		await page.goto('/');
+		await answered;
+		await expect(page.locator('section[aria-labelledby="top-heading"]')).toHaveCount(0);
+		await expect(page.locator('iframe[src*="open.spotify.com"]')).toHaveCount(0);
+		expectClean(problems);
+	});
 });

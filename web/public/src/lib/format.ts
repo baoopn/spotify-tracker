@@ -145,3 +145,29 @@ export function coverUrl(url: string | undefined): string | undefined {
 		return undefined;
 	}
 }
+
+/**
+ * Calendar range of a half-open period [start, end) as seen in `zone` (the
+ * zone the server cut the period in, not the viewer's): "Nov 2 – 8, 2026".
+ * The last day is the one holding the last instant before `end`, so DST days
+ * of 23 or 25 hours never shift it. An unknown zone falls back to UTC.
+ */
+export function periodRange(
+	start: string | null | undefined,
+	end: string | null | undefined,
+	zone: string,
+	locale?: string
+): string {
+	const a = toDate(start);
+	const b = toDate(end);
+	if (!a || !b || b <= a) return '–';
+	const last = new Date(b.getTime() - 1);
+	const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
+	let f: Intl.DateTimeFormat;
+	try {
+		f = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone || 'UTC' });
+	} catch {
+		f = new Intl.DateTimeFormat(locale, { ...opts, timeZone: 'UTC' });
+	}
+	return f.formatRange(a, last);
+}

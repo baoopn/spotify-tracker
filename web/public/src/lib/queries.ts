@@ -11,12 +11,15 @@ import {
 	fetchHistory,
 	fetchNowPlaying,
 	fetchRecentPlaylists,
+	fetchTopPlaylists,
 	fetchTrackDetail
 } from './api';
 import type { NowPlaying, TrackDetail } from './types';
 
 export const HISTORY_LIMIT = 6;
 export const PLAYLIST_LIMIT = 5;
+/** Older entries per period (besides the newest one). */
+export const TOP_PLAYLIST_LIMIT = 6;
 export const PROFILE_RANGE = '30d';
 
 /** Now-playing poll while the stream is down (SSE is the live source otherwise). */
@@ -24,6 +27,8 @@ export const NOW_POLL_MS = 10_000;
 /** Safety nets beside the SSE-driven invalidation on track changes. */
 const HISTORY_REFRESH_MS = 30_000;
 const PLAYLISTS_REFRESH_MS = 30_000;
+/** New top playlists appear at most once per period end. */
+const TOP_PLAYLISTS_REFRESH_MS = 5 * 60_000;
 const PROFILE_REFRESH_MS = 60_000;
 const TRACK_REFRESH_MS = 60_000;
 /** Fast poll while the enricher is still analysing the track on show. */
@@ -34,6 +39,7 @@ export const queryKeys = {
 	history: (limit: number) => ['history', limit] as const,
 	historyAll: ['history'] as const,
 	recentPlaylists: (limit: number) => ['playlists', 'recent', limit] as const,
+	topPlaylists: (limit: number) => ['playlists', 'top', limit] as const,
 	playlistsAll: ['playlists'] as const,
 	track: (id: string | null) => ['track', id] as const,
 	audioProfile: (range: string) => ['stats', 'audio-profile', range] as const,
@@ -93,6 +99,14 @@ export function recentPlaylistsQuery({ refresh = false }: RefreshOpt = {}) {
 		queryKey: queryKeys.recentPlaylists(PLAYLIST_LIMIT),
 		queryFn: ({ signal }) => fetchRecentPlaylists(PLAYLIST_LIMIT, signal),
 		refetchInterval: refresh ? PLAYLISTS_REFRESH_MS : false
+	});
+}
+
+export function topPlaylistsQuery() {
+	return queryOptions({
+		queryKey: queryKeys.topPlaylists(TOP_PLAYLIST_LIMIT),
+		queryFn: ({ signal }) => fetchTopPlaylists(TOP_PLAYLIST_LIMIT, signal),
+		refetchInterval: TOP_PLAYLISTS_REFRESH_MS
 	});
 }
 

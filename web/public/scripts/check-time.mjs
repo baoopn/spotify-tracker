@@ -1,7 +1,14 @@
 // Time-handling checks, run by `pnpm check` (docs/admin-api.md "Time handling").
 // Uses Node's built-in TypeScript type stripping to import the real helpers.
 import assert from 'node:assert/strict';
-import { clockTime, dateTime, relative, releaseYear, toDate } from '../src/lib/format.ts';
+import {
+	clockTime,
+	dateTime,
+	periodRange,
+	relative,
+	releaseYear,
+	toDate
+} from '../src/lib/format.ts';
 import {
 	browserOffset,
 	gmtLabel,
@@ -93,5 +100,29 @@ assert.equal(
 	).kind,
 	'intl'
 );
+
+// Top-playlist periods are half-open [start, end) in the server's zone: the
+// last day shown is the day before `end`, formatted in that zone (not the viewer's).
+/** @param {string} s */
+const norm = (s) => s.replace(/[\u2009\u202f]/g, ' ').replace(/\u2013/g, '-');
+assert.equal(
+	norm(periodRange('2026-11-02T00:00:00Z', '2026-11-09T00:00:00Z', 'UTC', 'en-US')),
+	'Nov 2 - 8, 2026'
+);
+// A week crossing the New York DST change (Nov 1, 2026) still ends on Sunday.
+assert.equal(
+	norm(periodRange('2026-10-26T04:00:00Z', '2026-11-02T05:00:00Z', NY, 'en-US')),
+	'Oct 26 - Nov 1, 2026'
+);
+assert.equal(
+	norm(periodRange('2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z', 'UTC', 'en-US')),
+	'Jan 1 - Dec 31, 2026'
+);
+assert.equal(
+	norm(periodRange('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', 'Not/AZone', 'en-US')),
+	'Nov 1 - 30, 2026',
+	'unknown zones fall back to UTC'
+);
+assert.equal(periodRange('2026-11-09T00:00:00Z', '2026-11-02T00:00:00Z', 'UTC'), '–');
 
 console.log('time checks: ok');

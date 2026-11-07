@@ -317,8 +317,8 @@ func (a *API) generateTopPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	loc := a.topZone()
 	day, err := time.ParseInLocation("2006-01-02", in.Date, loc)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_date", "date must be a calendar date (YYYY-MM-DD)")
+	if err != nil || day.Year() < 2000 {
+		writeError(w, http.StatusBadRequest, "invalid_date", "date must be a calendar date (YYYY-MM-DD) from 2000 on")
 		return
 	}
 	p := topplaylists.Period(in.Period)
@@ -376,13 +376,16 @@ func (a *API) runGenerate(w http.ResponseWriter, r *http.Request, action string,
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]adminTopPlaylist{"data": a.toAdminTopPlaylist(rec)})
+	case errors.Is(err, topplaylists.ErrNoPlays):
+		writeError(w, http.StatusConflict, "no_plays", "no plays in this period; playlist left unchanged")
 	case errors.Is(err, topplaylists.ErrNotAuthorized):
-		msg := rec.LastError
-		if msg == "" {
-			msg = err.Error()
+		msg := err.Error()
+		if rec.Status == domain.TopPlaylistWaitingAuth && rec.LastError != "" {
+			msg = rec.LastError
 		}
 		writeError(w, http.StatusPreconditionFailed, "spotify_not_authorized", msg)
-	case rec.Status == domain.TopPlaylistFailed:
+	case rec.LastError != "" && (rec.Status == domain.TopPlaylistFailed || rec.Status == domain.TopPlaylistCreated):
+		// failed, or a published row whose regeneration failed (kept public)
 		writeError(w, http.StatusBadGateway, "spotify_error", "generation failed: "+rec.LastError)
 	default:
 		a.internal(w, r, err)

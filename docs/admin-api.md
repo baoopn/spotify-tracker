@@ -287,23 +287,40 @@ the same instant is accepted.
 | PATCH | `/admin/api/top-playlists/{period}/{start}` | `{ "hidden": true }` | `{ data: AdminTopPlaylist }` — hide or show it on the public page |
 
 Generate and regenerate are forced: they ignore the created / empty / backoff
-rules of the tick, re-rank the period, replace the stored snapshot and then
-create the Spotify playlist if the row has none, or replace the items of the
-**same** playlist (never a duplicate). An `empty` period whose plays were
-imported later becomes `created`. Mutation responses reflect the stored row;
-failures are stored on the row exactly like the tick stores them. Hiding
-drops the public response cache; the playlist stays in the Spotify account.
-There is no delete.
+rules of the tick, re-rank the period, and then create the Spotify playlist if
+the row has none, or replace the items of the **same** playlist (never a
+duplicate). An `empty` period whose plays were imported later becomes
+`created`. Mutation responses reflect the stored row; failures of rows that are
+not yet published are stored exactly like the tick stores them (`failed` /
+`waiting_auth`). Store writes complete even if the request times out.
+
+**Regenerating never unpublishes.** For a `created` row:
+- Spotify authorization is checked first; if it is missing nothing is written
+  (`412`) and the row stays `created`.
+- If the period now ranks no tracks, nothing changes (`409 no_plays`).
+- On any Spotify or store failure the row stays `created` with its
+  `published_at`, `attempts` and `next_attempt_at`; only `last_error` is set
+  (`502`, or `412` for a Spotify permission error).
+- The stored snapshot is replaced only after Spotify accepted the new items,
+  so it always matches the playlist. A success clears `last_error`.
+
+Hiding drops the public response cache; the playlist stays in the Spotify
+account. There is no delete.
 
 Errors: `400 invalid_period | invalid_start | invalid_date | invalid_body |
-invalid_limit | invalid_offset`, `400 period_not_completed` (the period is
-still running or in the future), `400 invalid_period` also when the kind is
-not in `TOP_PLAYLISTS_PERIODS`, `404 not_found`, `409 busy` (another
-generation holds the lock; retry shortly), `412 spotify_not_authorized` (the
-row is now `waiting_auth`; `message` is its `last_error`), `502 spotify_error`
-(the row is now `failed`; `message` includes its `last_error`), `503
-top_playlists_disabled` for every mutation when the feature is disabled (the
-list still answers, with `status.enabled: false`). Run, generate and
+invalid_limit | invalid_offset` (`date` must be a `YYYY-MM-DD` date from
+2000-01-01 on), `400 period_not_completed` (the period is still running or in
+the future), `400 invalid_period` also when the kind is not in
+`TOP_PLAYLISTS_PERIODS`, `404 not_found`, `409 busy` (another generation holds
+the lock; retry shortly), `409 no_plays` (regenerating a published playlist
+whose period has no plays; message "no plays in this period; playlist left
+unchanged"), `412 spotify_not_authorized` (Spotify not connected or missing
+`playlist-modify-public`; a not-yet-published row is now `waiting_auth` and
+`message` is its `last_error`), `502 spotify_error` (the row is now `failed`,
+or a published row kept with `last_error`; `message` includes the
+`last_error`), `503 top_playlists_disabled` for every mutation — run,
+generate, regenerate **and PATCH hidden** — while the feature is disabled (the
+list and detail still answer, with `status.enabled: false`). Run, generate and
 regenerate are bounded to 25 s.
 
 Audit actions: `top_playlists.run`, `top_playlists.generated`,

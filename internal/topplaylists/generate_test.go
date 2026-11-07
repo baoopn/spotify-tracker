@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,5 +215,137 @@ func TestGenerateKeepsRowZone(t *testing.T) {
 	if got.TimeZone != "America/New_York" || got.SpotifyPlaylistID != "old" || len(h.sp.creates) != 0 ||
 		got.Name != "Top 50 · Week of Oct 26, 2026" {
 		t.Fatalf("record = %+v", got)
+	}
+}
+
+// published sets up a created week row (3 tracks, published at h.now) and
+// returns it.
+func (h *harness) published(t *testing.T) domain.TopPlaylistRecord {
+	t.Helper()
+	h.st.ranked = ranked(3)
+	h.r.RunOnce(context.Background())
+	w := h.week()
+	if w.Status != domain.TopPlaylistCreated {
+		t.Fatalf("setup: %+v", w)
+	}
+	h.now = h.now.Add(time.Hour)
+	h.inval = 0
+	return w
+}
+
+// stillPublished asserts the row is unchanged except for last_error.
+func (h *harness) stillPublished(t *testing.T, before domain.TopPlaylistRecord, lastError string) {
+	t.Helper()
+	w := h.week()
+	if w.Status != domain.TopPlaylistCreated || w.PublishedAt == nil || !w.PublishedAt.Equal(*before.PublishedAt) ||
+		w.TrackCount != before.TrackCount || w.Attempts != before.Attempts || w.NextAttemptAt != nil ||
+		w.LastError != lastError || w.SpotifyPlaylistID != before.SpotifyPlaylistID {
+		t.Fatalf("row = %+v, want published row kept with last_error %q", w, lastError)
+	}
+	if n := len(h.st.snapshots[key{"week", weekStart.Unix()}]); n != before.TrackCount {
+		t.Errorf("snapshot has %d tracks, want the old %d", n, before.TrackCount)
+	}
+	if h.inval != 0 {
+		t.Errorf("cache invalidated %d times", h.inval)
+	}
+	// The tick still skips it.
+	upserts := h.st.upserts
+	h.r.RunOnce(context.Background())
+	if h.st.upserts != upserts {
+		t.Error("tick processed the kept row")
+	}
+}
+
+func TestRegeneratePublishedReplaceFailureKeepsItPublished(t *testing.T) {
+	h := newHarness(t, Week)
+	before := h.published(t)
+	h.st.ranked = ranked(5)
+	h.sp.replErr = errors.New("spotify: replace playlist items failed (502): bad gateway")
+	got, err := h.r.Generate(context.Background(), Week, weekStart)
+	if err == nil || errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("err = %v", err)
+	}
+	if got.Status != domain.TopPlaylistCreated || !strings.Contains(got.LastError, "502") {
+		t.Fatalf("returned = %+v", got)
+	}
+	h.stillPublished(t, before, got.LastError)
+	if len(h.sp.creates) != 1 {
+		t.Errorf("creates = %v", h.sp.creates)
+	}
+}
+
+func TestRegeneratePublishedForbiddenKeepsItPublished(t *testing.T) {
+	h := newHarness(t, Week)
+	before := h.published(t)
+	h.sp.replErr = fmt.Errorf("replace: %w", spotify.ErrForbidden)
+	got, err := h.r.Generate(context.Background(), Week, weekStart)
+	if !errors.Is(err, ErrNotAuthorized) || !errors.Is(err, spotify.ErrForbidden) || got.Status != domain.TopPlaylistCreated {
+		t.Fatalf("err=%v record=%+v", err, got)
+	}
+	h.stillPublished(t, before, msgMissingScope)
+}
+
+func TestRegeneratePublishedRankFailureKeepsItPublished(t *testing.T) {
+	h := newHarness(t, Week)
+	before := h.published(t)
+	h.st.rankErr = errors.New("db down")
+	if _, err := h.r.Generate(context.Background(), Week, weekStart); err == nil {
+		t.Fatal("want error")
+	}
+	h.st.rankErr = nil
+	h.stillPublished(t, before, "db down")
+}
+
+func TestRegeneratePublishedMissingScopeWritesNothing(t *testing.T) {
+	h := newHarness(t, Week)
+	before := h.published(t)
+	h.auth.s.Scopes = []string{spotify.RequiredScope}
+	upserts := h.st.upserts
+	got, err := h.r.Generate(context.Background(), Week, weekStart)
+	if !errors.Is(err, ErrNotAuthorized) || h.st.upserts != upserts || got != before {
+		t.Fatalf("err=%v upserts=%d->%d record=%+v", err, upserts, h.st.upserts, got)
+	}
+}
+
+func TestRegeneratePublishedNoPlaysLeavesItUnchanged(t *testing.T) {
+	h := newHarness(t, Week)
+	before := h.published(t)
+	h.st.ranked = nil
+	upserts := h.st.upserts
+	got, err := h.r.Generate(context.Background(), Week, weekStart)
+	if !errors.Is(err, ErrNoPlays) || h.st.upserts != upserts || got != before || len(h.sp.replaces["pl1"]) != 3 {
+		t.Fatalf("err=%v upserts=%d->%d record=%+v", err, upserts, h.st.upserts, got)
+	}
+}
+
+func TestRegeneratePublishedSuccessClearsLastError(t *testing.T) {
+	h := newHarness(t, Week)
+	h.published(t)
+	h.sp.replErr = errors.New("spotify: 500")
+	_, _ = h.r.Generate(context.Background(), Week, weekStart)
+	if h.week().LastError == "" {
+		t.Fatal("setup: last_error not recorded")
+	}
+	h.sp.replErr = nil
+	h.st.ranked = ranked(4)
+	got, err := h.r.Generate(context.Background(), Week, weekStart)
+	if err != nil || got.LastError != "" || got.TrackCount != 4 || !got.PublishedAt.Equal(h.now) || h.inval != 1 {
+		t.Fatalf("err=%v record=%+v inval=%d", err, got, h.inval)
+	}
+	if n := len(h.st.snapshots[key{"week", weekStart.Unix()}]); n != 4 {
+		t.Errorf("snapshot = %d tracks", n)
+	}
+}
+
+// A request timeout in the middle of a forced generation still records the
+// outcome and returns the stored row.
+func TestGenerateRecordsOutcomeAfterCancel(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(2)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.sp.onCreate = cancel
+	got, err := h.r.Generate(ctx, Week, weekStart)
+	if err != nil || got.Status != domain.TopPlaylistCreated || got.SpotifyPlaylistID != "pl1" {
+		t.Fatalf("err=%v record=%+v", err, got)
 	}
 }

@@ -326,9 +326,9 @@ test.describe('my top 5', () => {
 		await expect(section.getByText('Last 7 days', { exact: true })).toBeVisible();
 
 		const group = section.getByRole('group', { name: 'Top 5 range' });
-		const d7 = group.getByRole('radio', { name: 'Last 7 days' });
-		const d30 = group.getByRole('radio', { name: 'Last 30 days' });
-		const d365 = group.getByRole('radio', { name: 'Last 365 days' });
+		const d7 = group.getByRole('radio', { name: '7D Last 7 days', exact: true });
+		const d30 = group.getByRole('radio', { name: '30D Last 30 days', exact: true });
+		const d365 = group.getByRole('radio', { name: '365D Last 365 days', exact: true });
 		await expect(d7).toBeChecked();
 		await expect(d30).not.toBeChecked();
 		await expect(d365).not.toBeChecked();
@@ -359,7 +359,7 @@ test.describe('my top 5', () => {
 		// 30D: both lists follow the one control.
 		const tracks30 = page.waitForRequest((r) => r.url().includes('/api/v1/stats/top-tracks') && r.url().includes('range=30d'));
 		const artists30 = page.waitForRequest((r) => r.url().includes('/api/v1/stats/top-artists') && r.url().includes('range=30d'));
-		await section.getByText('30D', { exact: true }).click();
+		await d30.check({ force: true });
 		await Promise.all([tracks30, artists30]);
 		await expect(d30).toBeChecked();
 		await expect(section.getByText('Last 30 days', { exact: true })).toBeVisible();
@@ -369,7 +369,7 @@ test.describe('my top 5', () => {
 		await expect(artists.getByRole('link', { name: 'Top 30d artist 1' })).toBeVisible();
 
 		// 365D: empty in both columns, the control stays usable.
-		await section.getByText('365D', { exact: true }).click();
+		await d365.check({ force: true });
 		await expect(d365).toBeChecked();
 		await expect(section.getByText('Last 365 days', { exact: true })).toBeVisible();
 		await expect(section.getByText('No plays in this range yet.')).toHaveCount(2);
@@ -390,9 +390,47 @@ test.describe('my top 5', () => {
 		await page.route('**/api/v1/stats/top-tracks*', (route) => route.fulfill({ status: 500, body: '' }));
 		await page.route('**/api/v1/stats/top-artists*', (route) => route.fulfill({ status: 500, body: '' }));
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Recently played', exact: true })).toBeVisible();
+		// Skeleton first, while the requests (and their retries) are in flight.
+		const section = page.locator('section[aria-labelledby="top5-heading"]');
+		await expect(section).toBeVisible();
+		await expect(section).toHaveAttribute('aria-busy', 'true');
 		// Retries (2) finish, then the optional section is gone.
-		await expect(page.locator('section[aria-labelledby="top5-heading"]')).toHaveCount(0, { timeout: 20_000 });
+		await expect(section).toHaveCount(0, { timeout: 20_000 });
+		expectClean(problems);
+	});
+
+	test('keeps the section and control when a later range fails', async ({ page, problems }) => {
+		const fail = (kind: 'tracks' | 'artists') => async (route: Route) => {
+			const range = (new URL(route.request().url()).searchParams.get('range') ?? '7d') as TopRange;
+			if (range === '365d') return route.fulfill({ status: 500, body: '' });
+			const data = kind === 'tracks' ? top5Tracks(range) : top5Artists(range);
+			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data, range }) });
+		};
+		await page.route('**/api/v1/stats/top-tracks*', fail('tracks'));
+		await page.route('**/api/v1/stats/top-artists*', fail('artists'));
+		await page.goto('/');
+		const section = page.locator('section[aria-labelledby="top5-heading"]');
+		const group = section.getByRole('group', { name: 'Top 5 range' });
+		const d7 = group.getByRole('radio', { name: '7D Last 7 days', exact: true });
+		const d365 = group.getByRole('radio', { name: '365D Last 365 days', exact: true });
+		const tracks = section.getByRole('list', { name: 'Tracks' });
+		const artists = section.getByRole('list', { name: 'Artists' });
+		await expect(tracks.getByRole('listitem')).toHaveCount(5);
+		await expect(artists.getByRole('listitem')).toHaveCount(5);
+
+		await d365.check({ force: true });
+		// After the retries both columns report the failure; the section and radios stay.
+		await expect(section.getByText("Couldn't load tracks.")).toBeVisible({ timeout: 20_000 });
+		await expect(section.getByText("Couldn't load artists.")).toBeVisible({ timeout: 20_000 });
+		await expect(section).toBeVisible();
+		await expect(group.getByRole('radio')).toHaveCount(3);
+		await expect(d365).toBeChecked();
+
+		// Back to 7D: the cached lists show again.
+		await d7.check({ force: true });
+		await expect(tracks.getByRole('listitem')).toHaveCount(5);
+		await expect(artists.getByRole('listitem')).toHaveCount(5);
+		await expect(tracks.getByRole('link', { name: 'Top 7d song 1' })).toBeVisible();
 		expectClean(problems);
 	});
 });

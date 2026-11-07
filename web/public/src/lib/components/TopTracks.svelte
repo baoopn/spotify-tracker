@@ -24,8 +24,14 @@
 	const artists = createQuery(() => topArtistsQuery(range));
 	const trackStatus = $derived(loadStatus(tracks));
 	const artistStatus = $derived(loadStatus(artists));
-	// Optional section: hidden only when neither list has anything to show.
-	const hidden = $derived(trackStatus === 'error' && artistStatus === 'error');
+	// Optional section: hidden only when both first loads fail. Once any range
+	// has loaded, later failures show per-column notes and keep the control.
+	let seen = false;
+	const everLoaded = $derived.by(() => {
+		if (tracks.data !== undefined || artists.data !== undefined) seen = true;
+		return seen;
+	});
+	const hidden = $derived(!everLoaded && trackStatus === 'error' && artistStatus === 'error');
 	const busy = $derived(trackStatus === 'loading' || artistStatus === 'loading');
 
 	const nf = new Intl.NumberFormat(undefined);
@@ -38,7 +44,7 @@
 	<ol aria-hidden="true">
 		{#each skeletonRows as i (i)}
 			<li class="row">
-				<span class="label w-7 text-ink-soft">{pad(i)}</span>
+				<span class="label w-7 shrink-0 text-ink-soft">{pad(i)}</span>
 				<div class="skeleton size-11 shrink-0"></div>
 				<div class="flex-1 space-y-2">
 					<div class="skeleton h-4 w-1/2"></div>
@@ -80,15 +86,9 @@
 							i > 0 && 'border-l border-ink'
 						]}
 					>
-						<input
-							type="radio"
-							name="top5-range"
-							value={r.id}
-							aria-label={r.long}
-							class="sr-only"
-							bind:group={range}
-						/>
+						<input type="radio" name="top5-range" value={r.id} class="sr-only" bind:group={range} />
 						{r.label}
+						<span class="sr-only">{r.long}</span>
 					</label>
 				{/each}
 			</div>

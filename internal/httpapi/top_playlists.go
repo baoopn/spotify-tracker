@@ -28,6 +28,8 @@ type topPlaylist struct {
 	TrackCount  int                       `json:"track_count"`
 	TotalPlays  int64                     `json:"total_plays"`
 	PublishedAt *time.Time                `json:"published_at"`
+	Live        bool                      `json:"live"`         // a live playlist whose period is still running
+	RefreshedAt *time.Time                `json:"refreshed_at"` // last live refresh (UTC)
 	Tracks      []domain.TopPlaylistTrack `json:"tracks"`
 }
 
@@ -37,7 +39,8 @@ type topPlaylists struct {
 }
 
 // GET /api/v1/playlists/top?limit=6 — the auto-generated "Top 50" playlists,
-// newest first per period kind. limit is how many older entries to list
+// newest first per period kind (a live playlist of the running period, when
+// there is one, is the newest). limit is how many older entries to list
 // besides the newest one; only the newest entry carries its tracks.
 func (h *Handler) topPlaylists(w http.ResponseWriter, r *http.Request) {
 	older, err := intQuery(r, "limit", 6, 1, 24)
@@ -71,6 +74,7 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 		return nil, err
 	}
 	out := make([]topPlaylist, 0, len(rows))
+	now := h.clock()
 	for _, row := range rows {
 		if row.Hidden {
 			continue // the store filters hidden rows too; never publish one
@@ -85,11 +89,17 @@ func (h *Handler) topPlaylistsOf(ctx context.Context, p topplaylists.Period, lim
 			Label: topplaylists.Label(p, start), Name: row.Name,
 			SpotifyID: row.SpotifyPlaylistID, SpotifyURL: row.SpotifyURL,
 			TrackCount: row.TrackCount, TotalPlays: row.TotalPlays,
+			// An ended period not finalized yet is shown as finished.
+			Live:   row.Live && now.Before(row.PeriodEnd),
 			Tracks: []domain.TopPlaylistTrack{},
 		}
 		if row.PublishedAt != nil {
 			t := row.PublishedAt.UTC()
 			item.PublishedAt = &t
+		}
+		if row.RefreshedAt != nil {
+			t := row.RefreshedAt.UTC()
+			item.RefreshedAt = &t
 		}
 		if len(out) == 0 {
 			tracks, err := h.top.TopPlaylistTracks(ctx, row.Period, row.PeriodStart)

@@ -11,8 +11,10 @@ const (
 	TopPlaylistFailed      = "failed"
 )
 
-// TopPlaylistRecord is one auto-generated "Top 50" playlist of a completed
-// period (week, month or year) and its generation state.
+// TopPlaylistRecord is one auto-generated "Top 50" playlist of a period
+// (week, month or year) and its generation state. A live record is the
+// current, unfinished period's playlist, refreshed while listening and
+// finalized in place when the period ends.
 type TopPlaylistRecord struct {
 	Period            string
 	PeriodStart       time.Time
@@ -29,9 +31,13 @@ type TopPlaylistRecord struct {
 	NextAttemptAt     *time.Time
 	PublishedAt       *time.Time
 	// Hidden rows are left out of the public API (toggled by admins).
-	Hidden    bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Hidden bool
+	// Live is set while the playlist tracks an unfinished period.
+	Live bool
+	// RefreshedAt is the last live refresh (or the finalization).
+	RefreshedAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // RankedTrack is a track's play count within a period.

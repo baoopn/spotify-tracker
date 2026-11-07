@@ -54,6 +54,13 @@ func (m *Manager) ReplacePlaylistItems(ctx context.Context, id string, uris []st
 		"/playlists/"+url.PathEscape(id)+"/items", map[string]any{"uris": uris}, nil)
 }
 
+// UpdatePlaylistDetails changes a playlist's name and description
+// (PUT /playlists/{id}). Needs playlist-modify-public for a public playlist.
+func (m *Manager) UpdatePlaylistDetails(ctx context.Context, id, name, description string) error {
+	return m.sendJSON(ctx, http.MethodPut, "update playlist details",
+		"/playlists/"+url.PathEscape(id), map[string]any{"name": name, "description": description}, nil)
+}
+
 // sendJSON sends body as JSON to a Web API path with the stored credentials
 // and decodes a 2xx response into v (when v is not nil). Like getJSON it
 // retries once with a forced token refresh on 401. A 403 is returned as a

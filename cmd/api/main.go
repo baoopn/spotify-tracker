@@ -186,17 +186,47 @@ func topPlaylistsConfig(cfg config.API, log *slog.Logger) topplaylists.Config {
 	switch {
 	case err != nil:
 		log.Error("top playlists disabled: invalid configuration", logging.Err(err))
+		return topCfg
 	case !topCfg.Enabled():
 		log.Info("top playlists disabled (TOP_PLAYLISTS_PERIODS=none)")
-	default:
-		periods := make([]string, len(topCfg.Periods))
-		for i, p := range topCfg.Periods {
-			periods[i] = string(p)
-		}
-		log.Info("top playlists enabled", slog.String("periods", strings.Join(periods, ",")),
-			slog.String("time_zone", topCfg.Location.String()))
+		return topCfg
 	}
+	applyLiveConfig(&topCfg, cfg.TopPlaylists, log)
+	log.Info("top playlists enabled", slog.String("periods", joinPeriods(topCfg.Periods)),
+		slog.String("time_zone", topCfg.Location.String()), slog.String("live", joinPeriods(topCfg.Live)),
+		slog.Duration("live_refresh", topCfg.Refresh()))
 	return topCfg
+}
+
+// applyLiveConfig parses TOP_PLAYLISTS_LIVE and TOP_PLAYLISTS_LIVE_REFRESH.
+// An invalid list disables live playlists and an invalid interval falls back
+// to the default; neither stops the API.
+func applyLiveConfig(topCfg *topplaylists.Config, raw config.TopPlaylists, log *slog.Logger) {
+	live, ignored, err := topplaylists.ParseLive(raw.Live, topCfg.Periods)
+	if err != nil {
+		log.Error("live top playlists disabled: invalid configuration", logging.Err(err))
+	}
+	if len(ignored) > 0 {
+		log.Warn("TOP_PLAYLISTS_LIVE: ignoring kinds not in TOP_PLAYLISTS_PERIODS",
+			slog.String("ignored", joinPeriods(ignored)))
+	}
+	refresh, err := topplaylists.ParseLiveRefresh(raw.LiveRefresh)
+	if err != nil {
+		log.Error("invalid live top playlist refresh interval; using the default",
+			slog.Duration("live_refresh", refresh), logging.Err(err))
+	}
+	topCfg.Live, topCfg.LiveRefresh = live, refresh
+}
+
+func joinPeriods(ps []topplaylists.Period) string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = string(p)
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ",")
 }
 
 // smtpFromSettings reads SMTP settings from the database on every send, so

@@ -13,12 +13,12 @@ import (
 
 const topPlaylistColumns = `period, period_start, period_end, time_zone, name, status,
 	COALESCE(spotify_playlist_id, ''), COALESCE(spotify_url, ''), track_count, total_plays,
-	attempts, COALESCE(last_error, ''), next_attempt_at, published_at, hidden, created_at, updated_at`
+	attempts, COALESCE(last_error, ''), next_attempt_at, published_at, hidden, live, refreshed_at, created_at, updated_at`
 
 func topPlaylistTargets(p *domain.TopPlaylistRecord) []any {
 	return []any{&p.Period, &p.PeriodStart, &p.PeriodEnd, &p.TimeZone, &p.Name, &p.Status,
 		&p.SpotifyPlaylistID, &p.SpotifyURL, &p.TrackCount, &p.TotalPlays, &p.Attempts,
-		&p.LastError, &p.NextAttemptAt, &p.PublishedAt, &p.Hidden, &p.CreatedAt, &p.UpdatedAt}
+		&p.LastError, &p.NextAttemptAt, &p.PublishedAt, &p.Hidden, &p.Live, &p.RefreshedAt, &p.CreatedAt, &p.UpdatedAt}
 }
 
 // TopPlaylist returns the generation state of one period's top playlist,
@@ -42,8 +42,8 @@ func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRec
 	_, err := q.db.Exec(ctx, `
 		INSERT INTO top_playlists (period, period_start, period_end, time_zone, name, status,
 			spotify_playlist_id, spotify_url, track_count, total_plays, attempts, last_error,
-			next_attempt_at, published_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			next_attempt_at, published_at, live, refreshed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (period, period_start) DO UPDATE SET
 			period_end = EXCLUDED.period_end, time_zone = EXCLUDED.time_zone,
 			name = EXCLUDED.name, status = EXCLUDED.status,
@@ -51,10 +51,11 @@ func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRec
 			spotify_url = COALESCE(EXCLUDED.spotify_url, top_playlists.spotify_url),
 			track_count = EXCLUDED.track_count, total_plays = EXCLUDED.total_plays,
 			attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error,
-			next_attempt_at = EXCLUDED.next_attempt_at, published_at = EXCLUDED.published_at`,
+			next_attempt_at = EXCLUDED.next_attempt_at, published_at = EXCLUDED.published_at,
+			live = EXCLUDED.live, refreshed_at = EXCLUDED.refreshed_at`,
 		p.Period, p.PeriodStart, p.PeriodEnd, p.TimeZone, p.Name, p.Status,
 		nullIfEmpty(p.SpotifyPlaylistID), nullIfEmpty(p.SpotifyURL), p.TrackCount, p.TotalPlays,
-		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt)
+		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt, p.Live, p.RefreshedAt)
 	if err != nil {
 		return fmt.Errorf("upsert top playlist %s %s: %w", p.Period, p.PeriodStart.Format(time.RFC3339), err)
 	}
@@ -84,6 +85,22 @@ func (s *Store) SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylis
 			return fmt.Errorf("insert top playlist tracks: %w", err)
 		}
 		return nil
+	})
+}
+
+// TopPlaylistSnapshot returns a top playlist's stored ranking (track IDs
+// and plays in position order), without hydrating the tracks.
+func (q *Queries) TopPlaylistSnapshot(ctx context.Context, period string, start time.Time) ([]domain.RankedTrack, error) {
+	rows, err := q.db.Query(ctx, `SELECT track_id, plays FROM top_playlist_tracks
+		WHERE period = $1 AND period_start = $2
+		ORDER BY position`, period, start)
+	if err != nil {
+		return nil, fmt.Errorf("top playlist snapshot: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.RankedTrack, error) {
+		var t domain.RankedTrack
+		err := r.Scan(&t.TrackID, &t.Plays)
+		return t, err
 	})
 }
 
@@ -126,6 +143,25 @@ func (q *Queries) PublishedTopPlaylists(ctx context.Context, period string, limi
 		out = []domain.TopPlaylistRecord{}
 	}
 	return out, err
+}
+
+// EndedLiveTopPlaylists lists created live top playlists whose period ended
+// at or before endedBy and that are not backing off a failed finalization at
+// now, oldest period first.
+func (q *Queries) EndedLiveTopPlaylists(ctx context.Context, endedBy, now time.Time, limit int) ([]domain.TopPlaylistRecord, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE status = 'created' AND live AND period_end <= $1
+			AND (attempts = 0 OR next_attempt_at IS NULL OR next_attempt_at <= $2)
+		ORDER BY period_start, period
+		LIMIT $3`, endedBy, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ended live top playlists: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.TopPlaylistRecord, error) {
+		var p domain.TopPlaylistRecord
+		err := r.Scan(topPlaylistTargets(&p)...)
+		return p, err
+	})
 }
 
 // AdminTopPlaylists lists top playlists of every status (period "" = every

@@ -20,6 +20,9 @@ import (
 type TopPlaylistsAdmin interface {
 	RunNow(ctx context.Context) error
 	Generate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error)
+	// Regenerate is Generate for an existing row; on the running period of a
+	// live kind it forces a live refresh.
+	Regenerate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error)
 }
 
 // topPlaylistStore reads and updates top playlist rows (implemented by *store.Store).
@@ -78,6 +81,8 @@ type adminTopPlaylist struct {
 	Name          string     `json:"name"`
 	Status        string     `json:"status"`
 	Hidden        bool       `json:"hidden"`
+	Live          bool       `json:"live"` // live playlist of a period that is still running
+	RefreshedAt   *time.Time `json:"refreshed_at"`
 	SpotifyID     *string    `json:"spotify_id"`
 	SpotifyURL    *string    `json:"spotify_url"`
 	TrackCount    int        `json:"track_count"`
@@ -101,6 +106,9 @@ type topPlaylistsStatus struct {
 	TimeZone        string   `json:"time_zone"`
 	Authorized      bool     `json:"authorized"`
 	IntervalSeconds int      `json:"interval_seconds"`
+	// LivePeriods lists the kinds whose current period has a live playlist.
+	LivePeriods        []string `json:"live_periods"`
+	LiveRefreshSeconds int      `json:"live_refresh_seconds"`
 }
 
 func optString(s string) *string {
@@ -137,6 +145,8 @@ func (a *API) toAdminTopPlaylist(row domain.TopPlaylistRecord) adminTopPlaylist 
 		Period: row.Period, PeriodStart: start, PeriodEnd: row.PeriodEnd.In(zone), TimeZone: zone.String(),
 		Label: topplaylists.Label(topplaylists.Period(row.Period), start), Name: row.Name,
 		Status: row.Status, Hidden: row.Hidden,
+		// An ended period whose live playlist is not finalized yet is finished.
+		Live: row.Live && a.clock().Before(row.PeriodEnd), RefreshedAt: optUTC(row.RefreshedAt),
 		SpotifyID: optString(row.SpotifyPlaylistID), SpotifyURL: optString(row.SpotifyURL),
 		TrackCount: row.TrackCount, TotalPlays: row.TotalPlays, Attempts: row.Attempts,
 		LastError: optString(row.LastError), NextAttemptAt: optUTC(row.NextAttemptAt),
@@ -146,11 +156,15 @@ func (a *API) toAdminTopPlaylist(row domain.TopPlaylistRecord) adminTopPlaylist 
 
 func (a *API) topPlaylistsStatus(ctx context.Context) (topPlaylistsStatus, error) {
 	st := topPlaylistsStatus{Periods: []string{}, TimeZone: a.topZone().String(),
-		IntervalSeconds: int(topplaylists.DefaultInterval / time.Second)}
+		IntervalSeconds: int(topplaylists.DefaultInterval / time.Second), LivePeriods: []string{},
+		LiveRefreshSeconds: int(a.TopPlaylistsConfig.Refresh() / time.Second)}
 	if a.TopPlaylists != nil && a.TopPlaylistsConfig.Enabled() {
 		st.Enabled = true
 		for _, p := range a.TopPlaylistsConfig.Periods {
 			st.Periods = append(st.Periods, string(p))
+			if a.TopPlaylistsConfig.IsLive(p) {
+				st.LivePeriods = append(st.LivePeriods, string(p))
+			}
 		}
 	}
 	sp, err := a.spotifySettings(ctx)
@@ -323,11 +337,12 @@ func (a *API) generateTopPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	p := topplaylists.Period(in.Period)
 	start, _ := topplaylists.Bounds(p, day, loc)
-	a.runGenerate(w, r, "top_playlists.generated", p, start)
+	a.runGenerate(w, r, "top_playlists.generated", p, start, a.TopPlaylists.Generate)
 }
 
 // POST /admin/api/top-playlists/{period}/{start}/regenerate — forced
-// re-generation of an existing row into the same Spotify playlist.
+// re-generation of an existing row into the same Spotify playlist: a live
+// row is refreshed now, a live row of an ended period is finalized.
 func (a *API) regenerateTopPlaylist(w http.ResponseWriter, r *http.Request) {
 	if !a.requireTopPlaylists(w) {
 		return
@@ -345,13 +360,16 @@ func (a *API) regenerateTopPlaylist(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
-	a.runGenerate(w, r, "top_playlists.regenerated", p, row.PeriodStart)
+	a.runGenerate(w, r, "top_playlists.regenerated", p, row.PeriodStart, a.TopPlaylists.Regenerate)
 }
 
-func (a *API) runGenerate(w http.ResponseWriter, r *http.Request, action string, p topplaylists.Period, start time.Time) {
+type generateFunc func(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error)
+
+func (a *API) runGenerate(w http.ResponseWriter, r *http.Request, action string, p topplaylists.Period, start time.Time,
+	generate generateFunc) {
 	ctx, cancel := context.WithTimeout(r.Context(), topPlaylistsTimeout)
 	defer cancel()
-	rec, err := a.TopPlaylists.Generate(ctx, p, start)
+	rec, err := generate(ctx, p, start)
 	switch {
 	case errors.Is(err, topplaylists.ErrBusy):
 		writeError(w, http.StatusConflict, "busy", "top playlists are being generated; try again shortly")

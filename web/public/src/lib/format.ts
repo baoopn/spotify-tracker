@@ -171,3 +171,20 @@ export function periodRange(
 	}
 	return f.formatRange(a, last);
 }
+
+/**
+ * Range of a running period, "Nov 2 – today": its start (month and day in `zone`) up to today.
+ * "–" when the start is missing or invalid.
+ */
+export function liveRange(start: string | null | undefined, zone: string, locale?: string): string {
+	const a = toDate(start);
+	if (!a) return '–';
+	const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+	let f: Intl.DateTimeFormat;
+	try {
+		f = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone || 'UTC' });
+	} catch {
+		f = new Intl.DateTimeFormat(locale, { ...opts, timeZone: 'UTC' });
+	}
+	return `${f.format(a)} – today`;
+}

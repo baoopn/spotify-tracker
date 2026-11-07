@@ -19,6 +19,71 @@
 	export function isRetry(row: AdminTopPlaylist): boolean {
 		return row.status !== 'created' && row.status !== 'empty';
 	}
+
+	export type RowAction = 'retry' | 'regenerate' | 'refresh' | 'finalize';
+
+	/**
+	 * What the row's action button does: a published live row is refreshed now (its period
+	 * still runs) or finalized now (its period has ended but the tick hasn't finalized it yet).
+	 */
+	export function rowAction(row: AdminTopPlaylist, now: number = Date.now()): RowAction {
+		if (isRetry(row)) return 'retry';
+		if (row.status === 'created' && row.live) {
+			return periodEnded(row, now) ? 'finalize' : 'refresh';
+		}
+		return 'regenerate';
+	}
+
+	/** The row's period is over (an unparsable end counts as not over). */
+	export function periodEnded(row: AdminTopPlaylist, now: number = Date.now()): boolean {
+		const end = Date.parse(row.period_end);
+		return Number.isFinite(end) && end <= now;
+	}
+
+	/**
+	 * The "Live playlist" details line, for published rows only: running (live, period not
+	 * over) or finalized (no longer live, period over, refreshed by the live runner); else none.
+	 */
+	export function liveState(
+		row: AdminTopPlaylist,
+		now: number = Date.now()
+	): 'running' | 'finalized' | null {
+		if (row.status !== 'created') return null;
+		const ended = periodEnded(row, now);
+		if (row.live && !ended) return 'running';
+		if (!row.live && ended && row.refreshed_at) return 'finalized';
+		return null;
+	}
+
+	export const ACTION_UI: Record<
+		RowAction,
+		{ label: string; verb: string; confirm: string; done: string }
+	> = {
+		retry: {
+			label: 'Retry',
+			verb: 'Retry',
+			confirm: "Replaces the playlist's tracks with the current top 50 for this period.",
+			done: 'created'
+		},
+		regenerate: {
+			label: 'Regenerate',
+			verb: 'Regenerate',
+			confirm: "Replaces the playlist's tracks with the current top 50 for this period.",
+			done: 'regenerated'
+		},
+		refresh: {
+			label: 'Refresh now',
+			verb: 'Refresh',
+			confirm: 'Refreshes the live playlist with the current top 50 so far.',
+			done: 'refreshed'
+		},
+		finalize: {
+			label: 'Finalize now',
+			verb: 'Finalize',
+			confirm: 'Finalizes the live playlist with the top 50 of the whole period.',
+			done: 'finalized'
+		}
+	};
 </script>
 
 <script lang="ts">
@@ -57,7 +122,9 @@
 
 	const detailsId = $props.id();
 	const ui = $derived(STATUS_UI[row.status]);
-	const retry = $derived(isRetry(row));
+	const action = $derived(rowAction(row));
+	const actionUi = $derived(ACTION_UI[action]);
+	const live = $derived(liveState(row));
 	const zone = $derived({ timeZone: row.time_zone });
 	const href = $derived(spotifyHref(row.spotify_url));
 	// A failed regenerate of a published row keeps it published and only records the error.
@@ -72,6 +139,7 @@
 			<p class="truncate text-xs text-muted" title={row.name}>{row.name}</p>
 			<div class="mt-2 flex flex-wrap items-center gap-1.5">
 				<Badge tone={ui.tone}>{ui.label}</Badge>
+				{#if row.live}<Badge tone="info" dot={false}>Live</Badge>{/if}
 				{#if staleError}<Badge tone="warn" dot={false} title={row.last_error ?? undefined}
 						>Last update failed</Badge
 					>{/if}
@@ -90,6 +158,9 @@
 			<span class="text-muted">
 				{#if row.published_at}Published <RelTime value={row.published_at} />{:else}Not published{/if}
 			</span>
+			{#if row.live && row.refreshed_at}
+				<span class="text-muted">Refreshed <RelTime value={row.refreshed_at} /></span>
+			{/if}
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2 md:justify-end">
@@ -130,16 +201,16 @@
 				onclick={onregenerate}
 				disabled={disabled || busy || !!regenerateBlocked}
 				title={regenerateBlocked ?? undefined}
-				aria-label="{retry ? 'Retry' : 'Regenerate'} {row.label}"
+				aria-label="{actionUi.label} {row.label}"
 			>
 				{#if busy}
 					<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
-				{:else if retry}
+				{:else if action === 'retry'}
 					<RotateCcw class="size-4" aria-hidden="true" />
 				{:else}
 					<RefreshCw class="size-4" aria-hidden="true" />
 				{/if}
-				{retry ? 'Retry' : 'Regenerate'}
+				{actionUi.label}
 			</button>
 			<button
 				type="button"
@@ -178,6 +249,16 @@
 				<dd class="font-mono text-xs text-fg">{row.time_zone}</dd>
 				<dt class="text-muted">Spotify ID</dt>
 				<dd class="font-mono text-xs break-all text-fg">{row.spotify_id ?? '–'}</dd>
+				{#if live === 'running'}
+					<dt class="text-muted">Live playlist</dt>
+					<dd class="text-fg">
+						Updated while the period runs{#if row.refreshed_at}
+							· refreshed <RelTime value={row.refreshed_at} />{/if}
+					</dd>
+				{:else if live === 'finalized'}
+					<dt class="text-muted">Live playlist</dt>
+					<dd class="text-fg">Finalized</dd>
+				{/if}
 				<dt class="text-muted">Updated</dt>
 				<dd class="text-fg"><RelTime value={row.updated_at} /></dd>
 				<dt class="text-muted">Visibility</dt>

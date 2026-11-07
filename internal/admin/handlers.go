@@ -65,6 +65,14 @@ type API struct {
 	spotifyAuth func(context.Context) (settings.Spotify, error)
 	auditor     auditor
 	invalidate  func(context.Context)
+	now         func() time.Time
+}
+
+func (a *API) clock() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
 }
 
 // auditor appends audit log entries (implemented by *store.Store).

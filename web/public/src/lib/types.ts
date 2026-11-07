@@ -64,7 +64,10 @@ export type TopPeriod = 'week' | 'month' | 'year';
 
 export type TopPlaylistTrack = { position: number; plays: number; track: TrackView };
 
-/** An auto-generated "Top 50" playlist for one completed week, month or year. */
+/**
+ * An auto-generated "Top 50" playlist for one week, month or year: a completed period, or
+ * (when `live`) the current one, updated while it runs and finalized in place when it ends.
+ */
 export type TopPlaylist = {
 	period: TopPeriod;
 	/** RFC 3339 instant; the period is half-open [period_start, period_end). */
@@ -79,6 +82,10 @@ export type TopPlaylist = {
 	track_count: number;
 	total_plays: number;
 	published_at: string;
+	/** The current, unfinished period ("so far"); `period_end` is still the period's end. */
+	live: boolean;
+	/** RFC 3339; when the live playlist was last re-ranked (null if never). */
+	refreshed_at: string | null;
 	/** Filled only for the newest entry of each period; older entries have []. */
 	tracks: TopPlaylistTrack[];
 };

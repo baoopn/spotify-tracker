@@ -1,9 +1,11 @@
 <script lang="ts">
 	// "Top 50 playlists": the auto-generated playlist of each completed week,
 	// month and year, with a Spotify embed for the newest one of the chosen kind.
+	// The newest can be live: the running period's playlist, updated while it runs.
 	import BrandIcon from './BrandIcon.svelte';
+	import RelTime from './RelTime.svelte';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { periodRange, spotifyUrl } from '#lib/format.js';
+	import { liveRange, periodRange, spotifyUrl } from '#lib/format.js';
 	import { topPlaylistsQuery } from '#lib/queries.js';
 	import { theme } from '#lib/theme.svelte.js';
 	import type { TopPeriod, TopPlaylist } from '#lib/types.js';
@@ -27,6 +29,24 @@
 	const entries = $derived<TopPlaylist[]>(period ? (data?.periods[period] ?? []) : []);
 	const latest = $derived(entries[0] ?? null);
 	const earlier = $derived(entries.slice(1));
+
+	const SO_FAR: Record<TopPeriod, string> = {
+		week: 'This week so far',
+		month: 'This month so far',
+		year: 'This year so far'
+	};
+	// Defensive: a "live" entry whose period has ended is shown as a finished one.
+	const latestLive = $derived(
+		!!latest && latest.live && Date.parse(latest.period_end) > Date.now()
+	);
+	const latestZone = $derived(latest?.time_zone || timeZone);
+	const latestRange = $derived(
+		latest
+			? latestLive
+				? liveRange(latest.period_start, latestZone)
+				: periodRange(latest.period_start, latest.period_end, latestZone)
+			: ''
+	);
 
 	const nf = new Intl.NumberFormat(undefined);
 	function count(n: number, one: string, many: string): string {
@@ -106,17 +126,23 @@
 					</div>
 				</fieldset>
 
-				<h3 class="mt-6 font-display text-xl leading-snug font-semibold break-words">
-					{latest.name}
-				</h3>
-				<p class="mt-1 text-ink-soft">
-					<time datetime={latest.period_start}
-						>{periodRange(
-							latest.period_start,
-							latest.period_end,
-							latest.time_zone || timeZone
-						)}</time
-					>
+				<div class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2">
+					<h3 class="min-w-0 font-display text-xl leading-snug font-semibold break-words">
+						{latest.name}
+					</h3>
+					{#if latestLive}
+						<p class="chip label shrink-0 [--chip:var(--spot-mint)]">
+							<span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>
+							{SO_FAR[latest.period]}
+						</p>
+					{/if}
+				</div>
+				<p class="mt-1 flex flex-wrap gap-x-2 text-ink-soft">
+					<time datetime={latest.period_start}>{latestRange}</time>
+					{#if latestLive && latest.refreshed_at}
+						<span aria-hidden="true">·</span>
+						<span class="whitespace-nowrap">updated <RelTime value={latest.refreshed_at} /></span>
+					{/if}
 				</p>
 				<p class="label mt-2 flex flex-wrap gap-x-2 text-ink-soft">
 					<span class="whitespace-nowrap">{count(latest.track_count, 'track', 'tracks')}</span>

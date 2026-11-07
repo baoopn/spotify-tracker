@@ -18,7 +18,7 @@
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import GenerateDialog from './GenerateDialog.svelte';
-	import TopPlaylistRow, { isRetry } from './TopPlaylistRow.svelte';
+	import TopPlaylistRow, { ACTION_UI, rowAction } from './TopPlaylistRow.svelte';
 	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { ApiError, api, errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
@@ -130,12 +130,14 @@
 
 	const regenerate = createMutation(() => ({
 		mutationFn: (r: AdminTopPlaylist) => api.regenerateTopPlaylist(r.period, r.period_start),
-		onSuccess: (r, prev) => {
-			reportOutcome(r, isRetry(prev) ? 'created' : 'regenerated');
+		onMutate: (r) => ({ action: rowAction(r) }),
+		onSuccess: (r, _prev, ctx) => {
+			reportOutcome(r, ACTION_UI[ctx.action].done);
 			return applyRow(r);
 		},
-		onError: (err, r) => {
-			reportError(`Could not ${isRetry(r) ? 'retry' : 'regenerate'} ${r.label}`, err);
+		onError: (err, r, ctx) => {
+			const label = ACTION_UI[ctx?.action ?? rowAction(r)].verb.toLowerCase();
+			reportError(`Could not ${label} ${r.label}`, err);
 			return invalidate();
 		}
 	}));
@@ -181,7 +183,13 @@
 		else expanded.add(key);
 	}
 
-	const confirmRetry = $derived(confirmTarget ? isRetry(confirmTarget) : false);
+	const confirmUi = $derived(confirmTarget ? ACTION_UI[rowAction(confirmTarget)] : null);
+
+	/** "1 h", "90 min": the live refresh interval, whole minutes or hours. */
+	function liveEvery(seconds: number): string {
+		const min = Math.max(1, Math.round(seconds / 60));
+		return min % 60 === 0 ? `${num(min / 60)} h` : `${num(min)} min`;
+	}
 </script>
 
 <PageHeader
@@ -229,6 +237,15 @@
 				<span class="text-muted">
 					Checks every {num(Math.round(status.interval_seconds / 60))} min
 				</span>
+				{#if status.live_periods?.length}
+					<span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
+						<Badge tone="info" dot={false}>Live</Badge>
+						<span class="text-fg">
+							{status.live_periods.map((p) => p[0].toUpperCase() + p.slice(1)).join(' · ')}
+						</span>
+						<span>refreshed every {liveEvery(status.live_refresh_seconds)}</span>
+					</span>
+				{/if}
 			{:else}
 				<Badge tone="neutral">Disabled</Badge>
 				<span class="text-muted">
@@ -333,8 +350,8 @@
 
 <ConfirmDialog
 	bind:open={confirmOpen}
-	title={confirmTarget ? `${confirmRetry ? 'Retry' : 'Regenerate'} ${confirmTarget.label}?` : ''}
-	message="Replaces the playlist's tracks with the current top 50 for this period."
-	confirmLabel={confirmRetry ? 'Retry' : 'Regenerate'}
+	title={confirmTarget && confirmUi ? `${confirmUi.verb} ${confirmTarget.label}?` : ''}
+	message={confirmUi?.confirm ?? ''}
+	confirmLabel={confirmUi?.label ?? 'Regenerate'}
 	onconfirm={confirmRegenerate}
 />

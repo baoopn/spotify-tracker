@@ -6,6 +6,7 @@ import type {
 	AudioProfile,
 	NowPlaying,
 	RecentPlaylist,
+	TopPlaylists,
 	TrackDetail
 } from './types';
 
@@ -58,6 +59,7 @@ export const API = {
 	stream: '/api/v1/now-playing/stream',
 	history: (limit: number) => `/api/v1/history?limit=${limit}`,
 	recentPlaylists: (limit: number) => `/api/v1/playlists/recent?limit=${limit}`,
+	topPlaylists: (limit: number) => `/api/v1/playlists/top?limit=${limit}`,
 	track: (id: string) => `/api/v1/tracks/${encodeURIComponent(id)}`,
 	audioProfile: (range: string) => `/api/v1/stats/audio-profile?range=${range}`
 } as const;
@@ -77,6 +79,13 @@ export async function fetchRecentPlaylists(
 	return (
 		(await getJson<ListResponse<RecentPlaylist>>(API.recentPlaylists(limit), signal)).data ?? []
 	);
+}
+
+export async function fetchTopPlaylists(
+	limit: number,
+	signal?: AbortSignal
+): Promise<TopPlaylists> {
+	return (await getJson<ItemResponse<TopPlaylists>>(API.topPlaylists(limit), signal)).data;
 }
 
 export async function fetchTrackDetail(id: string, signal?: AbortSignal): Promise<TrackDetail> {

@@ -76,7 +76,14 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/stats/genres?range=&limit=` | Genre breakdown (root + sub-genres, share of plays). |
 | `GET /api/v1/stats/audio-profile?range=` | Play-weighted average audio features. |
 | `GET /api/v1/playlists/recent?limit=` | Public playlists recently played from (name, cover, owner, plays). |
+| `GET /api/v1/playlists/top?limit=` | Auto-generated "Top 50" playlists per `week` / `month` / `year`, newest first; `limit` (1–24, default 6) older entries per kind; only the newest carries its `tracks`. |
 | `POST /api/v1/events` | Cookieless page-view beacon from the public page (see `docs/admin-api.md`). |
+
+**Top 50 playlists.** When a week (ISO, Monday–Sunday), month or year ends, the
+API creates a public Spotify playlist of the 50 most-played tracks of that
+period (`TOP_PLAYLISTS_PERIODS`, boundaries in `TOP_PLAYLISTS_TIME_ZONE`) and
+the public page embeds it. It needs the `playlist-modify-public` scope:
+re-authorize Spotify once in the admin (Settings → Spotify).
 
 `range` is `7d`, `30d` (default), `90d`, `180d`, `365d` or `all`. Responses are
 `{"data": …}`; errors are `{"error": {"code", "message"}}`. Stats are cached in

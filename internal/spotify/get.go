@@ -18,7 +18,7 @@ import (
 // that is hidden from Development Mode apps or no longer exists.
 func (m *Manager) getJSON(ctx context.Context, what, path string, v any) (found bool, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		tok, _, err := m.AccessToken(ctx, attempt > 0)
+		tok, err := m.token(ctx, attempt > 0)
 		if err != nil {
 			return false, err
 		}

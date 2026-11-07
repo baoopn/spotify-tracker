@@ -70,3 +70,20 @@ func TestTimezoneEndpoint(t *testing.T) {
 		t.Errorf("bad zone: got %d", rec.Code)
 	}
 }
+
+func TestTopPlaylistsRouteAndFrameSrc(t *testing.T) {
+	site := staticsite.New(fstest.MapFS{"index.html": {Data: []byte("<html>home</html>")}},
+		staticsite.Options{ExtraCSP: map[string]string{"frame-src": "https://open.spotify.com"}})
+	h := NewRouter(nil, nil, slog.New(slog.DiscardHandler), Options{Site: site})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-src https://open.spotify.com;") {
+		t.Errorf("CSP = %q", csp)
+	}
+	// The route exists (disabled feature: every period empty, no store needed).
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/playlists/top", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"week":[]`) {
+		t.Errorf("GET /api/v1/playlists/top = %d %s", rec.Code, rec.Body)
+	}
+}

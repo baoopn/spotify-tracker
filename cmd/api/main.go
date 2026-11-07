@@ -45,6 +45,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/spotify"
 	"github.com/baoopn/spotify-tracker/internal/staticsite"
 	"github.com/baoopn/spotify-tracker/internal/store"
+	"github.com/baoopn/spotify-tracker/internal/topplaylists"
 	"github.com/baoopn/spotify-tracker/internal/tracker"
 	adminui "github.com/baoopn/spotify-tracker/web/admin"
 	publicui "github.com/baoopn/spotify-tracker/web/public"
@@ -97,6 +98,9 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
 	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
+	if c.topPlaylists != nil {
+		g.Go(func() error { return c.topPlaylists.Run(gctx) })
+	}
 	g.Go(func() error { return serveGRPC(gctx, c.grpc, c.health, cfg.GRPCAddr, log) })
 
 	err = g.Wait()
@@ -113,6 +117,8 @@ type components struct {
 	alerts    *alerts.Checker
 	analytics *analytics.Recorder
 	images    *artistimages.Refresher
+	// topPlaylists is nil when the feature is disabled.
+	topPlaylists *topplaylists.Runner
 }
 
 // wire builds every service and server from config and connections.
@@ -151,16 +157,44 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Checks: checks,
 	}}
 
+	topCfg := topPlaylistsConfig(cfg, log)
+	var topRunner *topplaylists.Runner
+	if topCfg.Enabled() {
+		topRunner = topplaylists.New(topCfg, st, mgr, settingsStore, svc.InvalidateCache,
+			log.With(slog.String("component", "top_playlists")))
+	}
+
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
-		ops:       opsSrv,
-		http:      newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), log),
-		grpc:      grpcSrv,
-		health:    hs,
-		alerts:    checker,
-		analytics: recorder,
-		images:    artistimages.New(st, mgr, log),
+		ops:          opsSrv,
+		http:         newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), topCfg, log),
+		grpc:         grpcSrv,
+		health:       hs,
+		alerts:       checker,
+		analytics:    recorder,
+		images:       artistimages.New(st, mgr, log),
+		topPlaylists: topRunner,
 	}, nil
+}
+
+// topPlaylistsConfig parses the top playlists settings. Invalid values are
+// logged and disable the feature; they never stop the API.
+func topPlaylistsConfig(cfg config.API, log *slog.Logger) topplaylists.Config {
+	topCfg, err := topplaylists.ParseConfig(cfg.TopPlaylists.Periods, cfg.TopPlaylists.TimeZone)
+	switch {
+	case err != nil:
+		log.Error("top playlists disabled: invalid configuration", logging.Err(err))
+	case !topCfg.Enabled():
+		log.Info("top playlists disabled (TOP_PLAYLISTS_PERIODS=none)")
+	default:
+		periods := make([]string, len(topCfg.Periods))
+		for i, p := range topCfg.Periods {
+			periods[i] = string(p)
+		}
+		log.Info("top playlists enabled", slog.String("periods", strings.Join(periods, ",")),
+			slog.String("time_zone", topCfg.Location.String()))
+	}
+	return topCfg
 }
 
 // smtpFromSettings reads SMTP settings from the database on every send, so
@@ -196,7 +230,7 @@ func newAuthenticator(cfg config.API, rdb *redis.Client, log *slog.Logger) *admi
 // newHTTPServer builds the public HTTP server: /api/v1, /admin and the
 // public site at /.
 func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder *analytics.Recorder,
-	adminAPI *admin.API, auth *admin.Authenticator, log *slog.Logger) *http.Server {
+	adminAPI *admin.API, auth *admin.Authenticator, topCfg topplaylists.Config, log *slog.Logger) *http.Server {
 	return &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(st, rdb, log, httpapi.Options{
@@ -206,21 +240,29 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			TrustedProxyHops:     cfg.TrustedProxyHops,
 			ClientIPHeader:       cfg.ClientIPHeader,
 			ShowPrivatePlaylists: cfg.ShowPrivatePlaylists,
+			TopPlaylists:         topCfg,
 			V1Middleware:         []func(http.Handler) http.Handler{recorder.Middleware},
 			Events:               recorder.EventsHandler,
 			Mount: func(r chi.Router) {
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)
 			},
-			Site: staticsite.New(publicui.FS(), staticsite.Options{
-				Placeholder: "The public page was not built. Run <code>pnpm --dir web/public build</code>.",
-			}),
+			Site: staticsite.New(publicui.FS(), publicSiteOptions()),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No WriteTimeout: /api/v1/now-playing/stream is a long-lived SSE response;
 		// regular routes are bounded by a per-route timeout middleware.
+	}
+}
+
+// publicSiteOptions configures the public page: its CSP also allows the
+// Spotify embed player used for the top playlists.
+func publicSiteOptions() staticsite.Options {
+	return staticsite.Options{
+		ExtraCSP:    map[string]string{"frame-src": "https://open.spotify.com"},
+		Placeholder: "The public page was not built. Run <code>pnpm --dir web/public build</code>.",
 	}
 }
 

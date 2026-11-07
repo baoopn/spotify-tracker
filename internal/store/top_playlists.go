@@ -1,0 +1,165 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/baoopn/spotify-tracker/internal/domain"
+)
+
+const topPlaylistColumns = `period, period_start, period_end, time_zone, name, status,
+	COALESCE(spotify_playlist_id, ''), COALESCE(spotify_url, ''), track_count, total_plays,
+	attempts, COALESCE(last_error, ''), next_attempt_at, published_at`
+
+func topPlaylistTargets(p *domain.TopPlaylistRecord) []any {
+	return []any{&p.Period, &p.PeriodStart, &p.PeriodEnd, &p.TimeZone, &p.Name, &p.Status,
+		&p.SpotifyPlaylistID, &p.SpotifyURL, &p.TrackCount, &p.TotalPlays, &p.Attempts,
+		&p.LastError, &p.NextAttemptAt, &p.PublishedAt}
+}
+
+// TopPlaylist returns the generation state of one period's top playlist,
+// or domain.ErrNotFound when it was never attempted.
+func (q *Queries) TopPlaylist(ctx context.Context, period string, start time.Time) (domain.TopPlaylistRecord, error) {
+	var p domain.TopPlaylistRecord
+	err := q.db.QueryRow(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE period = $1 AND period_start = $2`, period, start).Scan(topPlaylistTargets(&p)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, domain.ErrNotFound
+	}
+	if err != nil {
+		return p, fmt.Errorf("top playlist %s %s: %w", period, start.Format(time.RFC3339), err)
+	}
+	return p, nil
+}
+
+// UpsertTopPlaylist writes a top playlist's state. A known Spotify playlist
+// ID is never cleared, so retries can't create duplicate playlists.
+func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error {
+	_, err := q.db.Exec(ctx, `
+		INSERT INTO top_playlists (period, period_start, period_end, time_zone, name, status,
+			spotify_playlist_id, spotify_url, track_count, total_plays, attempts, last_error,
+			next_attempt_at, published_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (period, period_start) DO UPDATE SET
+			period_end = EXCLUDED.period_end, time_zone = EXCLUDED.time_zone,
+			name = EXCLUDED.name, status = EXCLUDED.status,
+			spotify_playlist_id = COALESCE(EXCLUDED.spotify_playlist_id, top_playlists.spotify_playlist_id),
+			spotify_url = COALESCE(EXCLUDED.spotify_url, top_playlists.spotify_url),
+			track_count = EXCLUDED.track_count, total_plays = EXCLUDED.total_plays,
+			attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error,
+			next_attempt_at = EXCLUDED.next_attempt_at, published_at = EXCLUDED.published_at`,
+		p.Period, p.PeriodStart, p.PeriodEnd, p.TimeZone, p.Name, p.Status,
+		nullIfEmpty(p.SpotifyPlaylistID), nullIfEmpty(p.SpotifyURL), p.TrackCount, p.TotalPlays,
+		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt)
+	if err != nil {
+		return fmt.Errorf("upsert top playlist %s %s: %w", p.Period, p.PeriodStart.Format(time.RFC3339), err)
+	}
+	return nil
+}
+
+// SaveTopPlaylistSnapshot upserts a top playlist and replaces its ranked
+// tracks in one transaction.
+func (s *Store) SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylistRecord, tracks []domain.RankedTrack) error {
+	return s.InTx(ctx, func(q *Queries) error {
+		if err := q.UpsertTopPlaylist(ctx, p); err != nil {
+			return err
+		}
+		if _, err := q.db.Exec(ctx, `DELETE FROM top_playlist_tracks WHERE period = $1 AND period_start = $2`,
+			p.Period, p.PeriodStart); err != nil {
+			return fmt.Errorf("clear top playlist tracks: %w", err)
+		}
+		if len(tracks) == 0 {
+			return nil
+		}
+		b := &pgx.Batch{}
+		for i, t := range tracks {
+			b.Queue(`INSERT INTO top_playlist_tracks (period, period_start, position, track_id, plays)
+				VALUES ($1, $2, $3, $4, $5)`, p.Period, p.PeriodStart, i+1, t.TrackID, t.Plays)
+		}
+		if err := q.db.SendBatch(ctx, b).Close(); err != nil {
+			return fmt.Errorf("insert top playlist tracks: %w", err)
+		}
+		return nil
+	})
+}
+
+// RankTracks returns the most played tracks with played_at in [start, end),
+// by total plays (replays included), then most recently played.
+func (q *Queries) RankTracks(ctx context.Context, start, end time.Time, limit int) ([]domain.RankedTrack, error) {
+	rows, err := q.db.Query(ctx, `
+		SELECT track_id, SUM(replay_count)::bigint AS plays
+		FROM listening_history
+		WHERE played_at >= $1 AND played_at < $2
+		GROUP BY track_id
+		ORDER BY plays DESC, MAX(played_at) DESC, track_id
+		LIMIT $3`, start, end, limit)
+	if err != nil {
+		return nil, fmt.Errorf("rank tracks: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.RankedTrack, error) {
+		var t domain.RankedTrack
+		err := r.Scan(&t.TrackID, &t.Plays)
+		return t, err
+	})
+}
+
+// PublishedTopPlaylists lists created top playlists of one period kind,
+// newest first.
+func (q *Queries) PublishedTopPlaylists(ctx context.Context, period string, limit int) ([]domain.TopPlaylistRecord, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE period = $1 AND status = 'created'
+		ORDER BY period_start DESC
+		LIMIT $2`, period, limit)
+	if err != nil {
+		return nil, fmt.Errorf("published top playlists: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.TopPlaylistRecord, error) {
+		var p domain.TopPlaylistRecord
+		err := r.Scan(topPlaylistTargets(&p)...)
+		return p, err
+	})
+	if out == nil {
+		out = []domain.TopPlaylistRecord{}
+	}
+	return out, err
+}
+
+// TopPlaylistTracks returns a top playlist's snapshot with hydrated tracks.
+func (q *Queries) TopPlaylistTracks(ctx context.Context, period string, start time.Time) ([]domain.TopPlaylistTrack, error) {
+	rows, err := q.db.Query(ctx, `
+		SELECT tp.position, tp.plays, `+trackColumns+`
+		FROM top_playlist_tracks tp
+		JOIN tracks t ON t.id = tp.track_id
+		LEFT JOIN albums al ON al.id = t.album_id
+		WHERE tp.period = $1 AND tp.period_start = $2
+		ORDER BY tp.position`, period, start)
+	if err != nil {
+		return nil, fmt.Errorf("top playlist tracks: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.TopPlaylistTrack{}
+	for rows.Next() {
+		var tt domain.TopPlaylistTrack
+		var pos int16
+		var al albumScan
+		if err := rows.Scan(append(append([]any{&pos, &tt.Plays},
+			scanTrack(&tt.Track)...), al.targets()...)...); err != nil {
+			return nil, err
+		}
+		tt.Position = int(pos)
+		tt.Track.Album = al.album()
+		out = append(out, tt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	views := make([]*domain.TrackView, len(out))
+	for i := range out {
+		views[i] = &out[i].Track
+	}
+	return out, q.hydrate(ctx, views...)
+}

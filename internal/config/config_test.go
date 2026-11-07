@@ -73,3 +73,26 @@ func TestLoadAPIRequiresSecrets(t *testing.T) {
 		t.Errorf("redirect uri default = %q", cfg.Spotify.RedirectURI)
 	}
 }
+
+func TestLoadAPITopPlaylists(t *testing.T) {
+	set := func() {
+		t.Setenv("DATABASE_URL", "postgres://u:p@localhost/db")
+		t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+		t.Setenv("SECRETS_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		t.Setenv("INTERNAL_API_TOKEN", "0123456789abcdef")
+	}
+	set()
+	cfg, err := Load[API]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TopPlaylists.Periods != "week,month,year" || cfg.TopPlaylists.TimeZone != "UTC" {
+		t.Errorf("defaults = %+v", cfg.TopPlaylists)
+	}
+	set()
+	t.Setenv("TOP_PLAYLISTS_PERIODS", "none")
+	t.Setenv("TOP_PLAYLISTS_TIME_ZONE", "America/New_York")
+	if cfg, err = Load[API](); err != nil || cfg.TopPlaylists.Periods != "none" || cfg.TopPlaylists.TimeZone != "America/New_York" {
+		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
+	}
+}

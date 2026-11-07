@@ -61,9 +61,15 @@ Scopes requested:
 | `user-read-playback-state` | playback state details |
 | `user-read-recently-played` | recently played |
 | `playlist-read-private`, `playlist-read-collaborative` | names/covers of private & collaborative playlists you play from |
+| `playlist-modify-public` | create and fill the auto-generated public "Top 50" playlists |
 
 If an older token lacks the playlist scopes, Settings → Spotify shows a
 "Re-authorize to include private playlists" hint.
+
+`playlist-modify-public` was added for the Top 50 playlists: tokens
+authorized before it lack it, so **re-authorize once** (Settings → Spotify →
+Re-authorize). Until then the generator waits (status `waiting_auth`, one
+warning in the logs) and picks up automatically after re-authorizing.
 
 Optional hardening: set `SPOTIFY_OWNER_ID` to your Spotify user ID (shown in
 Settings → Spotify after connecting) so only that account can ever be
@@ -90,7 +96,7 @@ that the dashboard flow is the source of truth.
 ```bash
 # 1. Open in a browser and approve (replace CLIENT_ID; the redirect URI must
 #    be registered for the app):
-https://accounts.spotify.com/authorize?client_id=CLIENT_ID&response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback&scope=user-read-currently-playing%20user-read-playback-state%20user-read-recently-played%20playlist-read-private%20playlist-read-collaborative
+https://accounts.spotify.com/authorize?client_id=CLIENT_ID&response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback&scope=user-read-currently-playing%20user-read-playback-state%20user-read-recently-played%20playlist-read-private%20playlist-read-collaborative%20playlist-modify-public
 # 2. Copy ?code=… from the redirect (the page may fail to load — that's fine)
 #    and exchange it:
 curl -u "CLIENT_ID:CLIENT_SECRET" -d grant_type=authorization_code -d code=CODE \

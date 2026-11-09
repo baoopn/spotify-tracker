@@ -36,34 +36,6 @@ const (
 	DefaultInterval = 10 * time.Minute
 )
 
-// Store is the persistence the runner needs (implemented by *store.Store).
-type Store interface {
-	TopPlaylist(ctx context.Context, period string, start time.Time) (domain.TopPlaylistRecord, error)
-	UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error
-	SaveTopPlaylistSnapshot(ctx context.Context, p domain.TopPlaylistRecord, tracks []domain.RankedTrack) error
-	// TopPlaylistSnapshot returns the stored ranking in position order.
-	TopPlaylistSnapshot(ctx context.Context, period string, start time.Time) ([]domain.RankedTrack, error)
-	// EndedLiveTopPlaylists lists created live rows whose period ended at or
-	// before endedBy and that are not backing off at now, oldest first.
-	EndedLiveTopPlaylists(ctx context.Context, endedBy, now time.Time, limit int) ([]domain.TopPlaylistRecord, error)
-	RankTracks(ctx context.Context, start, end time.Time, limit int) ([]domain.RankedTrack, error)
-	// LockTopPlaylists takes a cluster-wide lock so overlapping instances
-	// (e.g. during a rolling deploy) never generate at the same time.
-	LockTopPlaylists(ctx context.Context) (unlock func(), ok bool, err error)
-}
-
-// Spotify writes playlists (implemented by *spotify.Manager).
-type Spotify interface {
-	CreatePlaylist(ctx context.Context, name, description string, public bool) (id, url string, err error)
-	ReplacePlaylistItems(ctx context.Context, id string, uris []string) error
-	UpdatePlaylistDetails(ctx context.Context, id, name, description string) error
-}
-
-// Auth reads the stored Spotify authorization (implemented by *settings.Store).
-type Auth interface {
-	Spotify(ctx context.Context) (settings.Spotify, error)
-}
-
 // Runner creates the top playlist of the most recently completed period of
 // every enabled kind, and keeps the live playlist of the current period of
 // every live kind up to date (finalizing it in place once the period ends).
@@ -87,6 +59,10 @@ type Runner struct {
 	// not be stored, by period, so the next attempt reuses them.
 	mu      sync.Mutex
 	unsaved map[periodKey]unsavedPlaylist
+
+	// owner is the playlist owner name resolved for this tick (see owner.go).
+	ownerMu sync.Mutex
+	owner   ownerState
 }
 
 type periodKey struct {
@@ -161,6 +137,7 @@ func (r *Runner) RunNow(ctx context.Context) error {
 	}
 	defer unlock()
 	now := r.clock()
+	r.resolveOwner(ctx, now)
 	if rateLimited := r.finalizeEnded(ctx, now); rateLimited {
 		return nil
 	}
@@ -174,6 +151,13 @@ func (r *Runner) RunNow(ctx context.Context) error {
 			}
 		}
 	}
+	if rateLimited := r.prune(ctx, now); rateLimited {
+		return nil
+	}
+	if rateLimited := r.rename(ctx, now); rateLimited {
+		return nil
+	}
+	r.verify(ctx, now, false)
 	return nil
 }
 
@@ -193,7 +177,7 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 		return false
 	}
 	switch rec.Status {
-	case domain.TopPlaylistCreated, domain.TopPlaylistEmpty:
+	case domain.TopPlaylistCreated, domain.TopPlaylistEmpty, domain.TopPlaylistPruned:
 		return false
 	case domain.TopPlaylistFailed, domain.TopPlaylistWaitingAuth:
 		if rec.NextAttemptAt != nil && rec.NextAttemptAt.After(now) {
@@ -216,7 +200,7 @@ func (r *Runner) generate(ctx context.Context, p Period, now time.Time) bool {
 func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRecord, start, end time.Time,
 	loc *time.Location, now time.Time, live bool) (limited bool, err error) {
 	rec.PeriodStart, rec.PeriodEnd, rec.TimeZone = start, end, loc.String()
-	rec.Name = Name(p, start)
+	rec.Name = r.nameFor(p, start, rec.Name)
 	prev := rec.Status
 	// A playlist that already exists may carry the live description (it was
 	// created by a live attempt): the final attempt sets the final one.

@@ -109,6 +109,10 @@ func (r *Runner) refreshLive(ctx context.Context, p Period, rec domain.TopPlayli
 	changed := !sameOrder(old, tracks)
 	if changed {
 		if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, trackURIs(tracks)); err != nil {
+			if errors.Is(err, spotify.ErrNotFound) { // deleted outside: restore; refreshed next tick
+				_, rerr := r.restore(ctx, rec, now)
+				return isRateLimit(rerr), rerr
+			}
 			return isRateLimit(err), r.liveSpotifyFailed(ctx, rec, err, now)
 		}
 	}
@@ -178,12 +182,12 @@ func (r *Runner) finalize(ctx context.Context, p Period, rec domain.TopPlaylistR
 	}
 	if len(tracks) > 0 && !sameOrder(old, tracks) {
 		if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, trackURIs(tracks)); err != nil {
-			return isRateLimit(err), r.finalizeSpotifyFailed(ctx, rec, err, now)
+			return r.finalizeSpotifyError(ctx, rec, err, now)
 		}
 	}
-	name := Name(p, start)
+	name := r.nameFor(p, start, rec.Name)
 	if err := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, name, Description(p, start)); err != nil {
-		return isRateLimit(err), r.finalizeSpotifyFailed(ctx, rec, err, now)
+		return r.finalizeSpotifyError(ctx, rec, err, now)
 	}
 
 	next := rec
@@ -207,6 +211,17 @@ func (r *Runner) finalize(ctx context.Context, p Period, rec domain.TopPlaylistR
 		r.Invalidate(ctx)
 	}
 	return false, nil
+}
+
+// finalizeSpotifyError handles a failed Spotify write while finalizing: a
+// playlist deleted outside this system is restored (and finalized on a
+// later tick); anything else is recorded by finalizeSpotifyFailed.
+func (r *Runner) finalizeSpotifyError(ctx context.Context, rec domain.TopPlaylistRecord, err error, now time.Time) (bool, error) {
+	if errors.Is(err, spotify.ErrNotFound) {
+		_, rerr := r.restore(ctx, rec, now)
+		return isRateLimit(rerr), rerr
+	}
+	return isRateLimit(err), r.finalizeSpotifyFailed(ctx, rec, err, now)
 }
 
 func (r *Runner) finalizeSpotifyFailed(ctx context.Context, rec domain.TopPlaylistRecord, err error, now time.Time) error {
@@ -272,7 +287,11 @@ func (r *Runner) Regenerate(ctx context.Context, p Period, start time.Time) (dom
 	case err != nil:
 		return domain.TopPlaylistRecord{}, err
 	}
+	if rec.Status == domain.TopPlaylistPruned {
+		return domain.TopPlaylistRecord{}, ErrPruned
+	}
 	ctx = context.WithValue(ctx, detachedWritesKey{}, true) // see Generate
+	r.resolveOwner(ctx, now)
 	var aerr error
 	if rec.Status == domain.TopPlaylistCreated && rec.SpotifyPlaylistID != "" {
 		_, aerr = r.refreshLive(ctx, p, rec, s, now)

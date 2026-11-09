@@ -32,6 +32,7 @@ type fakeStore struct {
 	upserts   int
 	locked    bool // another instance holds the lock
 	unlocks   int
+	ext       storeExt // prune / verify state (prune_test.go)
 }
 
 func newFakeStore() *fakeStore {
@@ -64,6 +65,9 @@ func (f *fakeStore) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistR
 		}
 	}
 	k := key{p.Period, p.PeriodStart.Unix()}
+	if old, ok := f.rows[k]; ok && old.Status == domain.TopPlaylistPruned {
+		return nil // mirrors the WHERE in SQL: a pruned row never changes
+	}
 	if old, ok := f.rows[k]; ok && p.SpotifyPlaylistID == "" { // mirrors the COALESCE in SQL
 		p.SpotifyPlaylistID, p.SpotifyURL = old.SpotifyPlaylistID, old.SpotifyURL
 	}
@@ -112,6 +116,7 @@ type fakeSpotify struct {
 	descrs    []string          // create descriptions, in order
 	details   map[string]string // id -> "name|description" of the last details update
 	detErr    error
+	ext       spotifyExt // follow / unfollow / library / profile (prune_test.go)
 }
 
 func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, descr string, public bool) (string, string, error) {
@@ -134,6 +139,11 @@ func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, descr string, pu
 }
 
 func (f *fakeSpotify) ReplacePlaylistItems(_ context.Context, id string, uris []string) error {
+	if f.ext.replErrFor != nil {
+		if err := f.ext.replErrFor(id); err != nil {
+			return err
+		}
+	}
 	if f.replErr != nil {
 		return f.replErr
 	}
@@ -145,6 +155,12 @@ func (f *fakeSpotify) ReplacePlaylistItems(_ context.Context, id string, uris []
 }
 
 func (f *fakeSpotify) UpdatePlaylistDetails(_ context.Context, id, name, description string) error {
+	f.ext.detailCalls++
+	if f.ext.detErrFor != nil {
+		if err := f.ext.detErrFor(id); err != nil {
+			return err
+		}
+	}
 	if f.detErr != nil {
 		return f.detErr
 	}

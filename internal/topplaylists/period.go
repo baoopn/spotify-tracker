@@ -45,6 +45,15 @@ type Config struct {
 	// LiveRefresh is the time between two refreshes of a live playlist
 	// (0 = DefaultLiveRefresh).
 	LiveRefresh time.Duration
+	// Keep is how many created playlists of each kind are kept (the live
+	// one included); older ones are pruned. 0 = never prune.
+	Keep int
+	// Verify is how often published playlists are checked against the
+	// owner's Spotify library (and restored when deleted). 0 = never.
+	Verify time.Duration
+	// Owner prefixes playlist names ("{Owner}'s Top 50 · …"). Empty = the
+	// connected Spotify account's display name.
+	Owner string
 }
 
 // IsLive reports whether the current period of kind p gets a live playlist.
@@ -210,8 +219,18 @@ func Label(p Period, start time.Time) string {
 	}
 }
 
-// Name is the Spotify playlist name, e.g. "Top 50 · November 2026".
+// Name is the Spotify playlist name without an owner, e.g.
+// "Top 50 · November 2026".
 func Name(p Period, start time.Time) string { return "Top 50 · " + Label(p, start) }
+
+// OwnerName is the Spotify playlist name of an owner, e.g.
+// "alex's Top 50 · November 2026" (Name when owner is empty).
+func OwnerName(owner string, p Period, start time.Time) string {
+	if owner == "" {
+		return Name(p, start)
+	}
+	return owner + "'s " + Name(p, start)
+}
 
 // Description is the Spotify playlist description of a finished period.
 func Description(p Period, start time.Time) string {

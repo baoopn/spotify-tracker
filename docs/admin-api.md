@@ -132,12 +132,20 @@ type EmailSettings = {
 
 | Method | Path | Query | Response |
 |---|---|---|---|
-| GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
+| GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album name search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
 | GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, created_at }` |
 | GET | `/admin/api/tracks/{id}` | – | `TrackAdminDetail = TrackView & { plays, last_played, created_at, enrichment: { status, source, attempts, last_error, next_attempt_at, enriched_at, features: AudioFeatures, genres: Genre[] } \| null }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
 | GET | `/admin/api/artists` | `q`, `sort` (`plays`\|`name`\|`tracks`), `order`, `limit`, `offset` | `{ data: [{ artist: Artist, plays, tracks, last_played }], total }` |
+
+Search (`q`) is case- and accent-insensitive on track, album and artist names:
+`ngay roi chuyen bay` matches "Ngày rời chuyến bay", and accented queries still
+match. It folds Vietnamese and other Latin diacritics (é, ñ, ü, đ …) with the
+`search_fold` SQL function (migration `00010_search_fold.sql`, no extension
+needed). On `/admin/api/tracks`, `q` also matches the ISRC (case-insensitive).
+`%` and `_` in `q` are literal. There is no index for this; the tables are small.
+A functional trigram index would need the `pg_trgm` extension.
 
 The public read endpoints (`/api/v1/stats/*`, `/api/v1/now-playing/stream`) can be
 used by the dashboard too (same origin), e.g. for top tracks/genres charts.

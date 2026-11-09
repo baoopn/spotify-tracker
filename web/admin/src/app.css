@@ -113,14 +113,20 @@
 	}
 
 	body {
+		position: relative;
 		min-height: 100dvh;
 		background: var(--paper);
 	}
 
-	/* Paper grain: a fixed, non-interactive noise layer. */
+	/*
+	 * Paper grain: a non-interactive noise layer over the whole body (full scroll
+	 * height). Not position: fixed, because iOS 26 Safari tints the status bar and
+	 * URL bar from fixed elements at the screen edges, and this transparent layer
+	 * would win over the sticky top bar.
+	 */
 	body::before {
 		content: '';
-		position: fixed;
+		position: absolute;
 		inset: 0;
 		z-index: 60;
 		pointer-events: none;

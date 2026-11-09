@@ -24,9 +24,9 @@
 	const ModeIcon = $derived(theme.mode === 'system' ? Monitor : theme.mode === 'dark' ? Moon : Sun);
 </script>
 
-<!-- pt-safe: the paper fills the status-bar area on notched iPhones; the 64px row stays 64px. -->
+<!-- pt-safe: the paper fills the status-bar area on notched iPhones; the bar (row + 1px border) stays 64px. -->
 <header class="sticky top-0 z-20 border-b border-rule bg-paper pt-safe px-shell">
-	<div class="flex h-16 items-center gap-3">
+	<div class="flex h-[calc(4rem-1px)] items-center gap-3">
 		<button
 			type="button"
 			class="btn btn-ghost btn-icon lg:hidden"

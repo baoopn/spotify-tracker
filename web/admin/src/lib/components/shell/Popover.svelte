@@ -54,7 +54,10 @@
 		bottom: auto;
 		left: auto;
 		margin: 0;
-		width: min(20rem, calc(100vw - 2rem));
+		width: min(
+			20rem,
+			calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+		);
 		padding: 0.75rem;
 		color: var(--text);
 		box-shadow: var(--shadow-print);

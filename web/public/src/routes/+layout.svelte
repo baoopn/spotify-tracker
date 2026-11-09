@@ -7,6 +7,7 @@
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
 	import ThemeSwitcher from '#lib/components/ThemeSwitcher.svelte';
+	import { CONTACT_URL } from '#lib/links.js';
 	import { theme } from '#lib/theme.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
 	import { createQueryClient } from '#lib/queries.js';
@@ -61,7 +62,29 @@
 					class="hidden h-[50px] w-auto sm:h-14 dark:block"
 				/>
 			</a>
-			<ThemeSwitcher />
+			<div class="flex shrink-0 items-center gap-3">
+				<!-- External link to the main site; icon-only on the narrowest phones. -->
+				<a
+					href={CONTACT_URL}
+					class="btn btn-secondary max-[22.5rem]:w-11 max-[22.5rem]:min-w-11 max-[22.5rem]:px-0"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						class="size-5 shrink-0"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.75"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<rect x="3" y="5" width="18" height="14" rx="2" />
+						<path d="m3.5 6.5 8.5 6.5 8.5-6.5" />
+					</svg>
+					<span class="max-[22.5rem]:sr-only">Contact</span>
+				</a>
+				<ThemeSwitcher />
+			</div>
 		</header>
 
 		{@render children()}

@@ -102,7 +102,7 @@
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<SearchInput
 		value={q}
-		placeholder="Search tracks"
+		placeholder="Search tracks, ISRC or Spotify ID/link"
 		label="Search tracks"
 		onsearch={(v) => {
 			q = v;

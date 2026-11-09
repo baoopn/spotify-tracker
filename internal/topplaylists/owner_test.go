@@ -124,32 +124,91 @@ func TestRenameOnOwnerChange(t *testing.T) {
 
 func TestRenameFailureAndBatch(t *testing.T) {
 	h := newHarness(t, Week)
-	for i := range 7 {
+	for i := range 12 {
 		h.addCreated(Week, weekStart.AddDate(0, 0, -7*i), fmt.Sprintf("w%d", i), 1)
 	}
 	h.r.Config.Owner = "alex"
 	h.sp.detErr = errors.New("spotify: update playlist details failed (500)")
 	ctx := context.Background()
 	h.r.RunOnce(ctx)
-	if h.sp.ext.detailCalls != renameBatch {
-		t.Fatalf("%d rename calls, want %d", h.sp.ext.detailCalls, renameBatch)
+	if h.sp.ext.detailCalls != renameMaxCalls {
+		t.Fatalf("%d rename calls, want %d", h.sp.ext.detailCalls, renameMaxCalls)
 	}
 	for _, r := range h.st.rows {
 		if strings.HasPrefix(r.Name, "alex") {
 			t.Fatalf("failed rename stored: %+v", r)
 		}
 	}
-	if !strings.HasPrefix(h.row(Week, weekStart.AddDate(0, 0, -42)).LastError, "rename: ") {
-		t.Errorf("last_error = %q", h.row(Week, weekStart.AddDate(0, 0, -42)).LastError)
+	oldest := weekStart.AddDate(0, 0, -77)
+	if !strings.HasPrefix(h.row(Week, oldest).LastError, "rename: ") {
+		t.Errorf("last_error = %q", h.row(Week, oldest).LastError)
 	}
 
+	// The five oldest keep failing; they must not starve the others.
 	h.sp.detErr = nil
+	h.sp.ext.detErrFor = func(id string) error {
+		if failing := map[string]bool{"w7": true, "w8": true, "w9": true, "w10": true, "w11": true}; failing[id] {
+			return errors.New("spotify: update playlist details failed (500)")
+		}
+		return nil
+	}
+	h.sp.ext.detailCalls = 0
+	h.r.RunOnce(ctx)
+	renamed := 0
+	for _, r := range h.st.rows {
+		if strings.HasPrefix(r.Name, "alex's Top 50 · ") {
+			renamed++
+		}
+	}
+	if renamed != renameBatch || h.sp.ext.detailCalls != renameMaxCalls {
+		t.Fatalf("renamed %d with %d calls, want %d with %d", renamed, h.sp.ext.detailCalls, renameBatch, renameMaxCalls)
+	}
+
+	h.sp.ext.detErrFor = nil
 	h.r.RunOnce(ctx)
 	h.r.RunOnce(ctx)
 	for _, r := range h.st.rows {
 		if !strings.HasPrefix(r.Name, "alex's Top 50 · ") || r.LastError != "" {
 			t.Fatalf("not renamed: %+v", r)
 		}
+	}
+}
+
+func TestRenameRefollowedPlaylistRenamedOnSpotify(t *testing.T) {
+	h := newHarness(t, Week)
+	h.addCreated(Week, weekStart, "w1102", 2)
+	h.r.Config.Owner = "alex"
+	first := true
+	h.sp.ext.detErrFor = func(string) error {
+		if first {
+			first = false
+			return fmt.Errorf("%w: update playlist details", spotify.ErrNotFound)
+		}
+		return nil
+	}
+	h.r.RunOnce(context.Background())
+	want := "alex's Top 50 · Week of Nov 2, 2026"
+	if strings.Join(h.sp.ext.follows, ",") != "w1102" || len(h.sp.creates) != 0 {
+		t.Fatalf("follows=%v creates=%v", h.sp.ext.follows, h.sp.creates)
+	}
+	if got := h.sp.details["w1102"]; !strings.HasPrefix(got, want+"|") {
+		t.Fatalf("Spotify name = %q", got)
+	}
+	if r := h.week(); r.Name != want || r.RestoredAt == nil || r.LastError != "" {
+		t.Fatalf("row = %+v", r)
+	}
+}
+
+func TestOwnerNotConnectedSkipsProfile(t *testing.T) {
+	h := newHarness(t, Week)
+	h.auth.s.RefreshToken = ""
+	h.sp.ext.userName = "alex"
+	h.r.RunOnce(context.Background())
+	if h.sp.ext.userCalls != 0 || strings.Contains(h.logs.String(), "display name") {
+		t.Fatalf("profile read while not connected (calls=%d): %s", h.sp.ext.userCalls, h.logs)
+	}
+	if name, src := h.r.Owner(); name != "" || src != OwnerSourceNone {
+		t.Errorf("Owner() = %q %q", name, src)
 	}
 }
 

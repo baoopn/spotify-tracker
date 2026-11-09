@@ -12,8 +12,23 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/spotify"
 )
 
-// restoreBatch bounds the playlists restored per check.
-const restoreBatch = 3
+const (
+	// restoreBatch bounds the playlists restored per check.
+	restoreBatch = 3
+	// freshAge is how long after a publish or restore a playlist is not
+	// checked: Spotify may not list a new playlist right away.
+	freshAge = 15 * time.Minute
+)
+
+// fresh reports whether rec was published or restored less than freshAge ago.
+func fresh(rec domain.TopPlaylistRecord, now time.Time) bool {
+	for _, t := range []*time.Time{rec.PublishedAt, rec.RestoredAt} {
+		if t != nil && now.Sub(*t) < freshAge {
+			return true
+		}
+	}
+	return false
+}
 
 // Verify checks the published playlists against Spotify now, ignoring
 // TOP_PLAYLISTS_VERIFY, and restores the ones deleted outside this system.
@@ -75,12 +90,27 @@ func (r *Runner) verify(ctx context.Context, now time.Time, force bool) bool {
 		return false
 	}
 
-	limited, restores := false, 0
-	keys := make([]domain.TopPlaylistKey, 0, len(rows))
+	// Playlists published (or restored) moments ago may not be listed yet.
+	var checked []domain.TopPlaylistRecord
+	present := 0
 	for _, rec := range rows {
-		if rec.SpotifyPlaylistID == "" {
+		if rec.SpotifyPlaylistID == "" || fresh(rec, now) {
 			continue
 		}
+		checked = append(checked, rec)
+		if owned[rec.SpotifyPlaylistID] {
+			present++
+		}
+	}
+	if present == 0 && len(checked) >= 2 {
+		r.Log.WarnContext(ctx, "none of the top playlists is in the Spotify library (another account?); not restoring anything",
+			slog.Int("published", len(checked)))
+		return false
+	}
+
+	limited, restores := false, 0
+	keys := make([]domain.TopPlaylistKey, 0, len(checked))
+	for _, rec := range checked {
 		keys = append(keys, domain.TopPlaylistKey{Period: rec.Period, Start: rec.PeriodStart})
 		if owned[rec.SpotifyPlaylistID] || restores >= restoreBatch || limited {
 			continue

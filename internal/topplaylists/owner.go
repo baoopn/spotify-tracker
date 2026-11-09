@@ -21,8 +21,10 @@ const (
 const (
 	// ownerCacheTTL is how long a display name read from Spotify is reused.
 	ownerCacheTTL = 24 * time.Hour
-	// renameBatch bounds the playlists renamed per tick.
-	renameBatch = 5
+	// renameBatch bounds the playlists renamed per tick, and renameMaxCalls
+	// the Spotify writes the rename step makes (failures included).
+	renameBatch    = 5
+	renameMaxCalls = 10
 )
 
 // ownerState is the owner used by the current tick. resolved is false when
@@ -47,6 +49,12 @@ func (r *Runner) resolveOwner(ctx context.Context, now time.Time) {
 	cur := r.ownerSnapshot()
 	if cur.source == OwnerSourceSpotify && now.Sub(cur.fetchedAt) < ownerCacheTTL {
 		return
+	}
+	if msg, err := r.authProblem(ctx); err != nil || msg == msgNotConnected {
+		if cur.source != OwnerSourceSpotify {
+			r.setOwner(ownerState{source: OwnerSourceNone})
+		}
+		return // nothing to ask Spotify yet; a cached name keeps being used
 	}
 	name, err := r.Spotify.CurrentUserName(ctx)
 	if err == nil {
@@ -145,9 +153,9 @@ func (r *Runner) rename(ctx context.Context, now time.Time) bool {
 		r.Log.WarnContext(ctx, "list top playlists to rename failed", logging.Err(err))
 		return false
 	}
-	done := 0
+	renamed, calls := 0, 0
 	for _, rec := range rows {
-		if done >= renameBatch {
+		if renamed >= renameBatch || calls >= renameMaxCalls {
 			break
 		}
 		if rec.SpotifyPlaylistID == "" || !r.Config.Has(Period(rec.Period)) {
@@ -158,38 +166,62 @@ func (r *Runner) rename(ctx context.Context, now time.Time) bool {
 		if name == rec.Name {
 			continue
 		}
-		done++
-		rec.Name = name // a restore recreates the playlist under the new name
-		err := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, name, r.descriptionFor(rec, start))
-		switch {
-		case err == nil:
-			rec.LastError = ""
-			if err := r.upsert(ctx, rec); err != nil {
-				r.Log.WarnContext(ctx, "save renamed top playlist failed", slog.String("name", name), logging.Err(err))
-				continue
-			}
-			r.Log.InfoContext(ctx, "top playlist renamed", slog.String("name", name),
-				slog.String("spotify_id", rec.SpotifyPlaylistID))
-			if r.Invalidate != nil {
-				r.Invalidate(ctx)
-			}
-		case errors.Is(err, spotify.ErrNotFound):
-			if _, rerr := r.restore(ctx, rec, now); isRateLimit(rerr) {
-				return true
-			}
-		case isRateLimit(err):
+		ok, limited, n := r.renameOne(ctx, rec, name, start, now)
+		calls += n
+		if limited {
 			return true
-		default:
-			msg := "rename: " + err.Error()
-			if m, _, ok := authMessage(err); ok {
-				msg = m
-			}
-			r.setError(ctx, rec, msg)
-			r.Log.WarnContext(ctx, "top playlist rename failed; retried next tick",
-				slog.String("name", name), logging.Err(err))
+		}
+		if ok {
+			renamed++
 		}
 	}
 	return false
+}
+
+// renameOne renames one playlist on Spotify and then stores the new name. A
+// playlist deleted outside this system is restored first: a re-followed one
+// is renamed right after, a recreated one already has the new name. It
+// reports success, a rate limit and the Spotify writes it made (about).
+func (r *Runner) renameOne(ctx context.Context, rec domain.TopPlaylistRecord, name string, start, now time.Time) (ok, limited bool, calls int) {
+	descr := r.descriptionFor(rec, start)
+	err := r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, name, descr)
+	calls = 1
+	if errors.Is(err, spotify.ErrNotFound) {
+		restored, rerr := r.restore(ctx, rec, now) // rec keeps its old name: stored only once Spotify has the new one
+		calls += 2
+		if rerr != nil {
+			return false, isRateLimit(rerr), calls
+		}
+		if restored.Name == name {
+			return true, false, calls // recreated under the new name
+		}
+		rec = restored
+		err = r.Spotify.UpdatePlaylistDetails(ctx, rec.SpotifyPlaylistID, name, descr)
+		calls++
+	}
+	switch {
+	case err == nil:
+		rec.Name, rec.LastError = name, ""
+		if err := r.upsert(ctx, rec); err != nil {
+			r.Log.WarnContext(ctx, "save renamed top playlist failed", slog.String("name", name), logging.Err(err))
+			return false, false, calls
+		}
+		r.Log.InfoContext(ctx, "top playlist renamed", slog.String("name", name),
+			slog.String("spotify_id", rec.SpotifyPlaylistID))
+		if r.Invalidate != nil {
+			r.Invalidate(ctx)
+		}
+		return true, false, calls
+	case isRateLimit(err):
+		return false, true, calls
+	}
+	msg := "rename: " + err.Error()
+	if m, _, isAuth := authMessage(err); isAuth {
+		msg = m
+	}
+	r.setError(ctx, rec, msg)
+	r.Log.WarnContext(ctx, "top playlist rename failed; retried next tick", slog.String("name", name), logging.Err(err))
+	return false, false, calls
 }
 
 // setError stores a row's last error only.

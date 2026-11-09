@@ -212,3 +212,95 @@ func TestLiveRefreshRecreatesDeletedPlaylist(t *testing.T) {
 		t.Fatalf("items = %v creates = %v", got, h.sp.creates)
 	}
 }
+
+func TestVerifyOtherAccountRestoresNothing(t *testing.T) {
+	h := verifyHarness(t)
+	h.sp.ext.owned = map[string]bool{"someone-elses": true}
+	h.r.RunOnce(context.Background())
+	if len(h.sp.ext.follows) != 0 || len(h.sp.creates) != 0 || h.st.ext.verified != 0 {
+		t.Fatalf("follows=%v creates=%v verified=%d", h.sp.ext.follows, h.sp.creates, h.st.ext.verified)
+	}
+	if !strings.Contains(h.logs.String(), "another account") {
+		t.Errorf("no warning: %s", h.logs)
+	}
+
+	// With a single published playlist a missing one is still restored.
+	one := newHarness(t, Week)
+	one.r.Config.Verify = time.Hour
+	one.addCreated(Week, weekStart, "w1102", 1)
+	one.sp.ext.owned = map[string]bool{"someone-elses": true}
+	one.r.RunOnce(context.Background())
+	if strings.Join(one.sp.ext.follows, ",") != "w1102" {
+		t.Fatalf("follows = %v", one.sp.ext.follows)
+	}
+}
+
+func TestVerifySkipsFreshPlaylists(t *testing.T) {
+	h := verifyHarness(t)
+	h.addCreated(Week, oct19, "w1019", 1)
+	justNow := h.now.Add(-5 * time.Minute)
+	rec := h.week()
+	rec.PublishedAt = &justNow // e.g. created by this tick
+	h.st.rows[key{"week", weekStart.Unix()}] = rec
+	restored := h.row(Week, oct19)
+	restored.RestoredAt = &justNow
+	h.st.rows[key{"week", oct19.Unix()}] = restored
+	h.sp.ext.owned = map[string]bool{"w1026": true}
+	h.r.RunOnce(context.Background())
+	if len(h.sp.ext.follows) != 0 {
+		t.Fatalf("fresh playlists restored: %v", h.sp.ext.follows)
+	}
+	if h.week().VerifiedAt != nil || h.row(Week, oct26).VerifiedAt == nil {
+		t.Error("fresh row marked checked, or the old one not")
+	}
+}
+
+func TestLiveRestoreFailureBacksOff(t *testing.T) {
+	h := newHarness(t, Week)
+	h.r.Config.Live = []Period{Week}
+	live := h.addCreated(Week, liveWeek, "live", 2)
+	old := h.now.Add(-2 * time.Hour)
+	live.Live, live.RefreshedAt = true, &old
+	h.st.rows[key{"week", liveWeek.Unix()}] = live
+	h.addCreated(Week, weekStart, "w1102", 1)
+	h.st.ranked = []domain.RankedTrack{{TrackID: "t9", Plays: 9}}
+	notFound := fmt.Errorf("%w: replace playlist items", spotify.ErrNotFound)
+	tries := 0
+	h.sp.ext.replErrFor = func(id string) error {
+		if id == "live" {
+			tries++
+			return notFound
+		}
+		return nil
+	}
+	h.sp.ext.followErr = errors.New("spotify: save playlist to library failed (500)")
+	ctx := context.Background()
+	h.r.RunOnce(ctx)
+	r := h.row(Week, liveWeek)
+	if r.NextAttemptAt == nil || !r.NextAttemptAt.Equal(h.now.Add(time.Hour)) ||
+		!strings.HasPrefix(r.LastError, "restore failed: ") || r.Status != "created" || !r.Live {
+		t.Fatalf("row = %+v", r)
+	}
+	h.now = h.now.Add(10 * time.Minute)
+	h.r.RunOnce(ctx)
+	if tries != 1 {
+		t.Errorf("retried %d times before the refresh interval", tries)
+	}
+}
+
+func TestFinalizeRestoreFailureBacksOff(t *testing.T) {
+	h := newHarness(t, Week)
+	h.r.Config.Live = []Period{Week}
+	rec := h.addCreated(Week, weekStart, "ended", 2) // last week, still live: finalized this tick
+	rec.Live = true
+	h.st.rows[key{"week", weekStart.Unix()}] = rec
+	h.st.ranked = []domain.RankedTrack{{TrackID: "t9", Plays: 9}}
+	h.sp.detErr = fmt.Errorf("%w: update playlist details", spotify.ErrNotFound)
+	h.sp.ext.replErrFor = func(string) error { return h.sp.detErr }
+	h.sp.ext.followErr = errors.New("spotify: save playlist to library failed (500)")
+	h.r.RunOnce(context.Background())
+	r := h.week()
+	if r.Attempts != 1 || r.NextAttemptAt == nil || !strings.HasPrefix(r.LastError, "restore failed: ") || !r.Live {
+		t.Fatalf("row = %+v", r)
+	}
+}

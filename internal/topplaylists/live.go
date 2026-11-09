@@ -110,8 +110,11 @@ func (r *Runner) refreshLive(ctx context.Context, p Period, rec domain.TopPlayli
 	if changed {
 		if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, trackURIs(tracks)); err != nil {
 			if errors.Is(err, spotify.ErrNotFound) { // deleted outside: restore; refreshed next tick
-				_, rerr := r.restore(ctx, rec, now)
-				return isRateLimit(rerr), rerr
+				restored, rerr := r.restore(ctx, rec, now)
+				if rerr != nil { // retried one refresh interval later, like other live failures
+					return isRateLimit(rerr), r.liveFailed(ctx, restored, "restore failed: "+rerr.Error(), rerr, now)
+				}
+				return false, nil
 			}
 			return isRateLimit(err), r.liveSpotifyFailed(ctx, rec, err, now)
 		}
@@ -218,8 +221,11 @@ func (r *Runner) finalize(ctx context.Context, p Period, rec domain.TopPlaylistR
 // later tick); anything else is recorded by finalizeSpotifyFailed.
 func (r *Runner) finalizeSpotifyError(ctx context.Context, rec domain.TopPlaylistRecord, err error, now time.Time) (bool, error) {
 	if errors.Is(err, spotify.ErrNotFound) {
-		_, rerr := r.restore(ctx, rec, now)
-		return isRateLimit(rerr), rerr
+		restored, rerr := r.restore(ctx, rec, now)
+		if rerr != nil { // backs off like other finalize failures
+			return isRateLimit(rerr), r.finalizeFailed(ctx, restored, "restore failed: "+rerr.Error(), rerr, now)
+		}
+		return false, nil
 	}
 	return isRateLimit(err), r.finalizeSpotifyFailed(ctx, rec, err, now)
 }

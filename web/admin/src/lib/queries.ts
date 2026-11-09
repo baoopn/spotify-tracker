@@ -4,6 +4,7 @@
 
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from '@tanstack/svelte-query';
 import { api } from './api';
+import { backupBusy } from './backups';
 import type {
 	AnalyticsRange,
 	ArtistSort,
@@ -58,6 +59,7 @@ export const qk = {
 	overview: ['overview'] as const,
 	spotify: ['spotify', 'status'] as const,
 	emailSettings: ['settings', 'email'] as const,
+	backups: ['backups'] as const,
 	analytics: (range: AnalyticsRange, tz: string | null) => ['analytics', range, tz] as const,
 	pageAnalytics: (range: AnalyticsRange, tz: string | null) =>
 		['analytics', 'pages', range, tz] as const,
@@ -116,6 +118,17 @@ export const queries = {
 		queryOptions({
 			queryKey: qk.emailSettings,
 			queryFn: ({ signal }) => api.emailSettings({ signal })
+		}),
+
+	/**
+	 * Polls every 5 s while a request is queued or a run is in progress (the
+	 * backup container picks requests up within a minute), else every 60 s.
+	 */
+	backups: () =>
+		queryOptions({
+			queryKey: qk.backups,
+			queryFn: ({ signal }) => api.backups({ signal }),
+			refetchInterval: (query) => (backupBusy(query.state.data) ? 5_000 : 60_000)
 		}),
 
 	recentPlaylists: (limit = 5) =>

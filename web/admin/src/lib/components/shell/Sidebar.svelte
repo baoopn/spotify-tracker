@@ -4,6 +4,7 @@
 	import ListeningIcon, { type ListeningIconName } from '../ListeningIcon.svelte';
 	import {
 		ChartLine,
+		DatabaseBackup,
 		History,
 		KeyRound,
 		ListOrdered,
@@ -54,6 +55,12 @@
 			items: [
 				{ href: resolve('settings/spotify'), label: 'Spotify', icon: KeyRound, exact: false },
 				{ href: resolve('settings/email'), label: 'Email alerts', icon: Mail, exact: false },
+				{
+					href: resolve('settings/backups'),
+					label: 'Backups',
+					icon: DatabaseBackup,
+					exact: false
+				},
 				{ href: resolve('settings/appearance'), label: 'Appearance', icon: Palette, exact: false },
 				{ href: resolve('audit'), label: 'Audit log', icon: ScrollText, exact: false }
 			]

@@ -143,6 +143,22 @@ test.describe('public page', () => {
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 		expectClean(problems);
 	});
+
+	test('header and footer link to the contact page', async ({ page }, testInfo) => {
+		await page.goto('/');
+		const contact = 'https://baoopn.com/contact';
+		const header = page.getByRole('banner').getByRole('link', { name: 'Contact', exact: true });
+		const footer = page.getByRole('contentinfo').getByRole('link', { name: 'Contact', exact: true });
+		await expect(header).toHaveAttribute('href', contact);
+		await expect(header).not.toHaveAttribute('target', /.+/);
+		await expect(footer).toHaveAttribute('href', contact);
+		if (testInfo.project.name === 'mobile') {
+			await page.setViewportSize({ width: 320, height: 640 });
+			await expect(header).toBeVisible();
+			await page.evaluate(() => document.fonts.ready.then(() => undefined));
+			await expectNoHorizontalOverflow(page);
+		}
+	});
 });
 
 /**

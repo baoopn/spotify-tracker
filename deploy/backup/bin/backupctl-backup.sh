@@ -34,6 +34,8 @@ cmd_backup() {
 	fi
 	dump_version=$(pg_dump --version)
 
+	# Test hook (roundtrip.sh): a slow backup, to stop the service mid-run.
+	[ -z "${BACKUP_DEBUG_SLEEP:-}" ] || sleep "$BACKUP_DEBUG_SLEEP"
 	info "backup $name: dumping and encrypting"
 	out="$WORKDIR/$name"
 	# pg_dump → tee → age, with tee's second copy read by pg_restore --list
@@ -109,7 +111,8 @@ cmd_backup() {
 # backup_with_status [TRIGGER [REQUESTED_BY]]: one backup in a subshell,
 # then status files, ping, and the backup_runs row (best-effort; see
 # backupctl-status.sh). Sets RUN_ID (empty when not recorded) and
-# RUN_ERROR. The backup's stdout (its name) passes through.
+# RUN_ERROR; a success that could not be recorded is kept in UNRECORDED_RUN.
+# The backup's stdout (its name) passes through.
 backup_with_status() {
 	bws_trigger=${1:-manual}
 	bws_by=${2:-}
@@ -118,8 +121,18 @@ backup_with_status() {
 	RUN_ERROR=
 	RESULT_FILE=$(mktemp "${TMPDIR:-/tmp}/backupctl-res.XXXXXX") || RESULT_FILE=
 	RESULT_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/backupctl-err.XXXXXX") || RESULT_ERR_FILE=
-	(cmd_backup)
-	rc=$?
+	if [ "${BACKUP_IN_BACKGROUND:-}" = 1 ]; then
+		# Scheduler: a background job plus wait, so SIGTERM runs the stop
+		# trap at once instead of after the backup (see on_stop).
+		(cmd_backup) &
+		BACKUP_PID=$!
+		wait "$BACKUP_PID"
+		rc=$?
+		BACKUP_PID=
+	else
+		(cmd_backup)
+		rc=$?
+	fi
 	bws_name='' bws_size='' bws_sha='' bws_tables=''
 	if [ -n "$RESULT_FILE" ] && [ -s "$RESULT_FILE" ]; then
 		read -r bws_name bws_size bws_sha bws_tables <"$RESULT_FILE" || true
@@ -139,9 +152,14 @@ backup_with_status() {
 		ping_url /fail
 		bws_status=failed
 	fi
+	# shellcheck disable=SC2034 # UNRECORDED_RUN is read by backupctl-run.sh
 	if bws_id=$(run_finish "$RUN_ID" "$bws_trigger" "$bws_by" "$bws_started" "$bws_status" \
 		"$bws_name" "$bws_size" "$bws_sha" "$bws_tables" "$(short_error "$RUN_ERROR")"); then
 		RUN_ID=$bws_id
+		UNRECORDED_RUN=
+	elif [ "$rc" -eq 0 ]; then
+		# Recorded later, once the status tables exist (status_tick).
+		UNRECORDED_RUN="$bws_trigger|$bws_started|$bws_name|$bws_size|$bws_sha|$bws_tables|$bws_by"
 	fi
 	return "$rc"
 }

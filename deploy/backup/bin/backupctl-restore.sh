@@ -205,5 +205,6 @@ cmd_restore() {
 	tables=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") || tables='?'
 	goose=$(manifest_field "$MANIFEST" goose_version)
 	info "$name: restored ($tables tables in schema public, schema version ${goose:-unknown})"
+	status_restored || true
 	info "start the app next: it applies any newer migrations at startup"
 }

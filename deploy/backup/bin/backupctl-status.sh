@@ -33,14 +33,19 @@ dbq() {
 		shift
 		_n=$((_n - 1))
 	done
-	if [ -z "${STATUS_ERR:-}" ]; then
-		STATUS_ERR=/dev/null
-		if mkdir -p "$STATUS_DIR" 2>/dev/null && : 2>/dev/null >"$STATUS_DIR/db.err"; then
-			STATUS_ERR=$STATUS_DIR/db.err
-		fi
-	fi
-	printf '%s\n' "SET statement_timeout = '30s';" "SET TIME ZONE 'UTC';" "$_q" |
+	status_err_init
+	printf '%s\n' "SET statement_timeout = '${STATUS_TIMEOUT:-30s}';" "SET TIME ZONE 'UTC';" "$_q" |
 		PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-5} psql -X -q -A -t -F '|' -v ON_ERROR_STOP=1 "$@" 2>"$STATUS_ERR"
+}
+
+# status_err_init: picks the file for psql errors. Call it in the parent
+# shell before a $(dbq ...), so db_error there reads the same file.
+status_err_init() {
+	[ -z "${STATUS_ERR:-}" ] || return 0
+	STATUS_ERR=/dev/null
+	if mkdir -p "$STATUS_DIR" 2>/dev/null && : 2>/dev/null >"$STATUS_DIR/db.err"; then
+		STATUS_ERR=$STATUS_DIR/db.err
+	fi
 }
 
 # db_error: first line of the last psql error, ASCII only, short.
@@ -54,6 +59,7 @@ db_error() {
 status_check() {
 	STATUS_DB=0
 	[ -n "${DB_NAME:-}" ] || return 1
+	status_err_init
 	if ! r=$(dbq "SELECT to_regclass('public.backup_runs') IS NOT NULL AND to_regclass('public.backup_inventory') IS NOT NULL
 		AND to_regclass('public.backup_agent') IS NOT NULL AND to_regclass('public.backup_requests') IS NOT NULL
 		AND to_regclass('public.settings') IS NOT NULL"); then
@@ -85,10 +91,13 @@ scrub() {
 	tr -cd '\11\40-\176\n' | awk '
 		BEGIN {
 			n = split("BACKUP_S3_SECRET_ACCESS_KEY BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_ENDPOINT PGPASSWORD DATABASE_URL BACKUP_PING_URL", v, " ")
+			# rclone remotes configured from env (RCLONE_CONFIG_<NAME>_*).
+			for (e in ENVIRON)
+				if (e ~ /^RCLONE_CONFIG_.*(SECRET|KEY|ENDPOINT|PASS|TOKEN)/) v[++n] = e
 			for (i = 1; i <= n; i++) {
 				s = ENVIRON[v[i]]
 				if (length(s) >= 4) sec[++k] = s
-				if (v[i] == "BACKUP_S3_ENDPOINT" && s != "") {
+				if (v[i] ~ /ENDPOINT/ && s != "") {
 					h = s; sub(/^[a-zA-Z]+:\/\//, "", h); sub(/[\/:].*/, "", h)
 					if (length(h) >= 4) sec[++k] = h
 				}
@@ -140,14 +149,41 @@ run_finish() {
 		"id=$1" "trigger=$2" "by=$3" "started=$4" "status=$5" "name=$6" "size=$7" "sha=$8" "tables=$9" "err=${10}"
 }
 
-# status_startup: marks runs left 'running' for over 6 h, and requests left
-# claimed by a previous scheduler, as interrupted; applies retention.
+# status_startup: marks runs left 'running', and requests left claimed, by a
+# previous scheduler for over 2 h as interrupted (fresh ones may belong to an
+# old container still at work during a rolling deploy); applies retention.
 status_startup() {
-	status_sql "mark interrupted runs" "UPDATE backup_runs SET status = 'failed', finished_at = now(),
-		error = 'interrupted' WHERE status = 'running' AND started_at < now() - interval '6 hours'" >/dev/null
+	status_sql "mark interrupted runs" "UPDATE backup_runs SET status = 'failed', finished_at = started_at,
+		error = 'interrupted' WHERE status = 'running' AND started_at < now() - interval '2 hours'" >/dev/null
 	status_sql "mark interrupted requests" "UPDATE backup_requests SET done_at = now(), error = 'interrupted'
-		WHERE claimed_at IS NOT NULL AND done_at IS NULL" >/dev/null
+		WHERE claimed_at IS NOT NULL AND done_at IS NULL AND claimed_at < now() - interval '2 hours'" >/dev/null
 	status_retention
+}
+
+# status_stopped RUN_ID REQ_ID REQ_RUN_ID: on SIGTERM, marks the current run
+# and the current request as interrupted. Short timeouts: docker stop waits
+# only 10 s.
+status_stopped() {
+	[ -n "$1$2" ] || return 0
+	STATUS_TIMEOUT=3s PGCONNECT_TIMEOUT=3 status_sql "mark the interrupted run" \
+		"UPDATE backup_runs SET status = 'failed', finished_at = now(), error = 'interrupted (service stopped)'
+			WHERE id = NULLIF(:'run', '')::bigint AND status = 'running';
+		UPDATE backup_requests SET done_at = now(), error = 'interrupted',
+			run_id = coalesce(run_id, NULLIF(:'reqrun', '')::bigint)
+			WHERE id = NULLIF(:'req', '')::bigint AND done_at IS NULL" \
+		"run=$1" "req=$2" "reqrun=$3" >/dev/null
+}
+
+# status_restored: after a restore, the target holds the status rows of the
+# moment the backup was taken. Ends the runs and requests that were open
+# then, and removes the old heartbeat (the live service writes a new one).
+status_restored() {
+	status_check || return 0
+	status_sql "clean up the restored status tables" \
+		"UPDATE backup_runs SET status = 'failed', finished_at = started_at,
+			error = 'interrupted (restored from backup)' WHERE status = 'running';
+		UPDATE backup_requests SET done_at = now(), error = 'interrupted (restored)' WHERE done_at IS NULL;
+		DELETE FROM backup_agent" >/dev/null
 }
 
 # status_retention: runs older than 180 days, done requests older than 30.

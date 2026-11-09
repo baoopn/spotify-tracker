@@ -52,7 +52,7 @@
 	{#snippet actions()}
 		<SearchInput
 			value={q}
-			placeholder="Search artists"
+			placeholder="Search artists or Spotify ID/link"
 			label="Search artists"
 			onsearch={(v) => {
 				q = v;

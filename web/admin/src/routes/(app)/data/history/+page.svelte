@@ -32,7 +32,7 @@
 	{#snippet actions()}
 		<SearchInput
 			value={q}
-			placeholder="Search track, artist or album"
+			placeholder="Search track, artist, album or Spotify ID/link"
 			label="Search history"
 			onsearch={(v) => (q = v)}
 		/>

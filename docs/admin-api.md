@@ -132,7 +132,7 @@ type EmailSettings = {
 
 | Method | Path | Query | Response |
 |---|---|---|---|
-| GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album name search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
+| GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album name or Spotify ID/link search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
 | GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, created_at }` |
 | GET | `/admin/api/tracks/{id}` | – | `TrackAdminDetail = TrackView & { plays, last_played, created_at, enrichment: { status, source, attempts, last_error, next_attempt_at, enriched_at, features: AudioFeatures, genres: Genre[] } \| null }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
@@ -146,6 +146,22 @@ match. It folds Vietnamese and most Latin accents (é, ñ, ü, đ, ø …) with 
 needed). On `/admin/api/tracks`, `q` also matches the ISRC (case-insensitive).
 `%` and `_` in `q` are literal. There is no index for this; the tables are small.
 A functional trigram index would need the `pg_trgm` extension.
+
+`q` also accepts a Spotify ID: a bare 22-character base62 ID
+(`4uLU6hMCjMI75M1A2tKUQC`), a URI (`spotify:track:…`, `spotify:artist:…`,
+`spotify:album:…`) or an `open.spotify.com` link (http or https, optional `www.`,
+`intl-xx/` and `embed/` segments; `?si=…` and `#…` are ignored). The ID is
+case-sensitive and matched exactly, as a bound parameter. The name search still
+runs too, so results are the union of both.
+
+| `q` kind | history and tracks match | artists match |
+|---|---|---|
+| track | that track | the artists of that track |
+| artist | tracks by that artist | that artist |
+| album | tracks on that album | the artists on tracks of that album |
+| bare ID | any of the three above | any of the three above |
+
+Other playlist, user or show links fall back to the name search.
 
 The public read endpoints (`/api/v1/stats/*`, `/api/v1/now-playing/stream`) can be
 used by the dashboard too (same origin), e.g. for top tracks/genres charts.

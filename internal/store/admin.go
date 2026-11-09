@@ -87,7 +87,7 @@ func foldMatch(col string, n int) string {
 }
 
 // AdminHistory lists history newest first, optionally filtered by a search
-// over track, artist and album names.
+// over track, artist and album names, or by a Spotify ID/URI/URL (spotifyRef).
 func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time, search string) ([]domain.HistoryEntry, error) {
 	if before.IsZero() {
 		before = time.Now().Add(time.Minute)
@@ -96,9 +96,14 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 	filter := ""
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
+		ids := ""
+		if kind, id, ok := spotifyRef(search); ok {
+			args = append(args, id)
+			ids = orIDs(trackIDMatch(kind, len(args)))
+		}
 		filter = `AND (` + foldMatch("t.name", 3) + ` OR ` + foldMatch("al.name", 3) + ` OR EXISTS (
 			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND ` + foldMatch("a.name", 3) + `))`
+			WHERE ta.track_id = t.id AND ` + foldMatch("a.name", 3) + `)` + ids + `)`
 	}
 	rows, err := q.db.Query(ctx, `
 		SELECT h.id::text, h.played_at, h.updated_at, h.replay_count, `+trackColumns+`
@@ -150,10 +155,15 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order s
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
 		n := len(args)
+		ids := ""
+		if kind, id, ok := spotifyRef(search); ok {
+			args = append(args, id)
+			ids = orIDs(trackIDMatch(kind, len(args)))
+		}
 		where = append(where, `(`+foldMatch("t.name", n)+fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, n)+
 			foldMatch("al.name", n)+` OR EXISTS (
 			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND `+foldMatch("a.name", n)+`))`)
+			WHERE ta.track_id = t.id AND `+foldMatch("a.name", n)+`)`+ids+`)`)
 	}
 	if status != "" {
 		args = append(args, status)
@@ -218,6 +228,10 @@ func (q *Queries) AdminArtists(ctx context.Context, search, sort, order string, 
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
 		where = foldMatch("a.name", 1)
+		if kind, id, ok := spotifyRef(search); ok {
+			args = append(args, id)
+			where = "(" + where + orIDs(artistIDMatch(kind, len(args))) + ")"
+		}
 	}
 	base := `
 		FROM artists a

@@ -47,6 +47,10 @@ var ErrMissingScope = errors.New("spotify: token is missing scope " + RequiredSc
 // the token lacks the needed scope. Returned wrapped; test with errors.Is.
 var ErrForbidden = errors.New("spotify: forbidden")
 
+// ErrNotFound means Spotify answered 404 to a write: the playlist (or
+// another resource) does not exist. Returned wrapped; test with errors.Is.
+var ErrNotFound = errors.New("spotify: not found")
+
 // ErrNotConnected means no refresh token is configured.
 var ErrNotConnected = errors.New("spotify: not connected; authorize it from the admin dashboard")
 

@@ -7,7 +7,8 @@
 		pending: { tone: 'info', label: 'Pending' },
 		empty: { tone: 'neutral', label: 'Empty' },
 		waiting_auth: { tone: 'warn', label: 'Waiting for auth' },
-		failed: { tone: 'danger', label: 'Failed' }
+		failed: { tone: 'danger', label: 'Failed' },
+		pruned: { tone: 'plain', label: 'Pruned' }
 	};
 
 	/** Only real Spotify playlist URLs are linked; anything else is omitted. */
@@ -15,9 +16,9 @@
 		return url?.startsWith('https://open.spotify.com/') ? url : null;
 	}
 
-	/** created / empty rows are regenerated; the rest are retried. */
+	/** created / empty rows are regenerated; the rest are retried (pruned rows have no action). */
 	export function isRetry(row: AdminTopPlaylist): boolean {
-		return row.status !== 'created' && row.status !== 'empty';
+		return row.status !== 'created' && row.status !== 'empty' && row.status !== 'pruned';
 	}
 
 	export type RowAction = 'retry' | 'regenerate' | 'refresh' | 'finalize';
@@ -126,7 +127,9 @@
 	const actionUi = $derived(ACTION_UI[action]);
 	const live = $derived(liveState(row));
 	const zone = $derived({ timeZone: row.time_zone });
-	const href = $derived(spotifyHref(row.spotify_url));
+	// Pruned rows are history only: removed from Spotify, so no link and no actions.
+	const pruned = $derived(row.status === 'pruned');
+	const href = $derived(pruned ? null : spotifyHref(row.spotify_url));
 	// A failed regenerate of a published row keeps it published and only records the error.
 	const staleError = $derived(row.status === 'created' && !!row.last_error);
 </script>
@@ -158,6 +161,11 @@
 			<span class="text-muted">
 				{#if row.published_at}Published <RelTime value={row.published_at} />{:else}Not published{/if}
 			</span>
+			{#if pruned && row.pruned_at}
+				<span class="text-muted">Pruned <RelTime value={row.pruned_at} /></span>
+			{:else if row.status === 'created' && row.restored_at}
+				<span class="text-muted">Restored <RelTime value={row.restored_at} /></span>
+			{/if}
 			{#if row.live && row.refreshed_at}
 				<span class="text-muted">Refreshed <RelTime value={row.refreshed_at} /></span>
 			{/if}
@@ -195,23 +203,25 @@
 					<ExternalLink class="size-4" aria-hidden="true" /> Open in Spotify
 				</OutLink>
 			{/if}
-			<button
-				type="button"
-				class="btn btn-secondary btn-sm"
-				onclick={onregenerate}
-				disabled={disabled || busy || !!regenerateBlocked}
-				title={regenerateBlocked ?? undefined}
-				aria-label="{actionUi.label} {row.label}"
-			>
-				{#if busy}
-					<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
-				{:else if action === 'retry'}
-					<RotateCcw class="size-4" aria-hidden="true" />
-				{:else}
-					<RefreshCw class="size-4" aria-hidden="true" />
-				{/if}
-				{actionUi.label}
-			</button>
+			{#if !pruned}
+				<button
+					type="button"
+					class="btn btn-secondary btn-sm"
+					onclick={onregenerate}
+					disabled={disabled || busy || !!regenerateBlocked}
+					title={regenerateBlocked ?? undefined}
+					aria-label="{actionUi.label} {row.label}"
+				>
+					{#if busy}
+						<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
+					{:else if action === 'retry'}
+						<RotateCcw class="size-4" aria-hidden="true" />
+					{:else}
+						<RefreshCw class="size-4" aria-hidden="true" />
+					{/if}
+					{actionUi.label}
+				</button>
+			{/if}
 			<button
 				type="button"
 				class="btn btn-ghost btn-icon btn-sm"
@@ -259,11 +269,29 @@
 					<dt class="text-muted">Live playlist</dt>
 					<dd class="text-fg">Finalized</dd>
 				{/if}
+				{#if row.pruned_at}
+					<dt class="text-muted">Pruned</dt>
+					<dd class="text-fg">
+						<RelTime value={row.pruned_at} /> · removed from Spotify and the public page
+					</dd>
+				{/if}
+				{#if row.restored_at}
+					<dt class="text-muted">Restored</dt>
+					<dd class="text-fg"><RelTime value={row.restored_at} /></dd>
+				{/if}
+				{#if row.verified_at}
+					<dt class="text-muted">Checked</dt>
+					<dd class="text-fg"><RelTime value={row.verified_at} /></dd>
+				{/if}
 				<dt class="text-muted">Updated</dt>
 				<dd class="text-fg"><RelTime value={row.updated_at} /></dd>
 				<dt class="text-muted">Visibility</dt>
 				<dd class="text-fg">
-					{row.hidden ? 'Hidden from the public page' : 'Shown on the public page once created'}
+					{pruned
+						? 'Not on the public page (pruned)'
+						: row.hidden
+							? 'Hidden from the public page'
+							: 'Shown on the public page once created'}
 				</dd>
 			</dl>
 			<TopPlaylistTracks period={row.period} start={row.period_start} />

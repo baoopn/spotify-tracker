@@ -21,98 +21,6 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/topplaylists"
 )
 
-// ─── fakes ────────────────────────────────────────────────────────────────────
-
-type fakeRunner struct {
-	runErr  error
-	runs    int
-	genRec  domain.TopPlaylistRecord
-	genErr  error
-	genCall []string // "period start"
-	regCall []string // Regenerate calls, "period start"
-}
-
-func (f *fakeRunner) RunNow(ctx context.Context) error {
-	if _, ok := ctx.Deadline(); !ok {
-		return errors.New("RunNow without a deadline")
-	}
-	f.runs++
-	return f.runErr
-}
-
-func (f *fakeRunner) Generate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error) {
-	if _, ok := ctx.Deadline(); !ok {
-		return domain.TopPlaylistRecord{}, errors.New("Generate without a deadline")
-	}
-	f.genCall = append(f.genCall, string(p)+" "+start.UTC().Format(time.RFC3339))
-	return f.genRec, f.genErr
-}
-
-func (f *fakeRunner) Regenerate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error) {
-	if _, ok := ctx.Deadline(); !ok {
-		return domain.TopPlaylistRecord{}, errors.New("Regenerate without a deadline")
-	}
-	f.regCall = append(f.regCall, string(p)+" "+start.UTC().Format(time.RFC3339))
-	return f.genRec, f.genErr
-}
-
-type fakeTops struct {
-	rows       []domain.TopPlaylistRecord
-	listArgs   string
-	tracks     []domain.TopPlaylistTrack
-	hiddenArgs string
-}
-
-func (f *fakeTops) find(period string, start time.Time) (domain.TopPlaylistRecord, bool) {
-	for _, r := range f.rows {
-		if r.Period == period && r.PeriodStart.Equal(start) {
-			return r, true
-		}
-	}
-	return domain.TopPlaylistRecord{}, false
-}
-
-func (f *fakeTops) AdminTopPlaylists(_ context.Context, period string, limit, offset int) ([]domain.TopPlaylistRecord, int, error) {
-	f.listArgs = fmt.Sprintf("%q %d %d", period, limit, offset)
-	return f.rows, len(f.rows), nil
-}
-
-func (f *fakeTops) TopPlaylist(_ context.Context, period string, start time.Time) (domain.TopPlaylistRecord, error) {
-	if r, ok := f.find(period, start); ok {
-		return r, nil
-	}
-	return domain.TopPlaylistRecord{}, domain.ErrNotFound
-}
-
-func (f *fakeTops) TopPlaylistTracks(context.Context, string, time.Time) ([]domain.TopPlaylistTrack, error) {
-	return f.tracks, nil
-}
-
-func (f *fakeTops) SetTopPlaylistHidden(_ context.Context, period string, start time.Time, hidden bool) (domain.TopPlaylistRecord, error) {
-	f.hiddenArgs = fmt.Sprintf("%s %s %v", period, start.UTC().Format(time.RFC3339), hidden)
-	r, ok := f.find(period, start)
-	if !ok {
-		return r, domain.ErrNotFound
-	}
-	r.Hidden = hidden
-	return r, nil
-}
-
-type auditCall struct {
-	actor, action string
-	detail        map[string]any
-}
-
-type fakeAuditor struct{ calls []auditCall }
-
-func (f *fakeAuditor) Audit(_ context.Context, actor, action string, detail any, _ string) error {
-	b, _ := json.Marshal(detail)
-	var m map[string]any
-	_ = json.Unmarshal(b, &m)
-	f.calls = append(f.calls, auditCall{actor, action, m})
-	return nil
-}
-
 // ─── harness ──────────────────────────────────────────────────────────────────
 
 var (
@@ -218,7 +126,8 @@ func TestTopPlaylistsList(t *testing.T) {
 		"status": `"created"`, "hidden": "false", "live": "false", "refreshed_at": "null", "spotify_id": `"pl1"`,
 		"spotify_url": `"https://open.spotify.com/playlist/pl1"`, "track_count": "2", "total_plays": "9",
 		"attempts": "1", "last_error": `"old"`, "next_attempt_at": `"2026-11-09T06:01:12Z"`,
-		"published_at": `"2026-11-09T05:01:12Z"`, "created_at": `"2026-11-09T04:01:12Z"`, "updated_at": `"2026-11-09T05:01:12Z"`,
+		"published_at": `"2026-11-09T05:01:12Z"`, "pruned_at": "null", "restored_at": "null", "verified_at": "null",
+		"created_at": `"2026-11-09T04:01:12Z"`, "updated_at": `"2026-11-09T05:01:12Z"`,
 	}
 	for k, v := range want {
 		if got := string(data[0][k]); got != v {
@@ -259,7 +168,7 @@ func TestTopPlaylistsListDisabledAndEmpty(t *testing.T) {
 		t.Errorf("defaults = %s", h.tops.listArgs)
 	}
 	want := `{"enabled":false,"periods":[],"time_zone":"UTC","authorized":false,"interval_seconds":600,` +
-		`"live_periods":[],"live_refresh_seconds":3600}`
+		`"live_periods":[],"live_refresh_seconds":3600,"keep":0,"verify_seconds":0,"owner":"","owner_source":"none"}`
 	if string(body["status"]) != want {
 		t.Errorf("status = %s", body["status"])
 	}

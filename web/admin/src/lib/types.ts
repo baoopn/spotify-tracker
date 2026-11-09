@@ -351,7 +351,9 @@ export type ServerZone = {
 export type TopPlaylistPeriod = 'week' | 'month' | 'year';
 export const TOP_PLAYLIST_PERIODS: readonly TopPlaylistPeriod[] = ['week', 'month', 'year'];
 
-export type TopPlaylistStatus = 'pending' | 'created' | 'empty' | 'waiting_auth' | 'failed';
+/** `pruned`: beyond the kept newest per kind; removed from Spotify and the public page (history). */
+export type TopPlaylistStatus =
+	'pending' | 'created' | 'empty' | 'waiting_auth' | 'failed' | 'pruned';
 
 export type AdminTopPlaylist = {
 	period: TopPlaylistPeriod;
@@ -376,6 +378,12 @@ export type AdminTopPlaylist = {
 	live: boolean;
 	/** RFC 3339; last live re-rank or finalize (null if never). */
 	refreshed_at: string | null;
+	/** RFC 3339; when the row was pruned (status `pruned`), else null. */
+	pruned_at: string | null;
+	/** RFC 3339; last time the playlist was restored on Spotify after it went missing. */
+	restored_at: string | null;
+	/** RFC 3339; last check of the playlist against the Spotify library. */
+	verified_at: string | null;
 	created_at: string;
 	updated_at: string;
 };
@@ -398,6 +406,14 @@ export type TopPlaylistsStatus = {
 	live_periods: TopPlaylistPeriod[];
 	/** How often a live playlist is re-ranked. */
 	live_refresh_seconds: number;
+	/** Playlists kept per kind (older ones are pruned); 0 = keep all. */
+	keep: number;
+	/** How often published playlists are checked against Spotify; 0 = off. */
+	verify_seconds: number;
+	/** Effective owner in playlist names ("{owner}'s Top 50 · …"); "" when unresolved. */
+	owner: string;
+	/** Where `owner` comes from: server config, the Spotify profile, or nowhere. */
+	owner_source: 'config' | 'spotify' | 'none';
 };
 
 export type TopPlaylistsList = OffsetList<AdminTopPlaylist> & { status: TopPlaylistsStatus };

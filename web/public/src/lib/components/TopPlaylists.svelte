@@ -1,7 +1,7 @@
 <script lang="ts">
-	// "Top 50 playlists": the auto-generated playlist of each completed week,
-	// month and year, with a Spotify embed for the newest one of the chosen kind.
-	// The newest can be live: the running period's playlist, updated while it runs.
+	// "Top 50 playlists": the kept playlists of the chosen kind (week, month or year)
+	// as a pick list beside a Spotify embed of the picked one. The newest can be live:
+	// the running period's playlist, updated while it runs.
 	import BrandIcon from './BrandIcon.svelte';
 	import RelTime from './RelTime.svelte';
 	import { createQuery } from '@tanstack/svelte-query';
@@ -16,6 +16,12 @@
 		{ id: 'year', label: 'Year' }
 	];
 
+	const SO_FAR: Record<TopPeriod, string> = {
+		week: 'This week so far',
+		month: 'This month so far',
+		year: 'This year so far'
+	};
+
 	// Optional section: keeps the last good data on errors; with none, it stays hidden.
 	const query = createQuery(() => topPlaylistsQuery());
 	const data = $derived(query.data);
@@ -27,26 +33,27 @@
 	let chosen = $state<TopPeriod | null>(null);
 	const period = $derived(available.find((p) => p.id === chosen)?.id ?? available[0]?.id ?? null);
 	const entries = $derived<TopPlaylist[]>(period ? (data?.periods[period] ?? []) : []);
-	const latest = $derived(entries[0] ?? null);
-	const earlier = $derived(entries.slice(1));
 
-	const SO_FAR: Record<TopPeriod, string> = {
-		week: 'This week so far',
-		month: 'This month so far',
-		year: 'This year so far'
-	};
-	// Defensive: a "live" entry whose period has ended is shown as a finished one.
-	const latestLive = $derived(
-		!!latest && latest.live && Date.parse(latest.period_end) > Date.now()
-	);
-	const latestZone = $derived(latest?.time_zone || timeZone);
-	const latestRange = $derived(
-		latest
-			? latestLive
-				? liveRange(latest.period_start, latestZone)
-				: periodRange(latest.period_start, latest.period_end, latestZone)
-			: ''
-	);
+	// The picked entry by period start; falls back to the newest when it is gone.
+	let picked = $state<string | null>(null);
+	const selected = $derived(entries.find((e) => e.period_start === picked) ?? entries[0] ?? null);
+
+	function chooseKind(id: TopPeriod) {
+		chosen = id;
+		picked = null; // a new kind starts at its newest playlist
+	}
+
+	/** Defensive: a "live" entry whose period has ended is shown as a finished one. */
+	function isLive(e: TopPlaylist): boolean {
+		return e.live && Date.parse(e.period_end) > Date.now();
+	}
+
+	function rangeOf(e: TopPlaylist): string {
+		const tz = e.time_zone || timeZone;
+		return isLive(e)
+			? liveRange(e.period_start, tz)
+			: periodRange(e.period_start, e.period_end, tz);
+	}
 
 	const nf = new Intl.NumberFormat(undefined);
 	function count(n: number, one: string, many: string): string {
@@ -59,144 +66,139 @@
 		const dark = theme.resolved === 'dark' ? '&theme=0' : '';
 		return `https://open.spotify.com/embed/playlist/${id}?utm_source=generator${dark}`;
 	}
-	const embed = $derived(latest ? embedSrc(latest.spotify_id) : null);
-	const latestHref = $derived(spotifyUrl(latest?.spotify_url));
+	const embed = $derived(selected ? embedSrc(selected.spotify_id) : null);
+	const selectedHref = $derived(spotifyUrl(selected?.spotify_url));
 </script>
+
+{#snippet heading()}
+	<div class="border-b border-ink pb-3">
+		<h2
+			id="top-heading"
+			class="flex items-center gap-2.5 font-display text-2xl font-semibold tracking-[-0.02em]"
+		>
+			<BrandIcon name="playlist" class="size-6" />
+			Top 50 playlists
+		</h2>
+	</div>
+{/snippet}
 
 {#if query.isPending}
 	<section aria-labelledby="top-heading" aria-busy="true">
-		<div class="border-b border-ink pb-3">
-			<h2
-				id="top-heading"
-				class="flex items-center gap-2.5 font-display text-2xl font-semibold tracking-[-0.02em]"
-			>
-				<BrandIcon name="playlist" class="size-6" />
-				Top 50 playlists
-			</h2>
-		</div>
+		{@render heading()}
 		<div class="top mt-6">
-			<div class="space-y-3">
-				<div class="skeleton h-11 w-full max-w-xs"></div>
-				<div class="skeleton h-7 w-3/4"></div>
-				<div class="skeleton h-4 w-1/2"></div>
+			<div class="space-y-2">
+				<div class="skeleton h-14 w-full"></div>
+				<div class="skeleton h-14 w-full"></div>
+				<div class="skeleton h-14 w-full"></div>
 			</div>
 			<div class="skeleton h-[352px] w-full rounded-brand"></div>
 		</div>
 	</section>
-{:else if latest && period}
+{:else if selected && period}
 	<section aria-labelledby="top-heading" aria-busy="false">
-		<div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1 border-b border-ink pb-3">
-			<h2
-				id="top-heading"
-				class="flex items-center gap-2.5 font-display text-2xl font-semibold tracking-[-0.02em]"
-			>
-				<BrandIcon name="playlist" class="size-6" />
-				Top 50 playlists
-			</h2>
-			<p class="label text-ink-soft">Auto-generated when each week, month and year ends</p>
-		</div>
+		{@render heading()}
 
 		<div class="top mt-6">
 			<div class="min-w-0">
-				<!-- Segmented control: native radios give arrow-key navigation for free. -->
+				{#if available.length > 1}
+					<!-- Segmented control: native radios give arrow-key navigation for free. -->
+					<fieldset class="mb-5">
+						<legend class="sr-only">Playlist period</legend>
+						<div
+							class="inline-grid max-w-full overflow-hidden rounded-[8px] border border-ink"
+							style:grid-template-columns="repeat({available.length}, minmax(4.5rem, 1fr))"
+						>
+							{#each available as p, i (p.id)}
+								<label
+									class={[
+										'flex min-h-11 items-center justify-center px-4 py-1.5 text-sm font-medium transition-colors duration-150 has-checked:bg-spot-now has-checked:text-on-spot has-focus-visible:outline-2 has-focus-visible:-outline-offset-4 has-focus-visible:outline-ink',
+										i > 0 && 'border-l border-ink'
+									]}
+								>
+									<input
+										type="radio"
+										name="top-period"
+										value={p.id}
+										class="sr-only"
+										checked={period === p.id}
+										onchange={() => chooseKind(p.id)}
+									/>
+									{p.label}
+								</label>
+							{/each}
+						</div>
+					</fieldset>
+				{/if}
+
+				<!-- Pick list: each kept playlist of the kind; the picked one plays beside it. -->
 				<fieldset>
-					<legend class="sr-only">Playlist period</legend>
-					<div
-						class="inline-grid overflow-hidden rounded-[8px] border border-ink"
-						style:grid-template-columns="repeat({available.length}, minmax(5.5rem, 1fr))"
-					>
-						{#each available as p, i (p.id)}
+					<legend class="sr-only">Playlist</legend>
+					<div class="overflow-hidden rounded-[8px] border border-ink">
+						{#each entries as item, i (item.period_start)}
+							{@const live = isLive(item)}
 							<label
 								class={[
-									'flex min-h-11 items-center justify-center px-4 py-1.5 text-sm font-medium transition-colors duration-150 has-checked:bg-spot-now has-checked:text-on-spot has-focus-visible:outline-2 has-focus-visible:-outline-offset-4 has-focus-visible:outline-ink',
-									i > 0 && 'border-l border-ink'
+									'group flex min-h-11 cursor-pointer flex-col justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 has-checked:bg-spot-now has-checked:text-on-spot has-focus-visible:outline-2 has-focus-visible:-outline-offset-4 has-focus-visible:outline-ink',
+									i > 0 && 'border-t border-ink'
 								]}
 							>
 								<input
 									type="radio"
-									name="top-period"
-									value={p.id}
+									name="top-entry"
+									value={item.period_start}
 									class="sr-only"
-									checked={period === p.id}
-									onchange={() => (chosen = p.id)}
+									checked={selected.period_start === item.period_start}
+									onchange={() => (picked = item.period_start)}
 								/>
-								{p.label}
+								<span class="flex min-w-0 items-center gap-2 font-medium break-words">
+									{#if live}
+										<span
+											class="size-2 shrink-0 rounded-full border border-ink bg-spot-mint"
+											aria-hidden="true"
+										></span>
+										{SO_FAR[item.period]}
+									{:else}
+										{item.label}
+									{/if}
+								</span>
+								<span
+									class="flex flex-wrap gap-x-2 text-sm text-ink-soft group-has-checked:text-on-spot"
+								>
+									<time datetime={item.period_start}>{rangeOf(item)}</time>
+									<span aria-hidden="true">·</span>
+									<span class="whitespace-nowrap">{count(item.track_count, 'track', 'tracks')}</span
+									>
+									{#if live && item.refreshed_at}
+										<span aria-hidden="true">·</span>
+										<span class="whitespace-nowrap"
+											>updated <RelTime value={item.refreshed_at} /></span
+										>
+									{/if}
+								</span>
 							</label>
 						{/each}
 					</div>
 				</fieldset>
-
-				<div class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2">
-					<h3 class="min-w-0 font-display text-xl leading-snug font-semibold break-words">
-						{latest.name}
-					</h3>
-					{#if latestLive}
-						<p class="chip label shrink-0 [--chip:var(--spot-mint)]">
-							<span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>
-							{SO_FAR[latest.period]}
-						</p>
-					{/if}
-				</div>
-				<p class="mt-1 flex flex-wrap gap-x-2 text-ink-soft">
-					<time datetime={latest.period_start}>{latestRange}</time>
-					{#if latestLive && latest.refreshed_at}
-						<span aria-hidden="true">·</span>
-						<span class="whitespace-nowrap">updated <RelTime value={latest.refreshed_at} /></span>
-					{/if}
-				</p>
-				<p class="label mt-2 flex flex-wrap gap-x-2 text-ink-soft">
-					<span class="whitespace-nowrap">{count(latest.track_count, 'track', 'tracks')}</span>
-					<span aria-hidden="true">·</span>
-					<span class="whitespace-nowrap">{count(latest.total_plays, 'play', 'plays')}</span>
-				</p>
-				{#if latestHref}
-					<a
-						href={latestHref}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="btn btn-primary mt-5"
-					>
-						Open in Spotify
-						<span class="sr-only">(opens in a new tab)</span>
-					</a>
-				{/if}
-
-				{#if earlier.length > 0}
-					<h4 class="label mt-8 border-b border-rule pb-2 text-ink-soft">Earlier</h4>
-					<ul class="divide-y divide-rule">
-						{#each earlier as item (item.period_start)}
-							{@const href = spotifyUrl(item.spotify_url)}
-							{@const range = periodRange(
-								item.period_start,
-								item.period_end,
-								item.time_zone || timeZone
-							)}
-							<li class="flex min-h-11 flex-wrap items-baseline justify-between gap-x-4 py-2">
-								{#if href}
-									<a {href} target="_blank" rel="noopener noreferrer" class="link font-medium"
-										>{item.label}</a
-									>
-								{:else}
-									<span class="font-medium">{item.label}</span>
-								{/if}
-								<span class="label text-ink-soft">{range}</span>
-							</li>
-						{/each}
-					</ul>
-				{/if}
 			</div>
 
 			<div class="min-w-0">
 				{#if embed}
-					<iframe
-						src={embed}
-						title="Spotify player: {latest.name}"
-						width="100%"
-						height="352"
-						loading="lazy"
-						allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-						class="block w-full rounded-brand border-0"
-					></iframe>
+					{#key selected.spotify_id}
+						<iframe
+							src={embed}
+							title="Spotify player: {selected.name}"
+							width="100%"
+							height="352"
+							loading="lazy"
+							allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+							class="block w-full rounded-brand border-0"
+						></iframe>
+					{/key}
+				{:else if selectedHref}
+					<a href={selectedHref} target="_blank" rel="noopener noreferrer" class="link font-medium">
+						Open in Spotify
+						<span class="sr-only">(opens in a new tab)</span>
+					</a>
 				{/if}
 			</div>
 		</div>
@@ -204,7 +206,7 @@
 {/if}
 
 <style>
-	/* Details beside the player on wide screens, stacked on phones. */
+	/* Pick list beside the player on wide screens, stacked on phones (list first). */
 	.top {
 		display: grid;
 		gap: 2rem;

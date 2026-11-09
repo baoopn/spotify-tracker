@@ -85,7 +85,13 @@ period (`TOP_PLAYLISTS_PERIODS`, boundaries in `TOP_PLAYLISTS_TIME_ZONE`) and
 the public page embeds it. The current week also gets its playlist right away
 (`TOP_PLAYLISTS_LIVE`, default `week`): it is refreshed hourly while you listen
 (`TOP_PLAYLISTS_LIVE_REFRESH`) and finalized in place — same Spotify playlist —
-15 minutes after the week ends. It needs the `playlist-modify-public` scope:
+15 minutes after the week ends. Only the newest three playlists per kind are
+kept (`TOP_PLAYLISTS_KEEP`, the live one counts): older ones are deleted from
+Spotify and dropped from the public page. Every hour (`TOP_PLAYLISTS_VERIFY`)
+the kept playlists are checked against your Spotify library, and one you
+deleted in the Spotify app is restored. Playlists are named
+"{owner}'s Top 50 · Week of …", with the owner from `TOP_PLAYLISTS_OWNER` or
+else your Spotify display name. It needs the `playlist-modify-public` scope:
 re-authorize Spotify once in the admin (Settings → Spotify). The admin's
 Data → Top 50 page lists every period with its status and track snapshot, runs
 the generator on demand, backfills older periods, regenerates a playlist in

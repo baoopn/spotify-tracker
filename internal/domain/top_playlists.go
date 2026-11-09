@@ -9,6 +9,9 @@ const (
 	TopPlaylistEmpty       = "empty"
 	TopPlaylistWaitingAuth = "waiting_auth"
 	TopPlaylistFailed      = "failed"
+	// TopPlaylistPruned is an old playlist beyond TOP_PLAYLISTS_KEEP: removed
+	// from Spotify and the public page, kept as history.
+	TopPlaylistPruned = "pruned"
 )
 
 // TopPlaylistRecord is one auto-generated "Top 50" playlist of a period
@@ -36,8 +39,22 @@ type TopPlaylistRecord struct {
 	Live bool
 	// RefreshedAt is the last live refresh (or the finalization).
 	RefreshedAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// PrunedAt is when the row was pruned; SpotifyRemoved is set once
+	// Spotify confirmed the playlist's removal.
+	PrunedAt       *time.Time
+	SpotifyRemoved bool
+	// VerifiedAt is the last check that the playlist is still in the
+	// owner's library; RestoredAt the last restore after it was deleted.
+	VerifiedAt *time.Time
+	RestoredAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// TopPlaylistKey identifies one period's top playlist.
+type TopPlaylistKey struct {
+	Period string
+	Start  time.Time
 }
 
 // RankedTrack is a track's play count within a period.

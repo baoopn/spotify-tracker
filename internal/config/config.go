@@ -137,6 +137,17 @@ type TopPlaylists struct {
 	// LiveRefresh is the time between two refreshes of a live playlist (Go
 	// duration, at least 10m; kept as text so a typo falls back to 1h).
 	LiveRefresh string `env:"TOP_PLAYLISTS_LIVE_REFRESH" envDefault:"1h"`
+	// Keep is how many playlists of each kind are kept (the live one
+	// counts); older ones are removed from Spotify. "0" keeps all. Kept as
+	// text so a typo falls back to 3.
+	Keep string `env:"TOP_PLAYLISTS_KEEP" envDefault:"3"`
+	// Verify is how often the published playlists are checked against
+	// Spotify and restored when deleted (Go duration, at least 10m; "0" or
+	// "off" disables it). Kept as text so a typo falls back to 1h.
+	Verify string `env:"TOP_PLAYLISTS_VERIFY" envDefault:"1h"`
+	// Owner names the playlists "{Owner}'s Top 50 · …" (at most 40
+	// characters). Empty uses the connected Spotify account's display name.
+	Owner string `env:"TOP_PLAYLISTS_OWNER"`
 }
 
 // Admin configures the admin dashboard (Clerk authentication).

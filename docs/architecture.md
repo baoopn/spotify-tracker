@@ -128,6 +128,47 @@ and left live (backing off) for the finalizer to retry. If saving a new
 playlist ID fails after Spotify created it, the runner keeps the ID in memory
 and the next attempt saves and reuses it instead of creating another.
 
+After the generate and live steps each tick prunes, renames and checks, in
+that order (a Spotify rate limit at any step ends the tick):
+
+- **Prune.** Only the newest `TOP_PLAYLISTS_KEEP` (default 3; `0` keeps all)
+  `created` rows per kind are kept, the live and hidden ones included. Older
+  rows are pruned oldest first, ten per tick: the row becomes `pruned`
+  (`pruned_at`, not live, snapshot deleted) before Spotify is asked to delete
+  the playlist, so nothing restores it, and upserts never touch a pruned row.
+  The removal (`DELETE /me/library?uris=spotify:playlist:{id}`, falling back
+  to the deprecated `DELETE /playlists/{id}/followers` on 403 or 404; only
+  that endpoint's 404 counts as already gone) sets `spotify_removed`; failures keep the row pruned with `last_error` and are
+  retried each tick. Admin Generate refuses a period that would be pruned
+  right away; regenerate and hide refuse pruned rows.
+- **Rename.** Names are `{owner}'s Top 50 · {label}`. The owner is
+  `TOP_PLAYLISTS_OWNER`, or else the connected account's display name
+  (`GET /me`, cached 24 h, not read while Spotify is not connected; an expired
+  name is kept when the read fails). With
+  no owner at all new playlists get `Top 50 · {label}` and the rename step is
+  skipped, so names never flap on a transient failure. Created rows whose
+  stored name differs get `PUT /playlists/{id}` (five renamed per tick, at most
+  ten Spotify writes, so failing rows cannot starve the rest). A re-followed
+  playlist is renamed right after its restore.
+- **Check and restore.** Every `TOP_PLAYLISTS_VERIFY` (default 1 h, min 10 min,
+  `0`/`off` disables; the newest `verified_at` is the last check) the created
+  rows are compared with the user's library (`GET /me/playlists`, every
+  page). Rows published or restored in the last 15 minutes are skipped (a new
+  playlist may not be listed yet). Nothing is changed when the list fails, is
+  too long to read in full (over 1000 playlists), is empty while playlists
+  are published, or contains none of two or more published playlists (likely
+  another account). A missing
+  playlist (three per check) is followed again (`PUT /me/library`, falling
+  back to the deprecated `PUT /playlists/{id}/followers`; the library endpoint
+  has no visibility option, so `PUT /playlists/{id} {"public": true}` follows
+  it) and its items reset
+  to the stored snapshot; when Spotify no longer has it at all, a new playlist
+  is created and its ID saved at once (same no-duplicate rule as above). The
+  row stays `created` with `restored_at`; a failure only sets `last_error`. A
+  404 from a live refresh, finalize, regenerate or rename runs the same
+  restore; a failed restore there backs off like other live refresh or
+  finalize failures. The admin's Check now forces a check.
+
 ## Admin dashboard
 
 SvelteKit SPA built to static files and embedded with `go:embed`, served at

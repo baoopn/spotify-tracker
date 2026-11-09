@@ -9,6 +9,7 @@ import (
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/spotify"
 )
 
 // Errors returned by Generate and RunNow.
@@ -77,12 +78,16 @@ func (r *Runner) Generate(ctx context.Context, p Period, start time.Time) (domai
 	if e.After(now) {
 		return domain.TopPlaylistRecord{}, ErrNotCompleted
 	}
+	if err := r.checkPrunable(ctx, p, rec, s); err != nil {
+		return domain.TopPlaylistRecord{}, err
+	}
 
 	// Store writes outlive the request timeout so the outcome is always
 	// recorded. create's own detached 30 s bound may outlive the admin
 	// router's timeout too; that is safe because the new playlist ID is saved
 	// before anything else, so a retry never creates a duplicate.
 	ctx = context.WithValue(ctx, detachedWritesKey{}, true)
+	r.resolveOwner(ctx, now)
 	var aerr error
 	switch {
 	case rec.Status == domain.TopPlaylistCreated && rec.SpotifyPlaylistID != "" && rec.Live:
@@ -127,7 +132,16 @@ func (r *Runner) refreshPublished(ctx context.Context, p Period, rec domain.TopP
 	for i, t := range tracks {
 		uris[i] = "spotify:track:" + t.TrackID
 	}
-	if err := r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, uris); err != nil {
+	err = r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, uris)
+	if errors.Is(err, spotify.ErrNotFound) { // deleted outside: restore, then retry once
+		restored, rerr := r.restore(ctx, rec, now)
+		if rerr != nil {
+			return rerr
+		}
+		rec = restored
+		err = r.Spotify.ReplacePlaylistItems(ctx, rec.SpotifyPlaylistID, uris)
+	}
+	if err != nil {
 		if m, _, ok := authMessage(err); ok {
 			return r.keepPublished(ctx, rec, m, fmt.Errorf("%w: %s: %w", ErrNotAuthorized, m, err))
 		}
@@ -136,7 +150,7 @@ func (r *Runner) refreshPublished(ctx context.Context, p Period, rec domain.TopP
 
 	next := rec
 	next.PeriodStart, next.PeriodEnd, next.TimeZone = start, end, loc.String()
-	next.Name = Name(p, start)
+	next.Name = r.nameFor(p, start, rec.Name)
 	next.TrackCount, next.TotalPlays = len(tracks), 0
 	for _, t := range tracks {
 		next.TotalPlays += t.Plays

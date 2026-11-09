@@ -258,6 +258,9 @@ export const api = {
 		),
 	runTopPlaylists: () =>
 		request<TopPlaylistsList>(`${ADMIN_API}/top-playlists/run`, { method: 'POST' }),
+	/** Check published playlists against Spotify now and restore missing ones. */
+	verifyTopPlaylists: () =>
+		request<TopPlaylistsList>(`${ADMIN_API}/top-playlists/verify`, { method: 'POST' }),
 	/** `date`: YYYY-MM-DD anywhere inside the (completed) period, in the configured zone. */
 	generateTopPlaylist: (period: TopPlaylistPeriod, date: string) =>
 		request<V1Item<AdminTopPlaylist>>(`${ADMIN_API}/top-playlists/generate`, {

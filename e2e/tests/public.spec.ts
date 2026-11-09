@@ -328,13 +328,18 @@ async function routeTop(page: Page, body: unknown) {
 	);
 }
 
+const embedRe = (id: string) =>
+	new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${id}\?utm_source=generator(&theme=0)?$`);
+
 test.describe('top 50 playlists', () => {
-	test('lists the newest playlist per period with a Spotify embed', async ({ page, problems }) => {
+	test('lists the kept playlists per period and previews the picked one', async ({ page, problems }) => {
 		await routeTop(page, TOP_POPULATED);
 		await page.goto('/');
 		const section = page.locator('section[aria-labelledby="top-heading"]');
 		await expect(section.getByRole('heading', { name: 'Top 50 playlists' })).toBeVisible();
 		await expect(section).toHaveAttribute('aria-busy', 'false');
+		await expect(section.getByText(/Auto-generated/)).toHaveCount(0);
+		await expect(section.getByRole('heading', { name: 'Earlier' })).toHaveCount(0);
 
 		// Only kinds with entries are offered; the first available (week) is selected.
 		const group = section.getByRole('group', { name: 'Playlist period' });
@@ -344,47 +349,62 @@ test.describe('top 50 playlists', () => {
 		await expect(month).not.toBeChecked();
 		await expect(group.getByRole('radio', { name: 'Year' })).toHaveCount(0);
 
-		await expect(section.getByRole('heading', { name: 'Top 50 · Week of Nov 2, 2026' })).toBeVisible();
+		// Every kept week is a row; the newest is picked and plays in the embed.
+		const list = section.getByRole('group', { name: 'Playlist', exact: true });
+		const newest = list.getByRole('radio', { name: /^Week of Nov 2, 2026/ });
+		const older = list.getByRole('radio', { name: /^Week of Oct 26, 2026/ });
+		await expect(list.getByRole('radio')).toHaveCount(2);
+		await expect(newest).toBeChecked();
+		await expect(older).not.toBeChecked();
 		// The range is shown in the response's zone (UTC), not the browser's (America/Denver).
 		await expect(section.getByText(/Nov 2\s*[–-]\s*8, 2026/)).toBeVisible();
-		await expect(section.getByText('50 tracks')).toBeVisible();
-		await expect(section.getByText('312 plays')).toBeVisible();
-
-		const open = section.getByRole('link', { name: /Open in Spotify/ });
-		await expect(open).toHaveAttribute('href', `https://open.spotify.com/playlist/${WEEK_ID}`);
-		await expect(open).toHaveAttribute('target', '_blank');
-		await expect(open).toHaveAttribute('rel', 'noopener noreferrer');
+		await expect(section.getByText('50 tracks')).toHaveCount(2);
 
 		const iframe = section.locator('iframe');
-		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${WEEK_ID}\?utm_source=generator(&theme=0)?$`));
-		await expect(iframe).toHaveAttribute('title', /Week of Nov 2, 2026/);
+		await expect(iframe).toHaveAttribute('src', embedRe(WEEK_ID));
+		await expect(iframe).toHaveAttribute('title', 'Spotify player: Top 50 · Week of Nov 2, 2026');
 		await expect(iframe).toHaveAttribute('loading', 'lazy');
+		// The embed carries its own Spotify link.
+		await expect(section.getByRole('link', { name: /Open in Spotify/ })).toHaveCount(0);
 
-		// Older entries of the kind are plain links under "Earlier".
-		const older = section.getByRole('link', { name: 'Week of Oct 26, 2026' });
-		await expect(older).toHaveAttribute('href', `https://open.spotify.com/playlist/${OLD_WEEK_ID}`);
-		await expect(older).toHaveAttribute('rel', 'noopener noreferrer');
+		// Clicking an earlier row previews it.
+		await list.getByText('Week of Oct 26, 2026', { exact: true }).click();
+		await expect(older).toBeChecked();
+		await expect(newest).not.toBeChecked();
+		await expect(section.locator('iframe')).toHaveAttribute('src', embedRe(OLD_WEEK_ID));
+		await expect(section.locator('iframe')).toHaveAttribute('title', /Week of Oct 26, 2026/);
 
-		// Keyboard: arrow keys move through the segmented control.
+		// Keyboard: arrow keys move through the segmented control; a new kind starts at its newest.
 		await week.focus();
 		await page.keyboard.press('ArrowRight');
 		await expect(month).toBeChecked();
-		await expect(section.getByRole('heading', { name: 'Top 50 · October 2026' })).toBeVisible();
+		await expect(list.getByRole('radio')).toHaveCount(1);
+		await expect(list.getByRole('radio', { name: /^October 2026/ })).toBeChecked();
 		await expect(section.getByText(/Oct 1\s*[–-]\s*31, 2026/)).toBeVisible();
-		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${MONTH_ID}\?utm_source=generator(&theme=0)?$`));
-		await expect(section.getByRole('link', { name: 'Week of Oct 26, 2026' })).toHaveCount(0);
+		await expect(section.locator('iframe')).toHaveAttribute('src', embedRe(MONTH_ID));
+
+		// Back to week: the newest is picked again.
+		await page.keyboard.press('ArrowLeft');
+		await expect(week).toBeChecked();
+		await expect(newest).toBeChecked();
+		await expect(section.locator('iframe')).toHaveAttribute('src', embedRe(WEEK_ID));
 		expectClean(problems);
 	});
 
-	test('shows the running week as live with the finished week under Earlier', async ({ page, problems }) => {
+	test('shows the running week as live above the finished week', async ({ page, problems }) => {
 		const { body, live, done } = topLive();
 		await routeTop(page, body);
 		await page.goto('/');
 		const section = page.locator('section[aria-labelledby="top-heading"]');
 		await expect(section).toHaveAttribute('aria-busy', 'false');
 
-		await expect(section.getByRole('heading', { name: `Top 50 · ${live.label}` })).toBeVisible();
-		// The badge is plain text, so screen readers announce it after the name.
+		// One kind only: no period control.
+		await expect(section.getByRole('group', { name: 'Playlist period' })).toHaveCount(0);
+
+		const list = section.getByRole('group', { name: 'Playlist', exact: true });
+		const liveRow = list.getByRole('radio', { name: /^This week so far/ });
+		const doneRow = list.getByRole('radio', { name: new RegExp(`^${escapeRe(done.label)}`) });
+		await expect(liveRow).toBeChecked();
 		await expect(section.getByText('This week so far', { exact: true })).toBeVisible();
 		// A running period reads "Nov 9 – today", plus when it was last re-ranked.
 		await expect(section.getByText(new RegExp(String.raw`^${escapeRe(live.start)}\s*[–-]\s*today$`))).toBeVisible();
@@ -392,18 +412,20 @@ test.describe('top 50 playlists', () => {
 		await expect(section.getByText(/^updated\s+\d+\s*min\S*\s+ago$/)).toBeVisible();
 		await expect(section.locator('time[datetime]').filter({ hasText: /^\d+\s*min\S*\s+ago$/ })).toHaveCount(1);
 
-		await expect(section.getByRole('link', { name: /Open in Spotify/ })).toHaveAttribute(
-			'href',
-			`https://open.spotify.com/playlist/${LIVE_WEEK_ID}`
-		);
 		const iframe = section.locator('iframe');
-		await expect(iframe).toHaveAttribute('src', new RegExp(String.raw`^https://open\.spotify\.com/embed/playlist/${LIVE_WEEK_ID}\?utm_source=generator(&theme=0)?$`));
+		await expect(iframe).toHaveAttribute('src', embedRe(LIVE_WEEK_ID));
+		await expect(iframe).toHaveAttribute('title', `Spotify player: Top 50 · ${live.label}`);
 
-		// The finished week is listed under Earlier, with its full range and no badge.
-		const older = section.getByRole('link', { name: done.label });
-		await expect(older).toHaveAttribute('href', `https://open.spotify.com/playlist/${done.id}`);
+		// The finished week shows its label and full range, with no live marker.
+		await expect(section.getByText(done.label, { exact: true })).toBeVisible();
 		await expect(section.getByText(done.range, { exact: true })).toBeVisible();
 		await expect(section.getByText('This week so far')).toHaveCount(1);
+		await expect(section.getByText(/^updated/)).toHaveCount(1);
+
+		await list.getByText(done.label, { exact: true }).click();
+		await expect(doneRow).toBeChecked();
+		await expect(liveRow).not.toBeChecked();
+		await expect(section.locator('iframe')).toHaveAttribute('src', embedRe(done.id));
 
 		await page.evaluate(() => document.fonts.ready.then(() => undefined));
 		await expectNoHorizontalOverflow(page);
@@ -430,12 +452,12 @@ test.describe('top 50 playlists', () => {
 		await page.goto('/');
 		const section = page.locator('section[aria-labelledby="top-heading"]');
 		await expect(section).toHaveAttribute('aria-busy', 'false');
-		await expect(section.getByRole('heading', { name: 'Top 50 · Week of Oct 26, 2026' })).toBeVisible();
+		await expect(section.getByRole('radio', { name: /^Week of Oct 26, 2026/ })).toBeChecked();
 		await expect(section.getByText(/Oct 26\s*[–-]\s*Nov 1, 2026/)).toBeVisible();
 		await expect(section.locator('iframe')).toHaveAttribute('src', new RegExp(String.raw`/embed/playlist/${OLD_WEEK_ID}\?`));
 		await expect(section.getByText('This week so far')).toHaveCount(0);
 		await expect(section.getByText(/today/)).toHaveCount(0);
-		await expect(section.getByText(/^updated/)).toHaveCount(0);
+		await expect(section.getByText(/^updated/)).toHaveCount(0);
 		expectClean(problems);
 	});
 

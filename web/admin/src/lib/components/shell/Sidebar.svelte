@@ -79,7 +79,7 @@
 <aside
 	id="app-sidebar"
 	class={[
-		'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-rule bg-paper transition-transform duration-200 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0',
+		'fixed inset-y-0 left-0 z-40 flex w-[calc(16rem+env(safe-area-inset-left,0px))] flex-col border-r border-rule bg-paper pt-safe pb-safe pl-safe transition-transform duration-200 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0',
 		open ? 'translate-x-0 shadow-print' : '-translate-x-full'
 	]}
 	aria-label="Main navigation"

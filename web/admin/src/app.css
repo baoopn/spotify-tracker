@@ -66,8 +66,42 @@
 	--ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+/*
+ * Safe areas (iPhone notch / Dynamic Island / home indicator, landscape sides).
+ * app.html sets viewport-fit=cover, so the page draws edge to edge and these
+ * insets keep content clear. env() is 0 on desktop and non-notched devices.
+ */
+@utility pt-safe {
+	padding-top: env(safe-area-inset-top, 0px);
+}
+@utility pb-safe {
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@utility pl-safe {
+	padding-left: env(safe-area-inset-left, 0px);
+}
+/* Shell gutter (16 / 24 / 32px), widened to the side insets in landscape. */
+@utility px-shell {
+	padding-left: max(var(--shell-gutter), env(safe-area-inset-left, 0px));
+	padding-right: max(var(--shell-gutter), env(safe-area-inset-right, 0px));
+}
+
 /* ---------- base ---------- */
 @layer base {
+	:root {
+		--shell-gutter: 1rem;
+	}
+	@media (min-width: 640px) {
+		:root {
+			--shell-gutter: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		:root {
+			--shell-gutter: 2rem;
+		}
+	}
+
 	html {
 		background: var(--paper);
 		color: var(--ink);
@@ -79,14 +113,20 @@
 	}
 
 	body {
+		position: relative;
 		min-height: 100dvh;
 		background: var(--paper);
 	}
 
-	/* Paper grain: a fixed, non-interactive noise layer. */
+	/*
+	 * Paper grain: a non-interactive noise layer over the whole body (full scroll
+	 * height). Not position: fixed, because iOS 26 Safari tints the status bar and
+	 * URL bar from fixed elements at the screen edges, and this transparent layer
+	 * would win over the sticky top bar.
+	 */
 	body::before {
 		content: '';
-		position: fixed;
+		position: absolute;
 		inset: 0;
 		z-index: 60;
 		pointer-events: none;

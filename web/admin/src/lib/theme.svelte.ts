@@ -20,6 +20,9 @@ export const MODES: { id: Mode; label: string }[] = [
 	{ id: 'system', label: 'System' }
 ];
 
+/** Browser chrome colour = --paper per theme (lib/theme/tokens.css). Keep in sync with app.html. */
+const THEME_COLOR: Record<ResolvedTheme, string> = { light: '#fbf7f2', dark: '#24212e' };
+
 const PALETTE_KEY = 'st-admin:palette';
 const MODE_KEY = 'st-admin:mode';
 
@@ -84,6 +87,9 @@ class ThemeState {
 		root.dataset.palette = this.palette;
 		root.dataset.theme = this.resolved;
 		root.dataset.mode = this.mode;
+		document
+			.querySelector('meta[name="theme-color"]')
+			?.setAttribute('content', THEME_COLOR[this.resolved]);
 	}
 
 	setPalette(id: PaletteId): void {

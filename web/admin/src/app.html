@@ -2,7 +2,7 @@
 <html lang="en" data-palette="baoopn" data-theme="light">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="color-scheme" content="light dark" />
 		<meta name="robots" content="noindex, nofollow" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="48x48" />
@@ -11,7 +11,8 @@
 		<link rel="icon" type="image/png" sizes="16x16" href="%sveltekit.assets%/favicon-16.png" />
 		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
 		<link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
-		<meta name="theme-color" content="#0b0537" />
+		<!-- Admin paper (lib/theme/tokens.css); the theme script below and theme.svelte.ts keep it in sync. -->
+		<meta name="theme-color" content="#fbf7f2" />
 		<title>Listening admin</title>
 		<script>
 			// Applies the saved palette + resolved light/dark theme before first paint.
@@ -33,6 +34,8 @@
 				d.setAttribute('data-palette', palette);
 				d.setAttribute('data-theme', dark ? 'dark' : 'light');
 				d.setAttribute('data-mode', mode);
+				var tc = document.querySelector('meta[name="theme-color"]');
+				if (tc) tc.setAttribute('content', dark ? '#24212e' : '#fbf7f2');
 			})();
 		</script>
 		%sveltekit.head%

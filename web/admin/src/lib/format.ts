@@ -58,6 +58,20 @@ export function duration(msTotal: number | null | undefined): string {
 	return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+/** File size in binary steps with decimal-style labels, e.g. "12.3 MB". */
+export function bytes(n: number | null | undefined): string {
+	if (n == null || Number.isNaN(n) || n < 0) return '–';
+	let v = n;
+	let i = 0;
+	while (v >= 1024 && i < BYTE_UNITS.length - 1) {
+		v /= 1024;
+		i++;
+	}
+	return `${i === 0 ? nf.format(v) : nf1.format(v)} ${BYTE_UNITS[i]}`;
+}
+
 // Dates and times live in time.ts (zone-aware, DST-safe); re-exported for convenience.
 export {
 	calendarDateIn,
@@ -68,6 +82,7 @@ export {
 	inDays,
 	relative,
 	releaseYear,
+	timeOfDay,
 	utcDateTime
 } from './time.js';
 

@@ -24,3 +24,6 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# The root ignores local `backups/` data folders; this one is the settings route.
+!/src/routes/(app)/settings/backups/

@@ -11,6 +11,9 @@ import type {
 	ArtistSort,
 	AudioProfile,
 	AuditEntry,
+	BackupSettings,
+	BackupSettingsUpdate,
+	BackupStatus,
 	CursorList,
 	EmailSettings,
 	EmailSettingsUpdate,
@@ -199,6 +202,26 @@ export const api = {
 		request<OkResult>(`${ADMIN_API}/settings/email/test`, {
 			method: 'POST',
 			body: to ? { to } : {}
+		}),
+
+	// backups (status comes from the backup container via the database)
+	backups: ({ signal }: Signal = {}) =>
+		request<V1Item<BackupStatus>>(`${ADMIN_API}/backups`, { signal }).then((r) => r.data),
+	/** Queue a backup now; 409 `already_pending`, 503 `backup_unavailable`. */
+	runBackup: () =>
+		request<V1Item<{ id: number }>>(`${ADMIN_API}/backups/run`, { method: 'POST' }).then(
+			(r) => r.data
+		),
+	/** Queue a re-list of the stored backups; same errors as `runBackup`. */
+	refreshBackups: () =>
+		request<V1Item<{ id: number }>>(`${ADMIN_API}/backups/refresh`, { method: 'POST' }).then(
+			(r) => r.data
+		),
+	/** The agent picks new settings up within a minute. */
+	saveBackupSettings: (body: BackupSettingsUpdate) =>
+		request<V1Item<BackupSettings> & { note?: string }>(`${ADMIN_API}/backups/settings`, {
+			method: 'PUT',
+			body
 		}),
 
 	// data

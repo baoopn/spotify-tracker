@@ -230,3 +230,49 @@ func TestSendJSONNotFound(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
+
+func TestCurrentUserName(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{`{"id":"u1","display_name":"alex"}`, "alex"},
+		{`{"id":"u1","display_name":""}`, "u1"},
+	} {
+		m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/v1/me" {
+				t.Errorf("got %s %s", r.Method, r.URL.Path)
+			}
+			_, _ = fmt.Fprint(w, tc.body)
+		})
+		if got, err := m.CurrentUserName(context.Background()); err != nil || got != tc.want {
+			t.Fatalf("got %q %v, want %q", got, err, tc.want)
+		}
+	}
+
+	m, _ := writeManager(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, `{}`) })
+	if _, err := m.CurrentUserName(context.Background()); err == nil {
+		t.Fatal("want error for an empty profile")
+	}
+	m, _ = writeManager(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := m.CurrentUserName(context.Background()); err == nil {
+		t.Fatal("want error on 403")
+	}
+	var calls atomic.Int32
+	m, forced := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"id":"u1","display_name":"alex"}`)
+	})
+	if got, err := m.CurrentUserName(context.Background()); err != nil || got != "alex" || forced.Load() != 1 {
+		t.Fatalf("401 retry: %q %v forced=%d", got, err, forced.Load())
+	}
+	m, _ = writeManager(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	var rl *RateLimitError
+	if _, err := m.CurrentUserName(context.Background()); !errors.As(err, &rl) {
+		t.Fatalf("want RateLimitError, got %v", err)
+	}
+}

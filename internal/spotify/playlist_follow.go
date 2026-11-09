@@ -86,3 +86,23 @@ func (m *Manager) OwnedPlaylistIDs(ctx context.Context) (map[string]bool, error)
 	}
 	return nil, fmt.Errorf("spotify: list my playlists: more than %d playlists", ownedPageSize*ownedMaxPages)
 }
+
+// CurrentUserName returns the connected account's display name (GET /me),
+// or its user ID when the display name is empty.
+func (m *Manager) CurrentUserName(ctx context.Context) (string, error) {
+	var p Profile
+	found, err := m.getJSON(ctx, "current user", "/me", &p)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%w: current user", ErrForbidden)
+	}
+	if p.DisplayName != "" {
+		return p.DisplayName, nil
+	}
+	if p.ID == "" {
+		return "", errors.New("spotify: current user has no display name or id")
+	}
+	return p.ID, nil
+}

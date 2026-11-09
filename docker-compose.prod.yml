@@ -86,6 +86,9 @@ services:
       TOP_PLAYLISTS_TIME_ZONE: ${TOP_PLAYLISTS_TIME_ZONE:-UTC}
       TOP_PLAYLISTS_LIVE: ${TOP_PLAYLISTS_LIVE:-week}
       TOP_PLAYLISTS_LIVE_REFRESH: ${TOP_PLAYLISTS_LIVE_REFRESH:-1h}
+      TOP_PLAYLISTS_KEEP: ${TOP_PLAYLISTS_KEEP:-3}
+      TOP_PLAYLISTS_VERIFY: ${TOP_PLAYLISTS_VERIFY:-1h}
+      TOP_PLAYLISTS_OWNER: ${TOP_PLAYLISTS_OWNER:-}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

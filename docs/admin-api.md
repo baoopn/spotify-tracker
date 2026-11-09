@@ -266,6 +266,27 @@ are the same Spotify playlist with the same name.
 running: a row whose period ended but is not finalized yet is reported as
 finished (`live: false`).
 
+**Keeping the newest.** Only the newest `keep` (`TOP_PLAYLISTS_KEEP`, default
+3; `0` keeps all) `created` playlists per kind are kept; the live one and
+hidden ones count. A tick prunes older ones: the row becomes `pruned`
+(`pruned_at`), leaves the public page and the Spotify playlist is deleted
+(retried on later ticks until Spotify confirms; `last_error` shows a failure).
+Pruned rows are history: they cannot be regenerated, hidden or shown.
+
+**Restoring deleted playlists.** Every `verify_seconds`
+(`TOP_PLAYLISTS_VERIFY`, default 1 h; `0` = off) the kept playlists are
+checked against the Spotify account's library (`verified_at`). A playlist
+deleted in the Spotify app is followed again with its stored tracks, or
+recreated under a new `spotify_id` when Spotify no longer has it;
+`restored_at` is set and the row stays `created`. A failed restore only sets
+`last_error` and is retried by the next check.
+
+**Names.** Playlists are named `{owner}'s Top 50 · {label}`. `owner` is
+`TOP_PLAYLISTS_OWNER` (`owner_source: 'config'`), else the connected account's
+display name (`'spotify'`, read by the generator and cached for a day), else
+none (`''`, `'none'`: new playlists are named `Top 50 · {label}` and existing
+ones keep their name). A tick renames playlists whose name differs.
+
 ```ts
 type AdminTopPlaylist = {
   period: 'week' | 'month' | 'year';
@@ -274,7 +295,7 @@ type AdminTopPlaylist = {
   time_zone: string;           // zone the period was generated in
   label: string;               // "Week of Nov 2, 2026", "November 2026", "2026"
   name: string;                // Spotify playlist name
-  status: 'pending' | 'created' | 'empty' | 'waiting_auth' | 'failed';
+  status: 'pending' | 'created' | 'empty' | 'waiting_auth' | 'failed' | 'pruned';
   hidden: boolean;             // left out of the public page
   spotify_id: string | null;
   spotify_url: string | null;
@@ -286,6 +307,9 @@ type AdminTopPlaylist = {
   published_at: string | null;     // UTC; last successful publish (a live row keeps its first publish)
   live: boolean;                   // live playlist of a period that is still running
   refreshed_at: string | null;     // UTC; last successful live refresh or the finalization (null for rows never refreshed)
+  pruned_at: string | null;        // UTC; when the row was pruned (status 'pruned')
+  restored_at: string | null;      // UTC; last restore after the playlist was deleted outside this system
+  verified_at: string | null;      // UTC; last check against the Spotify library
   created_at: string;
   updated_at: string;
 };
@@ -298,6 +322,10 @@ type TopPlaylistsStatus = {
   interval_seconds: number;                // 600
   live_periods: ('week' | 'month' | 'year')[];  // kinds with a live playlist ([] when none or disabled)
   live_refresh_seconds: number;            // live refresh interval, 3600 by default
+  keep: number;                            // playlists kept per kind; 0 = all
+  verify_seconds: number;                  // time between two Spotify checks; 0 = off
+  owner: string;                           // owner in playlist names; '' when none
+  owner_source: 'config' | 'spotify' | 'none';
 };
 ```
 
@@ -310,6 +338,7 @@ the same instant is accepted.
 | GET | `/admin/api/top-playlists` | `period` (optional), `limit` (1–100, default 50), `offset` | `{ data: AdminTopPlaylist[], total, status: TopPlaylistsStatus }` — every row of every status, newest period first |
 | GET | `/admin/api/top-playlists/{period}/{start}` | – | `{ data: AdminTopPlaylist & { tracks: TopPlaylistTrack[] } }` — with the stored snapshot (`[]` when none) |
 | POST | `/admin/api/top-playlists/run` | – | `{ data, total, status }` (first page, after the run) — runs one generator tick now |
+| POST | `/admin/api/top-playlists/verify` | – | `{ data, total, status }` (first page, after the check) — checks the playlists against Spotify now and restores deleted ones (ignores `verify_seconds`) |
 | POST | `/admin/api/top-playlists/generate` | `{ "period": "month", "date": "2026-07-15" }` | `{ data: AdminTopPlaylist }` — generates (or refreshes) the completed period containing `date` (a calendar date in the configured zone) |
 | POST | `/admin/api/top-playlists/{period}/{start}/regenerate` | – | `{ data: AdminTopPlaylist }` — regenerate / retry an existing row; on a live row of the running period: refresh now (ignores the interval); on a live row whose period ended: finalize now (ignores the backoff and the 15 min grace) |
 | PATCH | `/admin/api/top-playlists/{period}/{start}` | `{ "hidden": true }` | `{ data: AdminTopPlaylist }` — hide or show it on the public page |
@@ -333,13 +362,16 @@ not yet published are stored exactly like the tick stores them (`failed` /
   so it always matches the playlist. A success clears `last_error`.
 
 Hiding drops the public response cache; the playlist stays in the Spotify
-account. There is no delete.
+account. There is no delete (pruning removes old playlists automatically).
 
 Errors: `400 invalid_period | invalid_start | invalid_date | invalid_body |
 invalid_limit | invalid_offset` (`date` must be a `YYYY-MM-DD` date from
 2000-01-01 on), `400 period_not_completed` (the period is still running or in
 the future; for regenerate only when the kind has no live playlist), `400 invalid_period` also when the kind is not in
-`TOP_PLAYLISTS_PERIODS`, `404 not_found`, `409 busy` (another generation holds
+`TOP_PLAYLISTS_PERIODS`, `400 period_too_old` (generate of a period older
+than the newest `keep` of its kind; message "only the newest N playlists per
+kind are kept"), `404 not_found`, `409 pruned` (regenerate, generate or PATCH
+hidden of a pruned row), `409 busy` (another generation holds
 the lock; retry shortly), `409 no_plays` (regenerating a published playlist
 whose period has no plays; message "no plays in this period; playlist left
 unchanged"), `412 spotify_not_authorized` (Spotify not connected or missing
@@ -347,11 +379,11 @@ unchanged"), `412 spotify_not_authorized` (Spotify not connected or missing
 `message` is its `last_error`), `502 spotify_error` (the row is now `failed`,
 or a published row kept with `last_error`; `message` includes the
 `last_error`), `503 top_playlists_disabled` for every mutation — run,
-generate, regenerate **and PATCH hidden** — while the feature is disabled (the
-list and detail still answer, with `status.enabled: false`). Run, generate and
+verify, generate, regenerate **and PATCH hidden** — while the feature is disabled (the
+list and detail still answer, with `status.enabled: false`). Run, verify, generate and
 regenerate are bounded to 25 s.
 
-Audit actions: `top_playlists.run`, `top_playlists.generated`,
+Audit actions: `top_playlists.run`, `top_playlists.verified`, `top_playlists.generated`,
 `top_playlists.regenerated`, `top_playlists.hidden`, `top_playlists.shown`
 (detail: `period`, `period_start`, `status`, `spotify_id`; `run`: `periods`).
 

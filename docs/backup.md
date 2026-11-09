@@ -18,7 +18,11 @@ or a machine without Docker.
 - The whole application database (`spotify_tracker`): every table, including
   listening history, tracks, playlists, settings and `goose_db_version`.
 - Format: `pg_dump --format=custom --compress=6 --no-owner --no-privileges`,
-  piped into `age`. The plaintext dump never touches the storage.
+  piped into `age`. The plaintext dump never touches the storage, and it is
+  never written to the container's disk either: backup, verify and restore
+  stream it through pipes. Only the ciphertext is staged in `/tmp`.
+- A backup is refused (nothing is uploaded) when the dump contains no
+  tables, for example when it points at the wrong database.
 - Not backed up: Redis (cache and work queue only; it refills by itself).
 
 The database stores the Spotify refresh token and the SMTP password encrypted
@@ -37,7 +41,22 @@ The manifest holds the name, time, size, the sha256 of the encrypted file,
 the pg_dump and server versions, the database name and the schema (goose)
 version. Restore checks the sha256 before it decrypts anything.
 
+The sha256 proves the file is intact (no damage, no truncation). It does
+not prove who made it: anyone with write access to the bucket could upload a
+new backup with a matching manifest, because age encryption uses only your
+public key. Keep the bucket token private and scoped to this one bucket.
+
 ## Setup
+
+### 0. Make the image pullable (once)
+
+The release workflow pushes `ghcr.io/baoopn/spotify-tracker-backup` with the
+same tags as the app. GitHub creates a new package as **private**. For the
+`docker run` recipes below (and VPS hosts) to pull it without a login, open
+the package on GitHub → *Package settings* → *Change visibility* → *Public*,
+once. Otherwise run `docker login ghcr.io` with a token that has
+`read:packages`. Coolify builds the image from the repository and needs
+neither.
 
 ### 1. Create a private bucket and a token (Cloudflare R2)
 
@@ -91,8 +110,12 @@ several recipients separated by spaces or commas.
 - **Local dev:** `docker compose --profile backup ...` writes to a Docker
   volume, no bucket needed. See the comments in `docker-compose.yml`.
 
-Until `BACKUP_AGE_RECIPIENT` and a destination are set, the service logs a
-warning and idles. It never uploads an unencrypted dump.
+When no `BACKUP_*` setting is set at all, the service logs a warning, idles
+and stays healthy, so installs without off-site backups keep working. When
+only some are set (a destination without a recipient, or one to three of the
+four `BACKUP_S3_*` values), it logs an ERROR, pings `<url>/fail` if
+`BACKUP_PING_URL` is set, and reports **unhealthy**. It never uploads an
+unencrypted dump.
 
 Check it works: run one backup now and list the bucket.
 
@@ -111,7 +134,8 @@ backupctl list
   The container never exits because of a failed backup.
 - After each successful scheduled backup, backups older than
   `BACKUP_KEEP_DAYS` (default 30) are deleted. The newest
-  `BACKUP_KEEP_MIN` (default 7) are always kept, however old.
+  `BACKUP_KEEP_MIN` (default 7) are always kept, however old. The newest
+  backup is never deleted, so a value below 1 counts as 1.
   `BACKUP_KEEP_DAYS=0` keeps everything. You can also set a lifecycle rule
   on the bucket.
 - The Docker healthcheck turns **unhealthy** when there was no successful
@@ -119,7 +143,10 @@ backupctl list
   service idles or waits for its first run.
 - `BACKUP_PING_URL` (optional): a GET after each success and
   `<url>/fail` after each failure, as [healthchecks.io](https://healthchecks.io)
-  expects. Use it to get an email when backups stop.
+  expects. **This is the real monitor**: the Docker healthcheck only knows
+  what happened since the container started (a redeploy resets it), and
+  nobody gets an email from it. A free healthchecks.io check with a 1-day
+  period and a few hours of grace emails you when backups stop.
 
 Test a restore from time to time. `backupctl verify latest` downloads,
 checks and decrypts the newest backup without touching any database:
@@ -144,13 +171,15 @@ backupctl keygen              new key pair
 
 `-i KEY` is the age private key file. The default is
 `/run/secrets/backup-age-key` (or `BACKUP_AGE_IDENTITY_FILE`). `-i -` reads it
-from stdin, so the key never has to be stored on the server.
+from stdin into memory and hands it to age through a pipe, so the key is
+never written to disk, on the server or in the container.
 
 `restore` refuses to write into a database that already has tables in schema
 `public`. `--force` drops and replaces the objects that are in the backup
 (`pg_restore --clean --if-exists`). The restore runs in a single
 transaction: if it fails, nothing changes. `--to-file PATH` only writes the
-decrypted `.dump` file, for use with `pg_restore` by hand.
+decrypted `.dump` file, for use with `pg_restore` by hand. It is the only
+command that writes plaintext to disk (mode 600); delete the file when done.
 
 The database to restore into comes from `DATABASE_URL` or the usual `PGHOST`,
 `PGPORT`, `PGUSER`, `PGPASSWORD` and `PGDATABASE`. Point them at another
@@ -255,16 +284,14 @@ rclone copyto "$DIR/$NAME.json" "$NAME.json"
 grep '"sha256"' "$NAME.json"
 sha256sum "$NAME"
 
-# 4. Decrypt and check the archive
-age -d -i backup-age-key.txt -o spotify-tracker.dump "$NAME"
-pg_restore --list spotify-tracker.dump | head
+# 4. Decrypt straight into pg_restore (no plaintext file); count the tables
+age -d -i backup-age-key.txt "$NAME" | pg_restore --list | grep -c ' TABLE '
 
-# 5. Restore into an empty database
-pg_restore --no-owner --no-privileges --exit-on-error --single-transaction \
-  -d 'postgres://tracker:<password>@localhost:5432/spotify_tracker' spotify-tracker.dump
-
-# 6. Delete the plaintext dump
-rm spotify-tracker.dump
+# 5. Restore into an empty database. Single transaction: any failure,
+#    including a decryption error, changes nothing.
+age -d -i backup-age-key.txt "$NAME" | \
+  pg_restore --no-owner --no-privileges --exit-on-error --single-transaction \
+  -d 'postgres://tracker:<password>@localhost:5432/spotify_tracker'
 ```
 
 ## All settings
@@ -286,10 +313,10 @@ rm spotify-tracker.dump
 | `BACKUP_ON_START` | `false` | also back up when the container starts |
 | `BACKUP_RETRY_MINUTES` | `30` | delay before the one retry; `0` disables it |
 | `BACKUP_KEEP_DAYS` | `30` | delete older backups; `0` keeps all |
-| `BACKUP_KEEP_MIN` | `7` | always keep this many newest backups |
+| `BACKUP_KEEP_MIN` | `7` | always keep this many newest backups (at least 1) |
 | `BACKUP_MAX_AGE_HOURS` | `26` | healthcheck limit |
 | `BACKUP_PING_URL` | | healthchecks.io-style ping URL |
-| `DATABASE_URL` or `PG*` | | the database to back up or restore into |
+| `DATABASE_URL` or `PG*` | | the database to back up or restore into. A URL is split into `PG*` values, so the password never shows in a process list; query parameters other than `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `connect_timeout`, `application_name`, `options` and `target_session_attrs` are refused. Percent-encode special characters in the password. |
 
 The compose files set the `PG*` variables for the bundled `postgres` service.
 

@@ -61,11 +61,13 @@ type API struct {
 	Deps
 
 	// Test seams; nil uses Deps.
-	tops        topPlaylistStore
-	spotifyAuth func(context.Context) (settings.Spotify, error)
-	auditor     auditor
-	invalidate  func(context.Context)
-	now         func() time.Time
+	tops           topPlaylistStore
+	backups        backupStore
+	backupSettings backupSettingsStore
+	spotifyAuth    func(context.Context) (settings.Spotify, error)
+	auditor        auditor
+	invalidate     func(context.Context)
+	now            func() time.Time
 }
 
 func (a *API) clock() time.Time {

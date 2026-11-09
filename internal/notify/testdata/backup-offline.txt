@@ -1,0 +1,17 @@
+[Offline]
+The backup service is offline
+=============================
+
+The backup service checks in every minute. It has not checked in for more than an hour, so backups may not run.
+
+Check that the backup container is running.
+
+Last seen: 2026-11-09 10:30 UTC (less than a day ago)
+
+Open backup status:
+  https://listening.example.com/admin/settings/backups
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

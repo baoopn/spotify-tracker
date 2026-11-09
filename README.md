@@ -112,6 +112,7 @@ and `/api/v1` is rate limited per client IP.
 
 - [Architecture & design decisions](docs/architecture.md)
 - [Deployment: Coolify, any VPS, CI/CD](docs/deployment.md)
+- [Encrypted off-site backups & restore](docs/backup.md)
 - [Admin dashboard & Clerk setup](docs/admin.md) · [Admin API contract](docs/admin-api.md)
 - [Spotify developer setup & authorization](docs/spotify-token.md) (requires Spotify Premium)
 - [Migrating from the Directus version](docs/migration-from-directus.md)

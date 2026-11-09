@@ -1,12 +1,14 @@
 # Deployment
 
-Three compose files, one image (`ghcr.io/baoopn/spotify-tracker`):
+Three compose files, one app image (`ghcr.io/baoopn/spotify-tracker`) plus
+the backup sidecar (`ghcr.io/baoopn/spotify-tracker-backup`, see
+[backup.md](backup.md)):
 
 | File | Use |
 |---|---|
 | `docker-compose.yml` | Local development: builds the image, publishes ports on 127.0.0.1, debug logs. |
-| `docker-compose.prod.yml` | Any Docker host (VPS): GHCR image, Caddy with automatic HTTPS, nightly Postgres backups, hardened containers, private network. |
-| `docker-compose.coolify.yml` | Coolify: GHCR image, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`. |
+| `docker-compose.prod.yml` | Any Docker host (VPS): GHCR image, Caddy with automatic HTTPS, nightly local Postgres backups plus encrypted off-site backups, hardened containers, private network. |
+| `docker-compose.coolify.yml` | Coolify: GHCR image, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`, encrypted off-site backups. |
 
 All stateful data lives in the bundled `postgres` and `redis` services and
 their named volumes. No external database is needed.
@@ -23,6 +25,7 @@ deployed** — and (3) a local pre-push hook (`git config core.hooksPath
 - **`ci.yml`** runs on PRs and on `main`. Go: generated-code drift check, `go mod tidy`
   check, golangci-lint, race tests, build. SPA: svelte-check, eslint, build.
   It also validates all compose files and does a Docker build on PRs. The
+  backup image gets shellcheck, a build and a backup/restore roundtrip test. The
   **Public-safety check** (`scripts/check-public.sh`, also `make check-public`)
   fails if a tracked file contains a machine path, a key or token, deployment
   details (Coolify host, resource UUIDs, server IPs), a personal mailbox,
@@ -30,8 +33,9 @@ deployed** — and (3) a local pre-push hook (`git config core.hooksPath
   `.secrets/` and the Coolify environment.
 - **`release.yml`** runs on push to `main`, on `v*` tags, or manually.
   1. Runs CI.
-  2. Builds the image and pushes it to GHCR with the tags `sha-<short>`,
-     `latest` (and the semver tag), plus provenance and SBOM.
+  2. Builds the app image and the backup image (`<repo>-backup`) and pushes
+     them to GHCR with the tags `sha-<short>`, `latest` (and the semver tag),
+     plus provenance and SBOM.
   3. **Deploy** (environment `production`): sets `IMAGE_TAG=sha-<short>` on the
      Coolify resource through the Coolify API, triggers a deployment, and waits
      until Coolify reports `finished` (the job fails if the deploy fails).
@@ -74,8 +78,11 @@ Rollback: re-run an older successful `Release & deploy` run, or set
    certificate is issued within a minute (verified 2026-11-05).
 5. **Spotify.** Add `https://<domain>/admin/api/spotify/callback` to the
    app's Redirect URIs in the Spotify Developer Dashboard.
-6. **Backups.** Enable scheduled backups for the `postgres` service in Coolify
-   (Service → postgres → Backups), ideally to S3.
+6. **Backups.** The `backup` service sends an encrypted dump to a private
+   R2 bucket (or any S3 store) every day. Create the bucket, a bucket-scoped
+   token and an age key pair, then set `BACKUP_AGE_RECIPIENT` and
+   `BACKUP_S3_*`; see [backup.md](backup.md). Until then the service idles
+   with a warning. Restore works on any host, not only Coolify.
 7. Copy the resource UUID into the GitHub variable `COOLIFY_RESOURCE_UUID`.
    From now on every push to `main` deploys automatically.
 
@@ -99,6 +106,11 @@ Caddy obtains certificates automatically. Backups are written daily to
 gunzip -c backups/daily/spotify_tracker-YYYYMMDD.sql.gz | \
   docker compose -f docker-compose.prod.yml exec -T postgres psql -U tracker spotify_tracker
 ```
+
+The `offsite-backup` service also sends an encrypted copy to R2 (or any S3
+store) once you set `BACKUP_AGE_RECIPIENT` and `BACKUP_S3_*` in `.env`. See
+[backup.md](backup.md) for setup and restore. If the backup image on GHCR is
+private, run `docker login ghcr.io` first, or build it on the host.
 
 Upgrade: `IMAGE_TAG=sha-xxxxxxx docker compose -f docker-compose.prod.yml up -d`
 (or `make prod-up` for `latest`).

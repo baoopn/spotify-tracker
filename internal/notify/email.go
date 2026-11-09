@@ -236,8 +236,13 @@ func (e Email) text(b Brand) string {
 	} else {
 		line("Sent by spotify-tracker")
 	}
-	line("You get these because you're an alert recipient. Change it in Settings → Email alerts" +
-		map[bool]string{true: ":\n  " + v.SettingsURL, false: "."}[v.SettingsURL != ""])
+	const why = "You get these because you're an alert recipient. Change it in Settings → Email alerts"
+	if v.SettingsURL != "" {
+		line(why + ":")
+		line("  " + v.SettingsURL)
+	} else {
+		line(why + ".")
+	}
 	return s.String()
 }
 

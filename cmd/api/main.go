@@ -137,6 +137,10 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		log.Error("invalid EMAIL_LOGO_URL; using the default wordmark", logging.Err(err),
 			slog.String("default", brand.LogoURL))
 	}
+	if brand.URL == "" {
+		log.Warn("PUBLIC_URL is not an absolute http(s) URL; alert emails will have no links or logo",
+			slog.String("public_url", cfg.PublicURL))
+	}
 	notifier := notify.New(smtpFromSettings(settingsStore), rdb, brand, log)
 	checker := alerts.New(settingsStore, notifier, cfg.Spotify.TokenLifetimeDays,
 		strings.TrimRight(cfg.PublicURL, "/")+"/admin/settings/spotify", log)

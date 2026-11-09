@@ -128,16 +128,17 @@ backupctl list
 
 ## Schedule, retention and monitoring
 
-- One backup a day at `BACKUP_TIME` (UTC, default `03:00`).
+- One backup a day at `BACKUP_TIME` (UTC, default `03:00`), or at the time
+  set in the admin dashboard.
   `BACKUP_ON_START=true` also runs one when the container starts.
 - A failed run is retried once after `BACKUP_RETRY_MINUTES` (default 30).
   The container never exits because of a failed backup.
-- After each successful scheduled backup, backups older than
+- After each successful backup, backups older than
   `BACKUP_KEEP_DAYS` (default 30) are deleted. The newest
   `BACKUP_KEEP_MIN` (default 7) are always kept, however old. The newest
   backup is never deleted, so a value below 1 counts as 1.
-  `BACKUP_KEEP_DAYS=0` keeps everything. You can also set a lifecycle rule
-  on the bucket.
+  `BACKUP_KEEP_DAYS=0` keeps everything. The admin dashboard can override
+  both values. You can also set a lifecycle rule on the bucket.
 - The Docker healthcheck turns **unhealthy** when there was no successful
   backup in `BACKUP_MAX_AGE_HOURS` (default 26). It stays healthy while the
   service idles or waits for its first run.
@@ -147,6 +148,45 @@ backupctl list
   what happened since the container started (a redeploy resets it), and
   nobody gets an email from it. A free healthchecks.io check with a 1-day
   period and a few hours of grace emails you when backups stop.
+
+## Admin dashboard
+
+The admin dashboard (*Settings → Backups*) shows the backup status and can
+start a backup. The api has no storage credentials, so the backup service
+and the api talk only through the database (migration `00011`):
+
+| Table | Written by | Holds |
+|---|---|---|
+| `backup_agent` | backup service, about once a minute | heartbeat: effective time, retention, pause, next run, redacted destination (`s3:<bucket>/<prefix>` or `remote:<name>/<prefix>`), age recipients, config problems |
+| `backup_runs` | backup service | one row per backup: trigger, status, times, name, size, sha256, table count, short error |
+| `backup_inventory` | backup service | the backups in storage, refreshed after each backup and prune |
+| `backup_requests` | api (admin) | queued "back up now" and "refresh list" requests |
+
+No secret goes into these tables: no storage keys, no endpoint, no private
+key. Recipients are public keys.
+
+- The scheduler wakes every minute. It writes the heartbeat, reads the
+  admin settings, and runs the oldest queued request.
+- Admin settings live in the `settings` table under key `backup`, as plain
+  JSON: `{"time":"03:00","keep_days":30,"keep_min":7,"paused":false}`.
+  Each field is optional. A missing field falls back to the env value
+  (`BACKUP_TIME`, `BACKUP_KEEP_DAYS`, `BACKUP_KEEP_MIN`), then to the
+  default. The service checks the values (time `HH:MM`, keep days 0 to
+  3650, keep at least 1 to 1000). If they are not valid, it logs a WARN and
+  keeps the values it had. Changes apply within a minute.
+- **Paused** stops the daily backups. "Back up now" still works, and the
+  healthcheck stays healthy.
+- A run or request left behind by a stopped container is marked
+  `interrupted` at the next start (runs after 6 hours).
+- The service deletes runs older than 180 days and done requests older
+  than 30 days.
+- The status is best-effort. If a status write fails (the database is busy,
+  or an older database has no status tables), the service logs a WARN and
+  the backup goes on as before.
+- `backupctl backup` from a shell is recorded too, as a manual run.
+- Without settings, or with partial settings, the service still writes the
+  heartbeat, so the dashboard can show what is missing. Queued requests
+  then fail with that reason.
 
 Test a restore from time to time. `backupctl verify latest` downloads,
 checks and decrypts the newest backup without touching any database:
@@ -316,6 +356,7 @@ age -d -i backup-age-key.txt "$NAME" | \
 | `BACKUP_KEEP_MIN` | `7` | always keep this many newest backups (at least 1) |
 | `BACKUP_MAX_AGE_HOURS` | `26` | healthcheck limit |
 | `BACKUP_PING_URL` | | healthchecks.io-style ping URL |
+| `BACKUP_LOOP_SECONDS` | `60` | how often the scheduler wakes (heartbeat, settings, requests); the test sets 2 |
 | `DATABASE_URL` or `PG*` | | the database to back up or restore into. A URL is split into `PG*` values, so the password never shows in a process list; query parameters other than `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `connect_timeout`, `application_name`, `options` and `target_session_attrs` are refused. Percent-encode special characters in the password. |
 
 The compose files set the `PG*` variables for the bundled `postgres` service.
@@ -326,8 +367,10 @@ The compose files set the `PG*` variables for the bundled `postgres` service.
 restore with throwaway Postgres containers and a local Docker volume as the
 remote (no cloud access). It compares the row count of every table and the
 goose version, and checks the failure cases: no recipient, wrong key, a
-changed file, a non-empty target, and the retention rules. CI runs it on
-every pull request.
+changed file, a non-empty target, and the retention rules. It also checks
+the status tables: run rows, the inventory against `backupctl list`, the
+heartbeat, a queued request, the admin settings, and a failing status write
+that must not stop the backup. CI runs it on every pull request.
 
 ```bash
 sh deploy/backup/test/roundtrip.sh

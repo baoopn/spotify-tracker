@@ -29,7 +29,7 @@ COPY --chmod=0755 deploy/backup/bin/ /usr/local/bin/
 
 # rclone is configured from env only (RCLONE_CONFIG_BACKUP_*); /dev/null keeps
 # its config in memory.
-ENV RCLONE_CONFIG=/dev/null TZ=UTC
+ENV RCLONE_CONFIG=/dev/null TZ=UTC BACKUP_VERSION=${VERSION}
 
 USER backup:backup
 WORKDIR /restore

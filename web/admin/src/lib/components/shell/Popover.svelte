@@ -49,7 +49,10 @@
 <style>
 	.pop {
 		position: fixed;
-		inset: 4.25rem 1rem auto auto;
+		top: calc(4.25rem + env(safe-area-inset-top, 0px));
+		right: max(1rem, env(safe-area-inset-right, 0px));
+		bottom: auto;
+		left: auto;
 		margin: 0;
 		width: min(20rem, calc(100vw - 2rem));
 		padding: 0.75rem;

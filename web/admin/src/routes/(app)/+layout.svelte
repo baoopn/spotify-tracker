@@ -35,7 +35,10 @@
 		<Sidebar bind:open={sidebarOpen} />
 		<div class="flex min-w-0 flex-1 flex-col">
 			<TopBar bind:sidebarOpen />
-			<main id="main" class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
+			<main
+				id="main"
+				class="mx-auto w-full max-w-7xl flex-1 pt-6 px-shell pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
+			>
 				{@render children()}
 			</main>
 		</div>

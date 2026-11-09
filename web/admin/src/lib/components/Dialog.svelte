@@ -86,8 +86,14 @@
 		background: color-mix(in oklab, var(--ink) 28%, transparent);
 	}
 	.dlg-modal {
-		width: min(32rem, calc(100vw - 2rem));
-		max-height: calc(100dvh - 2rem);
+		/* Stay clear of the notch, home indicator and landscape side insets. */
+		width: min(
+			32rem,
+			calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+		);
+		max-height: calc(
+			100dvh - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+		);
 		margin: auto;
 		border-radius: 1.25rem;
 	}
@@ -97,6 +103,9 @@
 		max-height: 100dvh;
 		margin: 0 0 0 auto;
 		border-radius: 1.25rem 0 0 1.25rem;
+		/* Full height edge to edge; content kept out of the status bar / home indicator. */
+		padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+			env(safe-area-inset-bottom, 0px) 0;
 	}
 	.dlg[open].dlg-drawer {
 		animation: slide-in 180ms ease-out;

@@ -65,6 +65,29 @@ func TestUnfollowPlaylistNotFoundIsNil(t *testing.T) {
 	}
 }
 
+func TestUnfollowPlaylistLibrary404ChecksFollowers(t *testing.T) {
+	for _, tc := range []struct {
+		followers int
+		wantErr   bool
+	}{{http.StatusOK, false}, {http.StatusNotFound, false}, {http.StatusInternalServerError, true}} {
+		rec := &recorder{}
+		m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+			if rec.add(r) == "DELETE "+libraryReq {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(tc.followers)
+		})
+		err := m.UnfollowPlaylist(context.Background(), "pl1")
+		if (err != nil) != tc.wantErr {
+			t.Errorf("followers %d: err = %v", tc.followers, err)
+		}
+		if got := rec.list(); len(got) != 2 || got[1] != "DELETE "+followersReq {
+			t.Errorf("followers %d: requests %v", tc.followers, got)
+		}
+	}
+}
+
 func TestUnfollowPlaylistFallsBackOn403(t *testing.T) {
 	rec := &recorder{}
 	m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
@@ -85,14 +108,32 @@ func TestUnfollowPlaylistFallsBackOn403(t *testing.T) {
 func TestFollowPlaylist(t *testing.T) {
 	rec := &recorder{}
 	m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
-		rec.add(r)
+		if rec.add(r) == "PUT /v1/playlists/pl1" {
+			if raw, _ := io.ReadAll(r.Body); string(raw) != `{"public":true}` {
+				t.Errorf("bad body %s", raw)
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	if err := m.FollowPlaylist(context.Background(), "pl1"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.list(); len(got) != 1 || got[0] != "PUT "+libraryReq {
+	// The library endpoint has no visibility option: the playlist is made public after.
+	if got := rec.list(); len(got) != 2 || got[0] != "PUT "+libraryReq || got[1] != "PUT /v1/playlists/pl1" {
 		t.Fatalf("requests %v", got)
+	}
+}
+
+func TestFollowPlaylistPublicFails(t *testing.T) {
+	m, _ := writeManager(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/playlists/pl1" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := m.FollowPlaylist(context.Background(), "pl1"); err == nil {
+		t.Fatal("want error when the playlist could not be made public")
 	}
 }
 
@@ -137,10 +178,11 @@ func TestFollowUnfollowRefreshAndRateLimit(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	if err := m.FollowPlaylist(context.Background(), "pl1"); err != nil || forced.Load() != 1 || calls.Load() != 2 {
+	// Library save + make public, each refreshed once.
+	if err := m.FollowPlaylist(context.Background(), "pl1"); err != nil || forced.Load() != 2 || calls.Load() != 4 {
 		t.Fatalf("follow 401 retry: err=%v forced=%d calls=%d", err, forced.Load(), calls.Load())
 	}
-	if err := m.UnfollowPlaylist(context.Background(), "pl1"); err != nil || forced.Load() != 2 || calls.Load() != 4 {
+	if err := m.UnfollowPlaylist(context.Background(), "pl1"); err != nil || forced.Load() != 3 || calls.Load() != 6 {
 		t.Fatalf("unfollow 401 retry: err=%v forced=%d calls=%d", err, forced.Load(), calls.Load())
 	}
 

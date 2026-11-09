@@ -34,7 +34,8 @@ func followersPath(id string) string { return "/playlists/" + url.PathEscape(id)
 // error.
 func (m *Manager) UnfollowPlaylist(ctx context.Context, id string) error {
 	err := m.sendJSON(ctx, http.MethodDelete, "remove playlist from library", libraryPath(id), nil, nil)
-	if errors.Is(err, ErrForbidden) {
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFound) {
+		// Only the followers endpoint's 404 means the playlist is gone.
 		err = m.sendJSON(ctx, http.MethodDelete, "unfollow playlist", followersPath(id), nil, nil)
 	}
 	if errors.Is(err, ErrNotFound) {
@@ -46,12 +47,21 @@ func (m *Manager) UnfollowPlaylist(ctx context.Context, id string) error {
 // FollowPlaylist puts a playlist back in the user's library (publicly), which
 // restores a playlist its owner deleted. It returns a wrapped ErrNotFound
 // when the playlist no longer exists at all.
+//
+// The library endpoint has no visibility option, so after it the playlist
+// is made public again with PUT /playlists/{id} {"public": true} (the
+// documented way to put a playlist on the user's profile). The deprecated
+// followers endpoint takes {"public": true} itself.
 func (m *Manager) FollowPlaylist(ctx context.Context, id string) error {
 	err := m.sendJSON(ctx, http.MethodPut, "save playlist to library", libraryPath(id), nil, nil)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFound) {
-		err = m.sendJSON(ctx, http.MethodPut, "follow playlist", followersPath(id), map[string]any{"public": true}, nil)
+		return m.sendJSON(ctx, http.MethodPut, "follow playlist", followersPath(id), map[string]any{"public": true}, nil)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return m.sendJSON(ctx, http.MethodPut, "make playlist public",
+		"/playlists/"+url.PathEscape(id), map[string]any{"public": true}, nil)
 }
 
 // OwnedPlaylistIDs returns the IDs of the playlists in the user's library

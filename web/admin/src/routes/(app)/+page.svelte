@@ -6,6 +6,7 @@
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import NowPlayingCard from '#lib/components/overview/NowPlayingCard.svelte';
 	import SpotifyTokenCard from '#lib/components/overview/SpotifyTokenCard.svelte';
+	import BackupsCard from '#lib/components/overview/BackupsCard.svelte';
 	import ServiceList from '#lib/components/overview/ServiceList.svelte';
 	import EnrichmentProgress from '#lib/components/overview/EnrichmentProgress.svelte';
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
@@ -64,13 +65,16 @@
 				</div>
 			{/if}
 		</div>
-		{#if d}
-			<SpotifyTokenCard status={d.spotify} />
-		{:else}
-			<div class="flex flex-col gap-3">
-				<Skeleton class="h-4 w-24" /><Skeleton class="h-9 w-32" /><Skeleton class="h-2 w-full" />
-			</div>
-		{/if}
+		<div class="flex flex-col gap-8">
+			{#if d}
+				<SpotifyTokenCard status={d.spotify} />
+			{:else}
+				<div class="flex flex-col gap-3">
+					<Skeleton class="h-4 w-24" /><Skeleton class="h-9 w-32" /><Skeleton class="h-2 w-full" />
+				</div>
+			{/if}
+			<BackupsCard />
+		</div>
 	</div>
 
 	<section class="mt-10" aria-labelledby="totals-h">

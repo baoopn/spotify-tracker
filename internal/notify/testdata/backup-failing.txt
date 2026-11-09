@@ -1,0 +1,23 @@
+[Backup failed]
+The last backup failed
+======================
+
+The backup service tried to save an off-site copy of the database and could not. Listening history is still recorded, but there is no fresh backup of it.
+
+Open the backup status page for details. Once it is fixed, run a backup by hand. The backup service said:
+
+Failed: 2026-11-09 03:01 UTC (less than a day ago)
+Trigger: schedule
+Last good backup: 2026-11-08 03:02 UTC (1 day ago)
+
+    upload failed: rclone: 403 Forbidden (check the bucket token)
+
+Open backup status:
+  https://listening.example.com/admin/settings/backups
+
+The backup service tries again on its next scheduled run.
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

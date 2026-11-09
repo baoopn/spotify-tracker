@@ -1,0 +1,18 @@
+[Backup overdue]
+Your backups are out of date
+============================
+
+The backup service runs once a day, but no backup has succeeded in more than 26 hours.
+
+Open the backup status page to see what the service is doing.
+
+Last good backup: 2026-11-08 03:02 UTC (2 days ago)
+Schedule: daily at 03:00 UTC
+
+Open backup status:
+  https://listening.example.com/admin/settings/backups
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

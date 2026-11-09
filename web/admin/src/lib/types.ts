@@ -163,6 +163,87 @@ export type EmailSettingsUpdate = {
 
 export type OkResult = { ok: true } | { ok: false; error: string };
 
+// ---------- backups ----------
+
+export type BackupHealth =
+	'ok' | 'stale' | 'failing' | 'unconfigured' | 'offline' | 'paused' | 'unknown';
+export type BackupTrigger = 'schedule' | 'manual' | 'start' | 'retry';
+export type BackupRunStatus = 'running' | 'success' | 'failed';
+
+export type BackupRun = {
+	id: number;
+	trigger: BackupTrigger;
+	status: BackupRunStatus;
+	started_at: string;
+	finished_at: string | null;
+	/** Object name on success. */
+	name: string | null;
+	size_bytes: number | null;
+	sha256: string | null;
+	tables: number | null;
+	/** Short, secrets-free failure message. */
+	error: string | null;
+	/** Admin email for runs requested from the dashboard. */
+	requested_by: string | null;
+	duration_ms: number | null;
+};
+
+/** One object in the remote listing (as last seen by the backup service). */
+export type BackupObject = { name: string; size_bytes: number; created_at: string };
+
+/** Heartbeat of the backup container (null until it has reported once). */
+export type BackupAgent = {
+	last_seen_at: string;
+	version: string | null;
+	/** Destination and recipient are both set. */
+	configured: boolean;
+	config_error: string | null;
+	/** Redacted, e.g. "s3:bucket/prefix"; never endpoint or keys. */
+	destination: string | null;
+	/** age public keys. */
+	recipients: string[];
+	/** Effective daily time, "HH:MM" UTC. */
+	backup_time: string;
+	keep_days: number;
+	keep_min: number;
+	paused: boolean;
+	next_run_at: string | null;
+	settings_source: 'env' | 'admin';
+};
+
+export type BackupSettings = {
+	/** "HH:MM" UTC. */
+	time: string;
+	keep_days: number;
+	keep_min: number;
+	paused: boolean;
+	source: 'admin' | 'default';
+};
+
+export type BackupSettingsUpdate = Omit<BackupSettings, 'source'>;
+
+export type BackupRequestKind = 'backup' | 'refresh';
+
+export type BackupStatus = {
+	agent: BackupAgent | null;
+	last_success: BackupRun | null;
+	last_failure: BackupRun | null;
+	/** Latest 20, newest first. */
+	runs: BackupRun[];
+	/** Newest first. */
+	inventory: BackupObject[];
+	pending_request: {
+		id: number;
+		kind: BackupRequestKind;
+		requested_at: string;
+		claimed_at?: string | null;
+	} | null;
+	settings: BackupSettings;
+	health: BackupHealth;
+	/** Server-side one-line explanation of `health`, when given. */
+	health_detail?: string | null;
+};
+
 // ---------- data ----------
 
 export type HistoryEntry = {

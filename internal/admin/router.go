@@ -59,6 +59,7 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			r.Get("/playlists", a.playlists)
 			r.Post("/playlists/{id}/refresh", a.refreshPlaylist)
 			a.mountTopPlaylists(r)
+			a.mountBackups(r)
 
 			r.Get("/analytics", a.analytics)
 			r.Get("/analytics/pages", a.pageAnalytics)

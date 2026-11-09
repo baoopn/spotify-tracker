@@ -1,7 +1,7 @@
 #!/bin/sh
 # backupctl: encrypted, off-site PostgreSQL backups for spotify-tracker.
 #
-#   backupctl run                 daily scheduler (BACKUP_TIME, UTC)
+#   backupctl run                 daily scheduler (BACKUP_TIME or admin setting, UTC)
 #   backupctl backup              one backup now
 #   backupctl list                list backups, newest first
 #   backupctl restore [latest|NAME] [--force] [--to-file PATH] [-i PATH|-]
@@ -10,7 +10,8 @@
 #   backupctl keygen              new age key pair (identity on stdout)
 #   backupctl health              container healthcheck
 #
-# Configuration is env only; see docs/backup.md.
+# Configuration is env, plus the admin settings for time, retention and
+# pause (settings key 'backup'); see docs/backup.md.
 # shellcheck source-path=SCRIPTDIR
 set -u
 
@@ -21,113 +22,33 @@ LIB_DIR=$(dirname "$0")
 . "$LIB_DIR/backupctl-backup.sh"
 # shellcheck source=backupctl-restore.sh
 . "$LIB_DIR/backupctl-restore.sh"
+# shellcheck source=backupctl-status.sh
+. "$LIB_DIR/backupctl-status.sh"
+# shellcheck source=backupctl-run.sh
+. "$LIB_DIR/backupctl-run.sh"
 
 usage() {
-	sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
 }
 
-SLEEP_PID=
-
-# sleep_for SECONDS: interruptible by SIGTERM (docker stop).
-sleep_for() {
-	[ "$1" -gt 0 ] || return 0
-	sleep "$1" &
-	SLEEP_PID=$!
-	wait "$SLEEP_PID"
-	SLEEP_PID=
+# cmd_backup_cli: "backupctl backup". Records the run (trigger manual) and
+# refreshes the inventory when the database has the status tables.
+cmd_backup_cli() {
+	if db_usable && status_check; then :; fi
+	backup_with_status manual "" || return 1
+	if setup_storage 2>/dev/null; then inventory_refresh || true; fi
 }
 
-on_stop() {
-	[ -z "$SLEEP_PID" ] || kill "$SLEEP_PID" 2>/dev/null
-	info "stopping"
-	exit 0
+# cmd_prune_cli: "backupctl prune", then an inventory refresh.
+cmd_prune_cli() {
+	(cmd_prune)
+	rc=$?
+	if db_usable && status_check && setup_storage 2>/dev/null; then inventory_refresh || true; fi
+	return "$rc"
 }
 
-# idle REASON: unconfigured service; stay up (healthy) instead of crash-looping.
-idle() {
-	status_write idle "$1"
-	while :; do
-		warn "offsite backups are disabled: $1 (see docs/backup.md); idling"
-		sleep_for 86400
-	done
-}
-
-# misconfigured REASON: some backup settings are set but not usable. Stay up
-# (no crash loop), but log an ERROR, ping /fail and report unhealthy.
-misconfigured() {
-	status_write misconfigured "$1"
-	while :; do
-		err "offsite backups are misconfigured: $1 (see docs/backup.md); no backups will run"
-		ping_url /fail
-		sleep_for 86400
-	done
-}
-
-# next_run_epoch: next BACKUP_TIME (UTC) strictly after now.
-next_run_epoch() {
-	now=$(date -u +%s)
-	t=$(date -u -d "$(date -u +%Y-%m-%d) $BACKUP_TIME:00" +%s) || die "cannot compute the next run time"
-	[ "$t" -gt "$now" ] || t=$((t + 86400))
-	printf '%s\n' "$t"
-}
-
-retry_minutes() {
-	r=${BACKUP_RETRY_MINUTES:-30}
-	is_uint "$r" || die "BACKUP_RETRY_MINUTES must be a whole number of minutes"
-	printf '%s\n' "$r"
-}
-
-# scheduled_backup: backup, one retry, then prune after a success.
-scheduled_backup() {
-	if ! backup_with_status >/dev/null; then
-		retry=$(retry_minutes)
-		[ "$retry" -gt 0 ] || return 0
-		info "retrying in $retry minute(s)"
-		sleep_for $((retry * 60))
-		backup_with_status >/dev/null || return 0
-	fi
-	(cmd_prune) || warn "prune failed; will try again after the next backup"
-}
-
-cmd_run() {
-	trap on_stop TERM INT
-	mkdir -p "$STATUS_DIR" 2>/dev/null
-	rm -f "$STATUS_DIR/idle" "$STATUS_DIR/misconfigured" "$STATUS_DIR/first_due"
-
-	# Nothing set at all: an install that does not use off-site backups.
-	config_untouched && idle "no BACKUP_AGE_RECIPIENT and no destination are set"
-	problems=$(config_problems)
-	[ -z "$problems" ] || misconfigured "$problems"
-	setup_storage || misconfigured "no usable destination"
-
-	BACKUP_TIME=${BACKUP_TIME:-03:00}
-	case $BACKUP_TIME in
-	[01][0-9]:[0-5][0-9] | 2[0-3]:[0-5][0-9]) ;;
-	*) misconfigured "BACKUP_TIME must be HH:MM (24-hour, UTC), e.g. 03:00" ;;
-	esac
-	(retry_minutes >/dev/null) 2>/dev/null || misconfigured "BACKUP_RETRY_MINUTES must be a whole number of minutes"
-	(setup_db) 2>/dev/null || misconfigured "no usable database settings (DATABASE_URL or PG*)"
-	setup_db
-
-	info "scheduler: daily at $BACKUP_TIME UTC to the $STORAGE_DESC, keep ${BACKUP_KEEP_DAYS:-30} days (at least ${BACKUP_KEEP_MIN:-7})"
-	case ${BACKUP_ON_START:-false} in
-	true | 1 | yes)
-		status_write first_due "$(date -u +%s)"
-		info "BACKUP_ON_START: backing up now"
-		scheduled_backup
-		;;
-	*) status_write first_due "$(next_run_epoch)" ;;
-	esac
-
-	while :; do
-		next=$(next_run_epoch)
-		info "next backup at $(date -u -d "@$next" +%Y-%m-%dT%H:%MZ)"
-		sleep_for $((next - $(date -u +%s)))
-		scheduled_backup
-	done
-}
-
-# cmd_health: unhealthy when misconfigured. Healthy while idle (nothing set),
+# cmd_health: unhealthy when misconfigured. Healthy while idle (nothing set)
+# or paused by the admin settings,
 # while waiting for the first scheduled run (plus retry and an hour of
 # slack), or when the last success is recent.
 cmd_health() {
@@ -139,6 +60,10 @@ cmd_health() {
 	if [ -f "$STATUS_DIR/misconfigured" ]; then
 		echo "unhealthy: misconfigured: $(status_read misconfigured)"
 		return 1
+	fi
+	if [ -f "$STATUS_DIR/paused" ]; then
+		echo "ok: paused by the admin settings"
+		return 0
 	fi
 	first_due=$(status_read first_due)
 	if [ -z "$first_due" ]; then
@@ -184,11 +109,11 @@ cmd=${1:-help}
 [ $# -eq 0 ] || shift
 case $cmd in
 run) cmd_run ;;
-backup) backup_with_status ;;
+backup) cmd_backup_cli ;;
 list) cmd_list ;;
 restore) cmd_restore "$@" ;;
 verify) cmd_verify "$@" ;;
-prune) cmd_prune ;;
+prune) cmd_prune_cli ;;
 keygen) cmd_keygen ;;
 health) cmd_health ;;
 help | -h | --help) usage ;;

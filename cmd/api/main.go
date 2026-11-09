@@ -144,6 +144,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	notifier := notify.New(smtpFromSettings(settingsStore), rdb, brand, log)
 	checker := alerts.New(settingsStore, notifier, cfg.Spotify.TokenLifetimeDays,
 		strings.TrimRight(cfg.PublicURL, "/")+"/admin/settings/spotify", log)
+	checker.WatchBackups(st, strings.TrimRight(cfg.PublicURL, "/")+alerts.BackupStatusPath)
 	mgr.OnInvalidGrant = checker.InvalidGrant
 	mgr.OwnerID = cfg.Spotify.OwnerID
 	svc.SetPlaylistFetcher(mgr)

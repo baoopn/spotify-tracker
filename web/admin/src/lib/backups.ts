@@ -1,0 +1,131 @@
+// Shared helpers for the backup status (settings page and overview card).
+// The backup container reports through the database; the API only reads it.
+
+import { CircleAlert, CircleCheck, CirclePause, TriangleAlert } from '@lucide/svelte';
+import type { Tone } from './components/Badge.svelte';
+import { timeOfDay } from './time';
+import type { BackupHealth, BackupRun, BackupStatus } from './types';
+
+export const BACKUP_DOCS_URL = 'https://github.com/baoopn/spotify-tracker/blob/main/docs/backup.md';
+
+/** "HH:MM", 24-hour. */
+export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+type HealthMeta = { tone: Tone; cls: string; icon: typeof CircleCheck; label: string };
+
+const META: Record<BackupHealth, HealthMeta> = {
+	ok: { tone: 'ok', cls: 'bg-spot-mint text-on-spot', icon: CircleCheck, label: 'Healthy' },
+	paused: { tone: 'info', cls: 'bg-spot-sky text-on-spot', icon: CirclePause, label: 'Paused' },
+	stale: { tone: 'danger', cls: 'bg-spot-rose text-on-spot', icon: CircleAlert, label: 'Stale' },
+	failing: {
+		tone: 'danger',
+		cls: 'bg-spot-rose text-on-spot',
+		icon: CircleAlert,
+		label: 'Failing'
+	},
+	offline: {
+		tone: 'warn',
+		cls: 'bg-spot-butter text-on-spot',
+		icon: TriangleAlert,
+		label: 'Offline'
+	},
+	unconfigured: {
+		tone: 'warn',
+		cls: 'bg-spot-butter text-on-spot',
+		icon: TriangleAlert,
+		label: 'Not configured'
+	},
+	unknown: {
+		tone: 'warn',
+		cls: 'bg-spot-butter text-on-spot',
+		icon: TriangleAlert,
+		label: 'Unknown'
+	}
+};
+
+export function healthMeta(h: BackupHealth | undefined): HealthMeta {
+	return (h && META[h]) || META.unknown;
+}
+
+/** One line that says why the health is what it is. */
+export function healthExplanation(s: BackupStatus): string {
+	const detail = s.health_detail?.trim();
+	if (detail) return detail;
+	switch (s.health) {
+		case 'ok':
+			return 'Backups run on schedule.';
+		case 'paused':
+			return 'Scheduled backups are paused. "Back up now" still works.';
+		case 'stale':
+			return s.last_success
+				? 'The last successful backup is older than expected.'
+				: 'No backup has succeeded yet.';
+		case 'failing':
+			return 'The last backup failed and none has succeeded since.';
+		case 'offline':
+			return 'The backup service has not checked in for over 5 minutes.';
+		case 'unconfigured':
+			return 'The backup service runs, but its destination or encryption key is missing.';
+		default:
+			return 'The backup service is not running, or has never reported.';
+	}
+}
+
+/**
+ * A 'running' run or a pending request older than this is treated as dead
+ * (the container restarted mid-run); it no longer blocks or speeds up polling.
+ */
+export const STUCK_MS = 2 * 60 * 60 * 1000;
+
+function olderThan(iso: string | null | undefined, ms: number, now: number): boolean {
+	const t = iso ? Date.parse(iso) : NaN;
+	return Number.isNaN(t) || now - t > ms;
+}
+
+/** A run still marked 'running' long after it started. */
+export function isInterrupted(r: BackupRun, now = Date.now()): boolean {
+	return r.status === 'running' && olderThan(r.started_at, STUCK_MS, now);
+}
+
+/** The run in progress, ignoring interrupted ones. */
+export function activeRun(s: BackupStatus | undefined, now = Date.now()): BackupRun | null {
+	return s?.runs.find((r) => r.status === 'running' && !isInterrupted(r, now)) ?? null;
+}
+
+/** The queued or claimed request, ignoring one stuck for over 2 h. */
+export function activePending(
+	s: BackupStatus | undefined,
+	now = Date.now()
+): BackupStatus['pending_request'] {
+	const p = s?.pending_request;
+	if (!p || olderThan(p.claimed_at ?? p.requested_at, STUCK_MS, now)) return null;
+	return p;
+}
+
+/** True while a request waits in the queue or a run is in progress (poll faster). */
+export function backupBusy(s: BackupStatus | undefined, now = Date.now()): boolean {
+	return !!activePending(s, now) || !!activeRun(s, now);
+}
+
+/** The service can take a request (else the API answers 503). */
+export function backupAvailable(s: BackupStatus | undefined): boolean {
+	return !!s?.agent && s.agent.configured && s.health !== 'offline' && s.health !== 'unknown';
+}
+
+/** "age1qyqs…x7k2" for an age public key. */
+export function shortKey(key: string): string {
+	return key.length > 16 ? `${key.slice(0, 8)}…${key.slice(-4)}` : key;
+}
+
+/**
+ * A daily "HH:MM" UTC time as the admin's wall time at its next occurrence,
+ * e.g. "9:00 PM CST". The offset can change with DST, so use the next run.
+ */
+export function utcTimeLocal(hhmm: string, now = Date.now()): string | null {
+	if (!HHMM_RE.test(hhmm)) return null;
+	const [h, m] = hhmm.split(':').map(Number);
+	const d = new Date(now);
+	d.setUTCHours(h, m, 0, 0);
+	if (d.getTime() < now) d.setUTCDate(d.getUTCDate() + 1);
+	return timeOfDay(d);
+}

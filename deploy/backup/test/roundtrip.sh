@@ -12,7 +12,9 @@
 # target refusal (and --force), --to-file, prune with BACKUP_KEEP_MIN, the
 # idle and misconfigured modes, the scheduler's healthcheck, an empty database,
 # a mounted key file, DATABASE_URL with an encoded password, and a prune
-# that must stop when the listing fails.
+# that must stop when the listing fails. roundtrip-status.sh then checks the
+# status tables for the admin dashboard (runs, inventory, heartbeat,
+# requests, admin settings, and a failing status write).
 #
 # Env: BACKUP_TEST_IMAGE (default spotify-tracker-backup:test), SKIP_BUILD=1
 # to reuse an existing image, KEEP_ON_FAIL=1 to leave the containers.
@@ -43,7 +45,7 @@ cleanup() {
 	if [ "$rc" -ne 0 ] && [ "${KEEP_ON_FAIL:-}" = 1 ]; then
 		echo "KEEP_ON_FAIL: leaving $SRC $DST $NET $VOL"
 	else
-		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" "$ID-bad1" "$ID-bad2" >/dev/null 2>&1 || true
+		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" "$ID-bad1" "$ID-bad2" "$ID-loop" "$ID-mis" "$ID-term" "$ID-nodb" "$ID-laterun" "$ID-late" >/dev/null 2>&1 || true
 		docker network rm "$NET" >/dev/null 2>&1 || true
 		docker volume rm "$VOL" "$KEYVOL" >/dev/null 2>&1 || true
 	fi
@@ -127,13 +129,15 @@ psql_in() {
 	docker exec -i "$c" psql -X -q -v ON_ERROR_STOP=1 -U tracker -d spotify_tracker "$@"
 }
 
-# counts CONTAINER: "table rows" for every base table in schema public.
+# counts CONTAINER: "table rows" for every base table in schema public,
+# except the backup status tables: backupctl writes them while it backs up,
+# so the source changes after the dump (roundtrip-status.sh checks them).
 counts() {
 	docker exec "$1" psql -X -A -t -F ' ' -U tracker -d spotify_tracker -c "
 		SELECT table_name, (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I',
 			table_schema, table_name), false, true, '')))[1]::text
 		FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1"
+		WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT LIKE 'backup\_%' ORDER BY 1"
 	docker exec "$1" psql -X -A -t -U tracker -d spotify_tracker \
 		-c "SELECT 'goose_max ' || max(version_id) FROM goose_db_version WHERE is_applied"
 }
@@ -369,6 +373,9 @@ else
 fi
 jsons=$(docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c 'find /backups -name "*.json" | wc -l')
 [ "$jsons" -eq 7 ] && ok "prune removes manifests with their dumps" || bad "manifests left: $jsons"
+
+# shellcheck source-path=SCRIPTDIR source=roundtrip-status.sh
+. "$(dirname "$0")/roundtrip-status.sh"
 
 echo
 echo "roundtrip: $PASS passed, $FAILED failed"

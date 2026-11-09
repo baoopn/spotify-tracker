@@ -20,6 +20,8 @@ warn() { log WARN "$@"; }
 err() { log ERROR "$@"; }
 die() {
 	err "$@"
+	# backup_with_status: the reason of a failed backup, for the status table.
+	[ -z "${RESULT_ERR_FILE:-}" ] || printf '%s\n' "$*" >"$RESULT_ERR_FILE" 2>/dev/null
 	exit 1
 }
 

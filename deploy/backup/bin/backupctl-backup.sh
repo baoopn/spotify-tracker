@@ -34,6 +34,8 @@ cmd_backup() {
 	fi
 	dump_version=$(pg_dump --version)
 
+	# Test hook (roundtrip.sh): a slow backup, to stop the service mid-run.
+	[ -z "${BACKUP_DEBUG_SLEEP:-}" ] || sleep "$BACKUP_DEBUG_SLEEP"
 	info "backup $name: dumping and encrypting"
 	out="$WORKDIR/$name"
 	# pg_dump → tee → age, with tee's second copy read by pg_restore --list
@@ -100,21 +102,64 @@ cmd_backup() {
 		die "manifest upload failed; backup removed"
 	}
 
+	# backup_with_status: the result, for the status table.
+	[ -z "${RESULT_FILE:-}" ] || printf '%s %s %s %s\n' "$name" "$size" "$sha" "$tables" >"$RESULT_FILE"
 	info "backup $name: done ($tables tables, $(human_size "$size"), sha256 $sha, schema version ${goose_version:-none})"
 	printf '%s\n' "$name"
 }
 
-# backup_with_status: one backup in a subshell, then status files + ping.
+# backup_with_status [TRIGGER [REQUESTED_BY]]: one backup in a subshell,
+# then status files, ping, and the backup_runs row (best-effort; see
+# backupctl-status.sh). Sets RUN_ID (empty when not recorded) and
+# RUN_ERROR; a success that could not be recorded is kept in UNRECORDED_RUN.
+# The backup's stdout (its name) passes through.
 backup_with_status() {
-	(cmd_backup)
-	rc=$?
+	bws_trigger=${1:-manual}
+	bws_by=${2:-}
+	bws_started=$(date -u +%s)
+	RUN_ID=$(run_start "$bws_trigger" "$bws_by") || RUN_ID=
+	RUN_ERROR=
+	RESULT_FILE=$(mktemp "${TMPDIR:-/tmp}/backupctl-res.XXXXXX") || RESULT_FILE=
+	RESULT_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/backupctl-err.XXXXXX") || RESULT_ERR_FILE=
+	if [ "${BACKUP_IN_BACKGROUND:-}" = 1 ]; then
+		# Scheduler: a background job plus wait, so SIGTERM runs the stop
+		# trap at once instead of after the backup (see on_stop).
+		(cmd_backup) &
+		BACKUP_PID=$!
+		wait "$BACKUP_PID"
+		rc=$?
+		BACKUP_PID=
+	else
+		(cmd_backup)
+		rc=$?
+	fi
+	bws_name='' bws_size='' bws_sha='' bws_tables=''
+	if [ -n "$RESULT_FILE" ] && [ -s "$RESULT_FILE" ]; then
+		read -r bws_name bws_size bws_sha bws_tables <"$RESULT_FILE" || true
+	fi
+	[ -z "$RESULT_ERR_FILE" ] || RUN_ERROR=$(cat "$RESULT_ERR_FILE" 2>/dev/null)
+	rm -f "$RESULT_FILE" "$RESULT_ERR_FILE"
+	RESULT_FILE='' RESULT_ERR_FILE=''
 	if [ "$rc" -eq 0 ]; then
+		RUN_ERROR=
 		status_write last_success "$(date -u +%s)"
 		ping_url ""
+		bws_status=success
 	else
+		[ -n "$RUN_ERROR" ] || RUN_ERROR="backup failed (exit $rc)"
 		status_write last_error "$(date -u +%s)"
 		err "backup failed"
 		ping_url /fail
+		bws_status=failed
+	fi
+	# shellcheck disable=SC2034 # UNRECORDED_RUN is read by backupctl-run.sh
+	if bws_id=$(run_finish "$RUN_ID" "$bws_trigger" "$bws_by" "$bws_started" "$bws_status" \
+		"$bws_name" "$bws_size" "$bws_sha" "$bws_tables" "$(short_error "$RUN_ERROR")"); then
+		RUN_ID=$bws_id
+		UNRECORDED_RUN=
+	elif [ "$rc" -eq 0 ]; then
+		# Recorded later, once the status tables exist (status_tick).
+		UNRECORDED_RUN="$bws_trigger|$bws_started|$bws_name|$bws_size|$bws_sha|$bws_tables|$bws_by"
 	fi
 	return "$rc"
 }

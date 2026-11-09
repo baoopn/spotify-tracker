@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/notify"
 )
 
@@ -112,10 +113,29 @@ func Samples(publicURL string, now time.Time) []Sample {
 	b, _ := notify.NewBrand(publicURL, "")
 	reauth := b.URL + "/admin/settings/spotify"
 	exp := now.Add(7*24*time.Hour - 3*time.Hour)
+	status := b.URL + BackupStatusPath
+	ok, failed := sampleBackupRuns(now)
+	at := "03:00"
 	return []Sample{
 		{"expiry-warning", ExpiryEmail(7, exp, 180, reauth, now)},
 		{"expired", ExpiryEmail(0, now.Add(-26*time.Hour), 180, reauth, now)},
 		{"invalid-grant", InvalidGrantEmail(errors.New("spotify: refresh token: oauth2: \"invalid_grant\" \"Refresh token revoked\""), reauth)},
 		{"test", notify.TestEmail("admin@example.com", "smtp.example.com", b, now)},
+		{"backup-failing", BackupFailingEmail(failed, ok, status, now)},
+		{"backup-stale", BackupStaleEmail(ok, &domain.BackupAgent{BackupTime: &at}, status, now.Add(20*time.Hour))},
+		{"backup-offline", BackupOfflineEmail(now.Add(-90*time.Minute), status, now)},
 	}
+}
+
+// sampleBackupRuns are a successful run a day before now and a failed one
+// nine hours before now.
+func sampleBackupRuns(now time.Time) (ok, failed *domain.BackupRun) {
+	okEnd := now.Add(-33*time.Hour + 2*time.Minute)
+	name := "spotify-tracker-20261108T030000Z.dump.age"
+	failEnd := now.Add(-9*time.Hour + time.Minute)
+	msg := "upload failed: rclone: 403 Forbidden (check the bucket token)"
+	return &domain.BackupRun{ID: 41, Trigger: "schedule", Status: domain.BackupSuccess,
+			StartedAt: now.Add(-33 * time.Hour), FinishedAt: &okEnd, Name: &name},
+		&domain.BackupRun{ID: 42, Trigger: "schedule", Status: domain.BackupFailed,
+			StartedAt: now.Add(-9 * time.Hour), FinishedAt: &failEnd, Error: &msg}
 }

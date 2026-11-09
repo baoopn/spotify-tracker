@@ -1,5 +1,5 @@
 // Package alerts runs the API's operator alert checks (Spotify refresh-token
-// expiry) and sends them through the notifier.
+// expiry, backup health) and sends them through the notifier.
 package alerts
 
 import (
@@ -14,13 +14,30 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/settings"
 )
 
-// Checker periodically checks the Spotify token expiry.
+// sender sends de-duplicated alerts (implemented by *notify.Notifier).
+type sender interface {
+	Once(ctx context.Context, key string, ttl time.Duration, e notify.Email)
+}
+
+// Checker periodically checks the Spotify token expiry and, once
+// WatchBackups is called, the backup service.
 type Checker struct {
 	settings     *settings.Store
-	notifier     *notify.Notifier
+	notifier     sender
 	lifetimeDays int
 	reauthURL    string
 	log          *slog.Logger
+
+	backups   BackupSource
+	backupURL string
+	now       func() time.Time // test seam
+}
+
+func (c *Checker) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // New creates a Checker. reauthURL is the dashboard page used to re-authorize.
@@ -39,6 +56,7 @@ func (c *Checker) Run(ctx context.Context, interval time.Duration) error {
 		case <-t.C:
 		}
 		c.CheckExpiry(ctx)
+		c.CheckBackups(ctx)
 		t.Reset(interval)
 	}
 }

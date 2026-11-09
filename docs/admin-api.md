@@ -226,7 +226,8 @@ time-zone handling as the API analytics):
 `spotify.authorize_failed`, `settings.email.updated`, `settings.email.tested`,
 `enrichment.requeued`, `playlist.refreshed`, `top_playlists.run`,
 `top_playlists.generated`, `top_playlists.regenerated`, `top_playlists.hidden`,
-`top_playlists.shown`.
+`top_playlists.shown`, `backups.run_requested`, `backups.refresh_requested`,
+`backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change).
 
 ## Playlists
 
@@ -410,6 +411,89 @@ regenerate are bounded to 25 s.
 Audit actions: `top_playlists.run`, `top_playlists.verified`, `top_playlists.generated`,
 `top_playlists.regenerated`, `top_playlists.hidden`, `top_playlists.shown`
 (detail: `period`, `period_start`, `status`, `spotify_id`; `run`: `periods`).
+
+## Backups
+
+Off-site backups run in a separate container (`deploy/backup`, see
+[backup.md](backup.md)). The API holds no storage credentials: the two talk
+only through the database. The container writes its heartbeat
+(`backup_agent`, every minute), its runs (`backup_runs`) and a snapshot of the
+stored backups (`backup_inventory`); the API queues requests
+(`backup_requests`) that the container claims within a minute. Nothing here
+contains secrets: the destination is redacted (`s3:<bucket>/<prefix>` or
+`remote:<scheme>/<prefix>`) and recipients are age **public** keys.
+
+```ts
+type BackupRun = {
+  id: number; trigger: "schedule" | "manual" | "start" | "retry"
+  status: "running" | "success" | "failed"
+  started_at: string; finished_at: string | null
+  name: string | null; size_bytes: number | null; sha256: string | null; tables: number | null
+  error: string | null          // short, secrets-free
+  requested_by: string | null   // admin email for dashboard runs
+  duration_ms: number | null    // null while running
+}
+type BackupObject = { name: string; size_bytes: number; created_at: string }
+type BackupAgent = {
+  last_seen_at: string; version: string | null
+  configured: boolean           // destination + recipient set
+  config_error: string | null   // why a partial config is refused
+  destination: string | null; recipients: string[]
+  backup_time: string           // effective HH:MM UTC
+  keep_days: number; keep_min: number; paused: boolean   // always set by the agent
+  next_run_at: string | null
+  settings_source: "env" | "admin"
+}
+type BackupSettings = { time: string; keep_days: number; keep_min: number; paused: boolean
+                        source: "admin" | "default" }
+type BackupHealth = "ok" | "stale" | "failing" | "unconfigured" | "offline" | "paused" | "unknown"
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/backups` | – | `{ data: { agent: BackupAgent \| null, last_success: BackupRun \| null, last_failure: BackupRun \| null, runs: BackupRun[] /* latest 20, newest first */, inventory: BackupObject[] /* newest first */, pending_request: { id, kind: "backup" \| "refresh", requested_at, claimed_at } \| null, settings: BackupSettings, health: BackupHealth, health_detail: string } }` |
+| POST | `/admin/api/backups/run` | – | `202 { data: { id } }`; `409 already_pending` while a backup request is queued or running; `503 backup_unavailable` when health is `unknown`, `offline` or `unconfigured` |
+| POST | `/admin/api/backups/refresh` | – | same, for a re-list of the stored backups |
+| PUT | `/admin/api/backups/settings` | `{ time: "HH:MM", keep_days, keep_min, paused }` (all required) | `{ data: BackupSettings, note }`; `422 validation_failed` with `fields` keyed `time`, `keep_days`, `keep_min`, `paused` |
+| DELETE | `/admin/api/backups/settings` | – | `{ data: BackupSettings, note }` — removes the saved settings; the service goes back to its environment and built-in defaults |
+
+- `health` (first match wins):
+  - `unknown` — no heartbeat row (the backup service never ran);
+  - `offline` — no heartbeat for 5 minutes;
+  - `unconfigured` — the destination or recipient is missing;
+  - `paused`;
+  - `failing` — the newest failed run started after the newest success. A
+    run still `running` after 2 h counts as failed (interrupted). Runs are
+    compared by `started_at`, so a stale row marked failed later never looks
+    newer than a later success;
+  - `stale` — the scheduled run (`next_run_at`) is more than 1 h 30 min
+    late (retry delay + 1 h) and no run started since (detail "scheduled
+    backup did not run"); or the last success is older than 26 h (the
+    `BACKUP_MAX_AGE_HOURS` default); or none succeeded and the first run is
+    older than 26 h;
+  - else `ok`.
+- `health_detail` is a one-line, human explanation of `health`, e.g.
+  "backup service not running", "the last backup failed at 2026-11-09
+  03:01 UTC" or "scheduled backup did not run". Show it next to the chip.
+- `pending_request` is the oldest unfinished request (backups first).
+  Requests claimed (or, if unclaimed, made) more than 2 h ago are ignored
+  and no longer block new ones. A `running` run never blocks a request by
+  itself.
+- Settings are stored as plain JSON in `settings` key `backup`. `time` is
+  UTC; `keep_days` 0–3650 (0 keeps all); `keep_min` 1–1000. `source` is
+  `default` until they are saved (and again after DELETE); then the values
+  are the agent's effective ones (its environment), else the built-in
+  defaults (03:00, 30, 7). Right after a DELETE, while the agent still
+  reports dashboard values, the built-in defaults are shown. The agent
+  applies changes within a minute. Paused stops scheduled runs only; "Back
+  up now" still works.
+- Alerts (same hourly check as the Spotify expiry alerts): an email when
+  health is `failing` or `stale` (at most once a day per state), and once per
+  outage when the service has been offline for more than an hour. A failure
+  is alerted only once its automatic retry had a chance: when the failed run
+  was itself a `retry`, or it is at least 45 min old. No alert when backups
+  were never set up (`unknown`, `unconfigured`) or are paused. The button
+  links to `/admin/settings/backups`.
 
 ## Time handling
 

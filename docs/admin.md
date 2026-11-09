@@ -44,6 +44,22 @@ The publishable key is served at runtime from `GET /admin/api/config`, so the
 same image works for every environment. The CSP automatically allows the
 Clerk Frontend API host encoded in the key.
 
+## Alert emails
+
+Alerts (Spotify token expiring or expired, Spotify rejecting the login) and the
+Settings → Email test email are sent as `multipart/alternative`: a plain-text
+part and a branded HTML part (table layout, inline styles, light and dark mode).
+The layout lives in `internal/notify/templates/email.html.tmpl`; the content of
+each alert is in `internal/alerts/emails.go`.
+
+- The header logo is `web/public/static/email/listening-wordmark-primary@2x.png`,
+  served at `<PUBLIC_URL>/email/listening-wordmark-primary@2x.png`. Set
+  `EMAIL_LOGO_URL` to load it from somewhere else.
+- Preview every email (HTML, text and raw `.eml`; nothing is sent):
+  `go run ./cmd/emailpreview -out ./email-preview -public-url https://listening.example.com`
+- Golden files are in `internal/notify/testdata/`. After changing a template or
+  an alert, run `go test ./internal/notify -run TestGolden -update` and review the diff.
+
 ## Local development
 
 ```bash

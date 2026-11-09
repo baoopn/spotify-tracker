@@ -80,6 +80,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spotify_tracker}?sslmode=disable
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
       PUBLIC_URL: https://${API_DOMAIN}
+      EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
       TOP_PLAYLISTS_PERIODS: ${TOP_PLAYLISTS_PERIODS:-week,month,year}

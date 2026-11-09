@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { LoaderCircle, Save } from '@lucide/svelte';
+	import { LoaderCircle, RotateCcw, Save } from '@lucide/svelte';
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import Badge from '#lib/components/Badge.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import { ApiError, api, errorMessage } from '#lib/api.js';
 	import { HHMM_RE, utcTimeLocal } from '#lib/backups.js';
 	import { relativeClock } from '#lib/clock.svelte.js';
@@ -43,27 +44,29 @@
 		return e;
 	}
 
+	type Saved = { data?: BackupSettings; note?: string } | undefined;
+
+	/** Put the server's answer into the cache and the form (PUT and DELETE share it). */
+	async function applySaved(res: Saved, title: string) {
+		toasts.success(title, res?.note ?? 'The backup service applies them within a minute.');
+		let saved = res?.data;
+		if (saved && typeof saved.time === 'string') {
+			const next = saved;
+			queryClient.setQueryData<BackupStatus>(qk.backups, (old) =>
+				old ? { ...old, settings: next } : old
+			);
+			void queryClient.invalidateQueries({ queryKey: qk.backups });
+		} else {
+			// Unexpected body: re-read the status and fill from that.
+			await queryClient.refetchQueries({ queryKey: qk.backups });
+			saved = queryClient.getQueryData<BackupStatus>(qk.backups)?.settings;
+		}
+		if (saved) fill(saved);
+	}
+
 	const save = createMutation(() => ({
 		mutationFn: (body: BackupSettingsUpdate) => api.saveBackupSettings(body),
-		onSuccess: async (res) => {
-			toasts.success(
-				'Backup settings saved',
-				res?.note ?? 'The backup service applies them within a minute.'
-			);
-			let saved: BackupSettings | undefined = res?.data;
-			if (saved && typeof saved.time === 'string') {
-				const next = saved;
-				queryClient.setQueryData<BackupStatus>(qk.backups, (old) =>
-					old ? { ...old, settings: next } : old
-				);
-				void queryClient.invalidateQueries({ queryKey: qk.backups });
-			} else {
-				// Unexpected body: re-read the status and fill from that.
-				await queryClient.refetchQueries({ queryKey: qk.backups });
-				saved = queryClient.getQueryData<BackupStatus>(qk.backups)?.settings;
-			}
-			if (saved) fill(saved);
-		},
+		onSuccess: (res) => applySaved(res, 'Backup settings saved'),
 		onError: (err) => {
 			if (err instanceof ApiError && err.isValidation) {
 				errors = { ...err.fields };
@@ -73,7 +76,23 @@
 			}
 		}
 	}));
-	const saving = $derived(save.isPending);
+
+	let confirmDefaults = $state(false);
+	const reset = createMutation(() => ({
+		mutationFn: () => api.resetBackupSettings(),
+		onSuccess: (res) => applySaved(res, 'Back to default settings'),
+		onError: (err) => toasts.error('Could not reset settings', errorMessage(err))
+	}));
+
+	async function useDefaults() {
+		try {
+			await reset.mutateAsync();
+		} catch {
+			// toast shown in onError; close the dialog anyway
+		}
+	}
+
+	const saving = $derived(save.isPending || reset.isPending);
 
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -119,6 +138,9 @@
 				{localTime ? `= ${localTime} your time` : '24-hour HH:MM'}
 			</p>
 		{/if}
+		<p class="hint">
+			A new time applies from its next occurrence, so the next backup may come up to a day later.
+		</p>
 	</div>
 
 	<div class="grid gap-4 sm:grid-cols-2">
@@ -191,7 +213,20 @@
 		{#if errors.paused}<p class="field-error">{errors.paused}</p>{/if}
 	</div>
 
-	<div class="flex justify-end gap-2 border-t border-border pt-4">
+	<div class="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+		<button
+			type="button"
+			class="btn btn-secondary mr-auto"
+			onclick={() => (confirmDefaults = true)}
+			disabled={saving || settings.source !== 'admin'}
+			title={settings.source === 'admin' ? undefined : 'Already using the defaults'}
+		>
+			{#if reset.isPending}<LoaderCircle
+					class="size-4 animate-spin"
+					aria-hidden="true"
+				/>{:else}<RotateCcw class="size-4" aria-hidden="true" />{/if}
+			Use defaults
+		</button>
 		<button type="button" class="btn btn-ghost" onclick={() => fill(settings)} disabled={saving}>
 			Reset
 		</button>
@@ -204,3 +239,11 @@
 		</button>
 	</div>
 </form>
+
+<ConfirmDialog
+	bind:open={confirmDefaults}
+	title="Use default backup settings?"
+	message="This removes the time, retention and pause set here. The backup service goes back to its environment or built-in values within a minute."
+	confirmLabel="Use defaults"
+	onconfirm={useDefaults}
+/>

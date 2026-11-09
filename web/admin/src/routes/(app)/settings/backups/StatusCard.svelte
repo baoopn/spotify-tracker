@@ -3,7 +3,14 @@
 	import CopyButton from '#lib/components/CopyButton.svelte';
 	import OutLink from '#lib/components/OutLink.svelte';
 	import RelTime from '#lib/components/RelTime.svelte';
-	import { BACKUP_DOCS_URL, healthExplanation, healthMeta, shortKey } from '#lib/backups.js';
+	import {
+		BACKUP_DOCS_URL,
+		activeRun,
+		healthExplanation,
+		healthMeta,
+		shortKey
+	} from '#lib/backups.js';
+	import { relativeClock } from '#lib/clock.svelte.js';
 	import { bytes, dateTime, num } from '#lib/format.js';
 	import type { BackupStatus } from '#lib/types.js';
 
@@ -12,7 +19,7 @@
 	const hm = $derived(healthMeta(status.health));
 	const agent = $derived(status.agent);
 	const ok = $derived(status.last_success);
-	const running = $derived(status.runs.find((r) => r.status === 'running') ?? null);
+	const running = $derived(activeRun(status, relativeClock.now));
 	// Only worth showing while it is the latest outcome.
 	const failure = $derived(
 		status.last_failure &&

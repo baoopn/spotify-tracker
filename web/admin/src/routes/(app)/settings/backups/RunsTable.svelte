@@ -3,6 +3,8 @@
 	import Badge, { type Tone } from '#lib/components/Badge.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import RelTime from '#lib/components/RelTime.svelte';
+	import { isInterrupted } from '#lib/backups.js';
+	import { relativeClock } from '#lib/clock.svelte.js';
 	import { bytes, timeSpan } from '#lib/format.js';
 	import type { BackupRun, BackupRunStatus, BackupTrigger } from '#lib/types.js';
 
@@ -13,6 +15,8 @@
 		success: { tone: 'ok', label: 'Success' },
 		failed: { tone: 'danger', label: 'Failed' }
 	};
+	/** Still 'running' over 2 h after it started: the container stopped mid-run. */
+	const INTERRUPTED = { tone: 'warn' as Tone, label: 'Interrupted' };
 	const TRIGGER: Record<BackupTrigger, string> = {
 		schedule: 'Scheduled',
 		manual: 'Manual',
@@ -45,7 +49,9 @@
 				</thead>
 				<tbody>
 					{#each runs as run (run.id)}
-						{@const st = STATUS[run.status] ?? STATUS.failed}
+						{@const st = isInterrupted(run, relativeClock.now)
+							? INTERRUPTED
+							: (STATUS[run.status] ?? STATUS.failed)}
 						<tr>
 							<td><Badge tone={st.tone}>{st.label}</Badge></td>
 							<td class="text-sm" title={run.requested_by ?? undefined}>

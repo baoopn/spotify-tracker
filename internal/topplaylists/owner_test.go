@@ -167,7 +167,7 @@ func TestRenameGonePlaylistRestores(t *testing.T) {
 }
 
 func TestParseOptions(t *testing.T) {
-	for in, want := range map[string]int{"": 3, "3": 3, " 5 ": 5, "1": 1, "0": 0} {
+	for in, want := range map[string]int{"": 3, "3": 3, "\t5\n": 5, "1": 1, "0": 0} {
 		if got, err := ParseKeep(in); err != nil || got != want {
 			t.Errorf("ParseKeep(%q) = %d %v, want %d", in, got, err, want)
 		}

@@ -13,12 +13,14 @@ import (
 
 const topPlaylistColumns = `period, period_start, period_end, time_zone, name, status,
 	COALESCE(spotify_playlist_id, ''), COALESCE(spotify_url, ''), track_count, total_plays,
-	attempts, COALESCE(last_error, ''), next_attempt_at, published_at, hidden, live, refreshed_at, created_at, updated_at`
+	attempts, COALESCE(last_error, ''), next_attempt_at, published_at, hidden, live, refreshed_at,
+	pruned_at, spotify_removed, verified_at, restored_at, created_at, updated_at`
 
 func topPlaylistTargets(p *domain.TopPlaylistRecord) []any {
 	return []any{&p.Period, &p.PeriodStart, &p.PeriodEnd, &p.TimeZone, &p.Name, &p.Status,
 		&p.SpotifyPlaylistID, &p.SpotifyURL, &p.TrackCount, &p.TotalPlays, &p.Attempts,
-		&p.LastError, &p.NextAttemptAt, &p.PublishedAt, &p.Hidden, &p.Live, &p.RefreshedAt, &p.CreatedAt, &p.UpdatedAt}
+		&p.LastError, &p.NextAttemptAt, &p.PublishedAt, &p.Hidden, &p.Live, &p.RefreshedAt,
+		&p.PrunedAt, &p.SpotifyRemoved, &p.VerifiedAt, &p.RestoredAt, &p.CreatedAt, &p.UpdatedAt}
 }
 
 // TopPlaylist returns the generation state of one period's top playlist,
@@ -37,13 +39,15 @@ func (q *Queries) TopPlaylist(ctx context.Context, period string, start time.Tim
 }
 
 // UpsertTopPlaylist writes a top playlist's state. A known Spotify playlist
-// ID is never cleared, so retries can't create duplicate playlists.
+// ID is never cleared, so retries can't create duplicate playlists. A pruned
+// row is never changed by it (see PruneTopPlaylist), so nothing republishes
+// a playlist that was removed from Spotify.
 func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error {
 	_, err := q.db.Exec(ctx, `
 		INSERT INTO top_playlists (period, period_start, period_end, time_zone, name, status,
 			spotify_playlist_id, spotify_url, track_count, total_plays, attempts, last_error,
-			next_attempt_at, published_at, live, refreshed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			next_attempt_at, published_at, live, refreshed_at, restored_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (period, period_start) DO UPDATE SET
 			period_end = EXCLUDED.period_end, time_zone = EXCLUDED.time_zone,
 			name = EXCLUDED.name, status = EXCLUDED.status,
@@ -52,10 +56,11 @@ func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRec
 			track_count = EXCLUDED.track_count, total_plays = EXCLUDED.total_plays,
 			attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error,
 			next_attempt_at = EXCLUDED.next_attempt_at, published_at = EXCLUDED.published_at,
-			live = EXCLUDED.live, refreshed_at = EXCLUDED.refreshed_at`,
+			live = EXCLUDED.live, refreshed_at = EXCLUDED.refreshed_at, restored_at = EXCLUDED.restored_at
+		WHERE top_playlists.status <> 'pruned'`,
 		p.Period, p.PeriodStart, p.PeriodEnd, p.TimeZone, p.Name, p.Status,
 		nullIfEmpty(p.SpotifyPlaylistID), nullIfEmpty(p.SpotifyURL), p.TrackCount, p.TotalPlays,
-		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt, p.Live, p.RefreshedAt)
+		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt, p.Live, p.RefreshedAt, p.RestoredAt)
 	if err != nil {
 		return fmt.Errorf("upsert top playlist %s %s: %w", p.Period, p.PeriodStart.Format(time.RFC3339), err)
 	}

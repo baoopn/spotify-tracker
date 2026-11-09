@@ -69,10 +69,21 @@ type AuditEntry struct {
 	IP     string          `json:"ip"`
 }
 
-// likePattern escapes a user search term for ILIKE.
+// likePattern escapes a user search term for LIKE / ILIKE (default
+// backslash escape). search_fold leaves '%', '_' and backslash unchanged, so the
+// escaping survives folding.
 func likePattern(q string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(strings.TrimSpace(q)) + "%"
+}
+
+// foldMatch is an accent- and case-insensitive LIKE of col against the
+// pattern in parameter $n. Both sides go through search_fold (migration
+// 00010), so "ngay roi" matches "Ngày rời". The pattern is folded once per
+// query by the scalar subquery. col is spliced into the SQL: it must be a
+// trusted constant identifier, never user input.
+func foldMatch(col string, n int) string {
+	return fmt.Sprintf("search_fold(%s) LIKE (SELECT search_fold($%d))", col, n)
 }
 
 // AdminHistory lists history newest first, optionally filtered by a search
@@ -85,9 +96,9 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 	filter := ""
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
-		filter = `AND (t.name ILIKE $3 OR al.name ILIKE $3 OR EXISTS (
+		filter = `AND (` + foldMatch("t.name", 3) + ` OR ` + foldMatch("al.name", 3) + ` OR EXISTS (
 			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND a.name ILIKE $3))`
+			WHERE ta.track_id = t.id AND ` + foldMatch("a.name", 3) + `))`
 	}
 	rows, err := q.db.Query(ctx, `
 		SELECT h.id::text, h.played_at, h.updated_at, h.replay_count, `+trackColumns+`
@@ -139,9 +150,10 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order s
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
 		n := len(args)
-		where = append(where, fmt.Sprintf(`(t.name ILIKE $%d OR t.isrc ILIKE $%d OR al.name ILIKE $%d OR EXISTS (
+		where = append(where, `(`+foldMatch("t.name", n)+fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, n)+
+			foldMatch("al.name", n)+` OR EXISTS (
 			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND a.name ILIKE $%d))`, n, n, n, n))
+			WHERE ta.track_id = t.id AND `+foldMatch("a.name", n)+`))`)
 	}
 	if status != "" {
 		args = append(args, status)
@@ -205,7 +217,7 @@ func (q *Queries) AdminArtists(ctx context.Context, search, sort, order string, 
 	where := "true"
 	if strings.TrimSpace(search) != "" {
 		args = append(args, likePattern(search))
-		where = "a.name ILIKE $1"
+		where = foldMatch("a.name", 1)
 	}
 	base := `
 		FROM artists a

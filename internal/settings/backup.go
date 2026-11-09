@@ -58,3 +58,13 @@ func (s *Store) SaveBackup(ctx context.Context, actor string, v Backup) error {
 	}
 	return nil
 }
+
+// DeleteBackup removes the backup settings, so the backup container falls
+// back to its environment and built-in defaults. Deleting settings that
+// were never saved is not an error.
+func (s *Store) DeleteBackup(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM settings WHERE key = $1`, keyBackup); err != nil {
+		return fmt.Errorf("delete setting %s: %w", keyBackup, err)
+	}
+	return nil
+}

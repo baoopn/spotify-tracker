@@ -66,9 +66,16 @@ func (f *fakeBackups) CreateBackupRequest(_ context.Context, kind, by string) (i
 }
 
 type fakeBackupSettings struct {
-	cur   *settings.Backup
-	saved []settings.Backup
-	actor string
+	cur     *settings.Backup
+	saved   []settings.Backup
+	actor   string
+	deletes int
+}
+
+func (f *fakeBackupSettings) DeleteBackup(context.Context) error {
+	f.deletes++
+	f.cur = nil
+	return nil
 }
 
 func (f *fakeBackupSettings) Backup(context.Context) (settings.Backup, error) {
@@ -357,5 +364,50 @@ func TestPutBackupSettingsValidation(t *testing.T) {
 			errCode(t, out) != "invalid_request" {
 			t.Errorf("%s: %d %s", body, code, errCode(t, out))
 		}
+	}
+}
+
+func TestResetBackupSettings(t *testing.T) {
+	h := newBackupHarness(t)
+	h.st.cur = &settings.Backup{Time: "01:15", KeepDays: intp(14), KeepMin: intp(5), Paused: true}
+	h.db.state.Agent.SettingsSource = "env" // the agent already shows env values
+	code, body := h.do(t, http.MethodDelete, "/admin/api/backups/settings", "")
+	if code != http.StatusOK {
+		t.Fatalf("status %d %s", code, errCode(t, body))
+	}
+	if got := string(body["data"]); got != `{"time":"04:30","keep_days":14,"keep_min":5,"paused":false,"source":"default"}` {
+		t.Errorf("data = %s", got)
+	}
+	if string(body["note"]) != `"The backup service applies new settings within a minute."` {
+		t.Errorf("note = %s", body["note"])
+	}
+	if h.st.deletes != 1 || h.st.cur != nil {
+		t.Errorf("deletes %d", h.st.deletes)
+	}
+	if len(h.audit.calls) != 1 || h.audit.calls[0].action != "backups.settings_reset" {
+		t.Fatalf("audit %+v", h.audit.calls)
+	}
+	diff := h.audit.calls[0].detail
+	for _, k := range []string{"time", "paused", "source"} {
+		if _, ok := diff[k]; !ok {
+			t.Errorf("diff misses %s: %v", k, diff)
+		}
+	}
+	if _, ok := diff["keep_days"]; ok {
+		t.Errorf("unchanged keep_days in diff: %v", diff)
+	}
+}
+
+func TestResetBackupSettingsAgentStillAdmin(t *testing.T) {
+	// Until the agent re-reads the settings, its values are the deleted
+	// dashboard ones: show the built-in defaults instead.
+	h := newBackupHarness(t)
+	h.db.state.Agent.SettingsSource = "admin"
+	code, body := h.do(t, http.MethodDelete, "/admin/api/backups/settings", "")
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if got := string(body["data"]); got != `{"time":"03:00","keep_days":30,"keep_min":7,"paused":false,"source":"default"}` {
+		t.Errorf("data = %s", got)
 	}
 }

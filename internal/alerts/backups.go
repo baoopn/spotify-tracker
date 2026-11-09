@@ -14,6 +14,10 @@ import (
 // before an alert is sent.
 const BackupOfflineAlertAfter = time.Hour
 
+// BackupRetryWait is how long a failure (other than a retry's) may be old
+// before it is alerted: the backup container retries after 30 minutes.
+const BackupRetryWait = 45 * time.Minute
+
 const (
 	backupHealthTTL  = 24 * time.Hour
 	backupOfflineTTL = 30 * 24 * time.Hour
@@ -51,8 +55,9 @@ func (c *Checker) CheckBackups(ctx context.Context) {
 
 // BackupAlert picks the alert for state s at now: a dedupe key, its TTL and
 // the email. ok is false when nothing is wrong, the service was never set
-// up, or backups are paused. Failing and stale alerts repeat at most once
-// a day per state; an offline alert is sent once per outage.
+// up, backups are paused, or a failed run's retry is still due. Failing and
+// stale alerts repeat at most once a day per state; an offline alert is
+// sent once per outage.
 func BackupAlert(s backupstatus.State, now time.Time, statusURL string) (key string, ttl time.Duration, e notify.Email, ok bool) {
 	health, _ := backupstatus.Compute(s, now)
 	day := now.UTC().Format("2006-01-02")
@@ -66,8 +71,13 @@ func BackupAlert(s backupstatus.State, now time.Time, statusURL string) (key str
 		return "backup-offline:" + strconv.FormatInt(a.LastSeenAt.Unix(), 10), backupOfflineTTL,
 			BackupOfflineEmail(a.LastSeenAt, statusURL, now), true
 	case backupstatus.Failing:
+		f := s.Failure(now)
+		// Give the automatic retry a chance before alerting.
+		if f.Trigger != "retry" && now.Sub(backupstatus.RunTime(f)) < BackupRetryWait {
+			return "", 0, notify.Email{}, false
+		}
 		return "backup-health:failing:" + day, backupHealthTTL,
-			BackupFailingEmail(s.LastFailure, s.LastSuccess, statusURL, now), true
+			BackupFailingEmail(f, s.LastSuccess, statusURL, now), true
 	case backupstatus.Stale:
 		return "backup-health:stale:" + day, backupHealthTTL,
 			BackupStaleEmail(s.LastSuccess, s.Agent, statusURL, now), true

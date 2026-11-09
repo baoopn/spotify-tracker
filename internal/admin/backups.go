@@ -29,6 +29,7 @@ type backupStore interface {
 type backupSettingsStore interface {
 	Backup(ctx context.Context) (settings.Backup, error)
 	SaveBackup(ctx context.Context, actor string, v settings.Backup) error
+	DeleteBackup(ctx context.Context) error
 }
 
 // backupRunsShown is how many runs GET /backups returns.
@@ -42,6 +43,7 @@ func (a *API) mountBackups(r chi.Router) {
 	r.Post("/backups/run", a.requestBackup(domain.BackupRequestBackup, "backups.run_requested"))
 	r.Post("/backups/refresh", a.requestBackup(domain.BackupRequestRefresh, "backups.refresh_requested"))
 	r.Put("/backups/settings", a.putBackupSettings)
+	r.Delete("/backups/settings", a.resetBackupSettings)
 }
 
 func (a *API) backupDB() backupStore {
@@ -145,7 +147,9 @@ type backupSettingsView struct {
 func effectiveBackupSettings(st *settings.Backup, ag *domain.BackupAgent) backupSettingsView {
 	v := backupSettingsView{Time: backupstatus.DefaultTime, KeepDays: backupstatus.DefaultKeepDays,
 		KeepMin: backupstatus.DefaultKeepMin, Source: "default"}
-	if ag != nil {
+	// Without stored settings, agent values that still come from the
+	// dashboard (until it re-reads them, within a minute) are not shown.
+	if ag != nil && (st != nil || ag.SettingsSource != "admin") {
 		if ag.BackupTime != nil && backupstatus.ValidTime(*ag.BackupTime) {
 			v.Time = *ag.BackupTime
 		}
@@ -343,4 +347,28 @@ func backupSettingsDiff(before, after backupSettingsView) map[string]any {
 	add("paused", before.Paused, after.Paused)
 	add("source", before.Source, after.Source)
 	return diff
+}
+
+// DELETE /admin/api/backups/settings — drop the dashboard settings; the
+// backup service goes back to its environment and built-in defaults.
+func (a *API) resetBackupSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	state, err := a.backupDB().BackupState(ctx)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	cur, err := a.loadBackupSettings(ctx)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	before := effectiveBackupSettings(cur, state.Agent)
+	if err := a.backupSettingsDB().DeleteBackup(ctx); err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	after := effectiveBackupSettings(nil, state.Agent)
+	a.audit(r, "backups.settings_reset", backupSettingsDiff(before, after))
+	writeJSON(w, http.StatusOK, map[string]any{"data": after, "note": backupSettingsNote})
 }

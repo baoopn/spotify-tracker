@@ -74,3 +74,53 @@ func TestRunTime(t *testing.T) {
 		t.Errorf("finished: %v", got)
 	}
 }
+
+func TestComputeRunsAndSchedule(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { x := now.Add(-d); return &x }
+	agent := func(next *time.Time) *domain.BackupAgent {
+		return &domain.BackupAgent{LastSeenAt: now, Configured: true, NextRunAt: next}
+	}
+	run := func(status string, started time.Duration, finished *time.Time) *domain.BackupRun {
+		return &domain.BackupRun{Status: status, Trigger: "schedule", StartedAt: now.Add(-started), FinishedAt: finished}
+	}
+	tests := []struct {
+		name   string
+		s      State
+		want   Health
+		detail string
+	}{
+		{"interrupted row marked failed after a later success",
+			State{Agent: agent(nil), LastSuccess: run("success", 3*time.Hour, at(170*time.Minute)),
+				LastFailure: run("failed", 5*time.Hour, at(time.Hour))}, OK, ""},
+		{"running for 3 h counts as failed",
+			State{Agent: agent(nil), LastSuccess: run("success", 20*time.Hour, at(19*time.Hour)),
+				LastRunning: run("running", 3*time.Hour, nil)}, Failing, "the backup started at 2026-11-09 09:00 UTC was interrupted"},
+		{"running for 1 h is fine",
+			State{Agent: agent(nil), LastSuccess: run("success", 20*time.Hour, at(19*time.Hour)),
+				LastRunning: run("running", time.Hour, nil)}, OK, ""},
+		{"old running row before a success",
+			State{Agent: agent(nil), LastSuccess: run("success", 2*time.Hour, at(110*time.Minute)),
+				LastRunning: run("running", 30*time.Hour, nil)}, OK, ""},
+		{"scheduled run missed",
+			State{Agent: agent(at(2 * time.Hour)), LastSuccess: run("success", 20*time.Hour, at(19*time.Hour)),
+				LastRunAt: at(20 * time.Hour)}, Stale, "scheduled backup did not run"},
+		{"scheduled run 1 h late is within grace",
+			State{Agent: agent(at(time.Hour)), LastSuccess: run("success", 20*time.Hour, at(19*time.Hour)),
+				LastRunAt: at(20 * time.Hour)}, OK, ""},
+		{"scheduled run started after it was due",
+			State{Agent: agent(at(2 * time.Hour)), LastSuccess: run("success", 20*time.Hour, at(19*time.Hour)),
+				LastRunAt: at(110 * time.Minute)}, OK, ""},
+	}
+	for _, tt := range tests {
+		got, detail := Compute(tt.s, now)
+		if got != tt.want || (tt.detail != "" && detail != tt.detail) {
+			t.Errorf("%s: %q %q, want %q %q", tt.name, got, detail, tt.want, tt.detail)
+		}
+	}
+	paused := State{Agent: agent(at(5 * time.Hour))}
+	paused.Agent.Paused = true
+	if paused.Overdue(now) {
+		t.Error("paused agent overdue")
+	}
+}

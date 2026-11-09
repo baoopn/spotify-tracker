@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -23,10 +22,10 @@ func backupRunTargets(r *domain.BackupRun) []any {
 		&r.SHA256, &r.Tables, &r.Error, &r.RequestedBy}
 }
 
-// PendingRequestMaxAge is how old an unfinished request may be and still
-// count as pending. Older ones (an agent that died mid-request) no longer
-// block new requests.
-const PendingRequestMaxAge = 6 * time.Hour
+// PendingRequestMaxAge is how long ago an unfinished request may have been
+// claimed (or, if unclaimed, made) and still count as pending. Older ones
+// (an agent that died mid-request) no longer block new requests.
+const PendingRequestMaxAge = backupstatus.InterruptedAfter
 
 // backupRequestLockKey serializes request inserts ("bkreqst" as an int64).
 const backupRequestLockKey int64 = 0x626b7265717374
@@ -118,15 +117,19 @@ func (q *Queries) BackupState(ctx context.Context) (backupstatus.State, error) {
 	if s.LastFailure, err = q.LatestBackupRun(ctx, domain.BackupFailed); err != nil {
 		return s, err
 	}
-	if err := q.db.QueryRow(ctx, `SELECT MIN(started_at) FROM backup_runs`).Scan(&s.FirstRunAt); err != nil {
-		return s, fmt.Errorf("first backup run: %w", err)
+	if s.LastRunning, err = q.LatestBackupRun(ctx, domain.BackupRunning); err != nil {
+		return s, err
+	}
+	if err := q.db.QueryRow(ctx, `SELECT MIN(started_at), MAX(started_at) FROM backup_runs`).
+		Scan(&s.FirstRunAt, &s.LastRunAt); err != nil {
+		return s, fmt.Errorf("backup run range: %w", err)
 	}
 	return s, nil
 }
 
 const pendingRequestQuery = `SELECT id, kind, requested_at, requested_by, claimed_at
 	FROM backup_requests
-	WHERE done_at IS NULL AND requested_at > now() - make_interval(secs => $2)
+	WHERE done_at IS NULL AND COALESCE(claimed_at, requested_at) > now() - make_interval(secs => $2)
 		AND ($1::text = '' OR kind = $1)
 	ORDER BY (kind = 'backup') DESC, requested_at, id
 	LIMIT 1`
@@ -145,8 +148,8 @@ func pendingRequest(ctx context.Context, db DBTX, kind string) (*domain.BackupRe
 }
 
 // PendingBackupRequest returns the oldest unfinished request of kind ("" =
-// any kind, backups first), or nil. Requests older than
-// PendingRequestMaxAge are ignored.
+// any kind, backups first), or nil. Requests claimed (or, unclaimed, made)
+// more than PendingRequestMaxAge ago are ignored.
 func (q *Queries) PendingBackupRequest(ctx context.Context, kind string) (*domain.BackupRequest, error) {
 	return pendingRequest(ctx, q.db, kind)
 }

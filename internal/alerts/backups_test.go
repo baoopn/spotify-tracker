@@ -175,3 +175,33 @@ func TestBackupEmails(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupAlertWaitsForRetry(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	state := func(trigger string, failedAgo time.Duration) backupstatus.State {
+		f := backupRun("failed", now.Add(-failedAgo))
+		f.Trigger = trigger
+		return backupstatus.State{Agent: &domain.BackupAgent{LastSeenAt: now, Configured: true}, LastFailure: f}
+	}
+	for _, tt := range []struct {
+		trigger string
+		ago     time.Duration
+		alert   bool
+	}{
+		{"schedule", 10 * time.Minute, false},
+		{"schedule", 44 * time.Minute, false},
+		{"schedule", 46 * time.Minute, true},
+		{"retry", time.Minute, true},
+		{"manual", 10 * time.Minute, false},
+	} {
+		if _, _, _, ok := BackupAlert(state(tt.trigger, tt.ago), now, statusURL); ok != tt.alert {
+			t.Errorf("%s failed %s ago: alert %v, want %v", tt.trigger, tt.ago, ok, tt.alert)
+		}
+	}
+	// An interrupted run (running > 2 h) alerts right away.
+	r := &domain.BackupRun{Trigger: "schedule", Status: domain.BackupRunning, StartedAt: now.Add(-3 * time.Hour)}
+	s := backupstatus.State{Agent: &domain.BackupAgent{LastSeenAt: now, Configured: true}, LastRunning: r}
+	if _, _, e, ok := BackupAlert(s, now, statusURL); !ok || e.Subject != "[spotify-tracker] Backup failed" {
+		t.Errorf("interrupted: %v %q", ok, e.Subject)
+	}
+}

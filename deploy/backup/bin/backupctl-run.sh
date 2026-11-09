@@ -15,6 +15,11 @@ HB_PID=
 RETRY_AT=
 NEXT_RUN=
 REQ_PENDING=
+CUR_REQ=
+CUR_REQ_RUN=
+BACKUP_PID=
+UNRECORDED_RUN=
+STATUS_PREV=
 
 # sleep_for SECONDS: interruptible by SIGTERM (docker stop).
 sleep_for() {
@@ -25,9 +30,19 @@ sleep_for() {
 	SLEEP_PID=
 }
 
+# on_stop: SIGTERM (docker stop, 10 s). A running backup is abandoned, not
+# awaited (the container's processes end with it); its run row and the
+# current request are marked interrupted, best-effort.
 on_stop() {
 	[ -z "$SLEEP_PID" ] || kill "$SLEEP_PID" 2>/dev/null
 	hb_stop
+	if [ -n "$BACKUP_PID" ]; then
+		kill "$BACKUP_PID" 2>/dev/null
+		info "stopping: abandoning the running backup"
+		status_stopped "$RUN_ID" "$CUR_REQ" "${CUR_REQ_RUN:+$RUN_ID}"
+	elif [ -n "$CUR_REQ" ]; then
+		status_stopped "" "$CUR_REQ" ""
+	fi
 	info "stopping"
 	exit 0
 }
@@ -111,7 +126,13 @@ scheduled_backup() {
 # status_tick: once per loop. Database check, pending request result,
 # admin settings, heartbeat.
 status_tick() {
-	status_check || return 0
+	status_check
+	was=$STATUS_PREV
+	STATUS_PREV=$STATUS_DB
+	[ "$STATUS_DB" = 1 ] || return 0
+	# The status tables appeared (migrations ran after this service started)
+	# or the database is back: record what happened meanwhile.
+	[ "$was" != 0 ] || status_appeared
 	if [ -n "$REQ_PENDING" ]; then
 		IFS='|' read -r p_id p_run p_err <<EOF
 $REQ_PENDING
@@ -135,6 +156,20 @@ EOF
 	heartbeat
 }
 
+# status_appeared: records a success that had no run row, and refreshes the
+# inventory.
+status_appeared() {
+	if [ -n "$UNRECORDED_RUN" ]; then
+		IFS='|' read -r u_trigger u_started u_name u_size u_sha u_tables u_by <<EOF
+$UNRECORDED_RUN
+EOF
+		if run_finish "" "$u_trigger" "$u_by" "$u_started" success "$u_name" "$u_size" "$u_sha" "$u_tables" "" >/dev/null; then
+			UNRECORDED_RUN=
+		fi
+	fi
+	[ "$AGENT_CONFIGURED" != true ] || inventory_refresh || true
+}
+
 # process_requests: runs queued admin requests, oldest first.
 process_requests() {
 	[ "$STATUS_DB" = 1 ] || return 0
@@ -143,13 +178,17 @@ process_requests() {
 $req
 EOF
 		info "request $rid: $rkind (from the admin dashboard)"
+		CUR_REQ=$rid
+		CUR_REQ_RUN=
 		if [ "$AGENT_CONFIGURED" != true ]; then
 			request_done "$rid" "" "backups are not configured: ${AGENT_ERROR:-no destination or recipient set}"
+			CUR_REQ=
 			continue
 		fi
 		case $rkind in
 		backup)
 			hb_start
+			CUR_REQ_RUN=1
 			if backup_with_status manual "$rby" >/dev/null; then
 				after_success
 				request_done "$rid" "$RUN_ID" ""
@@ -167,6 +206,8 @@ EOF
 			;;
 		*) request_done "$rid" "" "unknown request kind" ;;
 		esac
+		CUR_REQ=
+		CUR_REQ_RUN=
 		status_check || break
 	done
 }
@@ -222,9 +263,11 @@ cmd_run() {
 	AGENT_CONFIGURED=false AGENT_ERROR=
 	AGENT_DEST=$(destination_desc)
 	AGENT_RECIPIENTS=$(recipients_list)
+	BACKUP_IN_BACKGROUND=1
 	if db_usable && status_check; then
 		status_startup
 	fi
+	STATUS_PREV=$STATUS_DB
 
 	# Nothing set at all: an install that does not use off-site backups.
 	config_untouched && idle "no BACKUP_AGE_RECIPIENT and no destination are set"

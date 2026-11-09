@@ -176,8 +176,18 @@ key. Recipients are public keys.
   keeps the values it had. Changes apply within a minute.
 - **Paused** stops the daily backups. "Back up now" still works, and the
   healthcheck stays healthy.
-- A run or request left behind by a stopped container is marked
-  `interrupted` at the next start (runs after 6 hours).
+- When the container stops during a backup (`docker stop`, a redeploy), it
+  drops the backup and marks the run and its request `interrupted`. If it
+  had no time for that (killed, crashed), the next start marks runs and
+  requests older than 2 hours. Newer ones are left alone, because during a
+  rolling deploy the old container may still be at work.
+- After a restore, the status rows in the target are the ones from the
+  moment of the backup. `restore` marks the runs and requests that were open
+  then as interrupted, and removes the old heartbeat. The running service
+  writes a new one within a minute.
+- If the status tables appear after the service started (the api ran the
+  migrations later), the service records a backup it made before then and
+  fills the inventory.
 - The service deletes runs older than 180 days and done requests older
   than 30 days.
 - The status is best-effort. If a status write fails (the database is busy,
@@ -369,8 +379,10 @@ remote (no cloud access). It compares the row count of every table and the
 goose version, and checks the failure cases: no recipient, wrong key, a
 changed file, a non-empty target, and the retention rules. It also checks
 the status tables: run rows, the inventory against `backupctl list`, the
-heartbeat, a queued request, the admin settings, and a failing status write
-that must not stop the backup. CI runs it on every pull request.
+heartbeat, a queued request, the admin settings, a failing status write,
+a stop during a backup, the clean-up after a restore, and status tables
+that appear later. A failing status write must not stop the backup. CI
+runs it on every pull request.
 
 ```bash
 sh deploy/backup/test/roundtrip.sh

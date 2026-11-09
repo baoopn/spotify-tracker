@@ -45,7 +45,7 @@ cleanup() {
 	if [ "$rc" -ne 0 ] && [ "${KEEP_ON_FAIL:-}" = 1 ]; then
 		echo "KEEP_ON_FAIL: leaving $SRC $DST $NET $VOL"
 	else
-		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" "$ID-bad1" "$ID-bad2" "$ID-loop" "$ID-mis" >/dev/null 2>&1 || true
+		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" "$ID-bad1" "$ID-bad2" "$ID-loop" "$ID-mis" "$ID-term" "$ID-nodb" "$ID-laterun" "$ID-late" >/dev/null 2>&1 || true
 		docker network rm "$NET" >/dev/null 2>&1 || true
 		docker volume rm "$VOL" "$KEYVOL" >/dev/null 2>&1 || true
 	fi

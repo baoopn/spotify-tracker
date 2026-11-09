@@ -16,6 +16,8 @@
 #   CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, ADMIN_ALLOWED_EMAILS (admin dashboard)
 #   EMAIL_SMTP_* / EMAIL_FROM / ALERT_EMAIL_TO (seed for alert emails; editable
 #     in the dashboard afterwards)
+#   BACKUP_AGE_RECIPIENT, BACKUP_S3_* (encrypted off-site backups, see
+#     docs/backup.md; the backup service idles until they are set)
 # Register <api domain>/admin/api/spotify/callback as a Redirect URI in the
 # Spotify Developer Dashboard.
 # Set the API domain on the "api" service (e.g. https://spotify-api.example.com);
@@ -168,6 +170,43 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  # Encrypted off-site Postgres backups (docs/backup.md). Idles with a WARN
+  # until BACKUP_AGE_RECIPIENT and a destination are set.
+  backup:
+    build:
+      context: .
+      dockerfile: deploy/backup/Dockerfile
+      args:
+        VERSION: ${SOURCE_COMMIT:-coolify}
+    image: spotify-tracker-backup:latest
+    command: ["run"]
+    restart: unless-stopped
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=${SERVICE_USER_POSTGRES}
+      - PGPASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - PGDATABASE=${POSTGRES_DB:-spotify_tracker}
+      - BACKUP_AGE_RECIPIENT=${BACKUP_AGE_RECIPIENT:-}
+      - BACKUP_S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - BACKUP_S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - BACKUP_S3_ACCESS_KEY_ID=${BACKUP_S3_ACCESS_KEY_ID:-}
+      - BACKUP_S3_SECRET_ACCESS_KEY=${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      - BACKUP_S3_REGION=${BACKUP_S3_REGION:-auto}
+      - BACKUP_S3_PROVIDER=${BACKUP_S3_PROVIDER:-Cloudflare}
+      - BACKUP_REMOTE=${BACKUP_REMOTE:-}
+      - BACKUP_PREFIX=${BACKUP_PREFIX:-spotify-tracker}
+      - BACKUP_TIME=${BACKUP_TIME:-03:00}
+      - BACKUP_ON_START=${BACKUP_ON_START:-false}
+      - BACKUP_RETRY_MINUTES=${BACKUP_RETRY_MINUTES:-30}
+      - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-30}
+      - BACKUP_KEEP_MIN=${BACKUP_KEEP_MIN:-7}
+      - BACKUP_MAX_AGE_HOURS=${BACKUP_MAX_AGE_HOURS:-26}
+      - BACKUP_PING_URL=${BACKUP_PING_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   spotify-tracker-postgres-data:

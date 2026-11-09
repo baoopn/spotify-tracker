@@ -205,7 +205,7 @@ services:
       postgres: { condition: service_healthy }
 
   # Encrypted backups to a local volume (no cloud needed), see docs/backup.md:
-  #   docker compose --profile backup run --rm backup keygen > backup-key.txt
+  #   docker compose --profile backup run --rm -T backup keygen > backup-key.txt
   #   BACKUP_AGE_RECIPIENT=age1... in .env, then
   #   docker compose --profile backup run --rm backup backup
   #   docker compose --profile backup run --rm backup list

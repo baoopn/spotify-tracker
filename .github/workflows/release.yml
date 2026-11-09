@@ -87,7 +87,8 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-  # Off-site backup sidecar (deploy/backup), same tags as the app image.
+  # Off-site backup sidecar (deploy/backup), same tags as the app image. The
+  # deploy does not wait for it: Coolify builds the sidecar from the repo.
   backup-image:
     name: Build & push backup image
     needs: ci
@@ -141,7 +142,7 @@ jobs:
 
   deploy:
     name: Deploy to Coolify
-    needs: [image, backup-image]
+    needs: image
     # Skipped until the Coolify resource is wired up (vars.COOLIFY_RESOURCE_UUID).
     if: vars.COOLIFY_RESOURCE_UUID != '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest

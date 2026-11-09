@@ -38,12 +38,7 @@ func (q *Queries) TopPlaylist(ctx context.Context, period string, start time.Tim
 	return p, nil
 }
 
-// UpsertTopPlaylist writes a top playlist's state. A known Spotify playlist
-// ID is never cleared, so retries can't create duplicate playlists. A pruned
-// row is never changed by it (see PruneTopPlaylist), so nothing republishes
-// a playlist that was removed from Spotify.
-func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error {
-	_, err := q.db.Exec(ctx, `
+const upsertTopPlaylistQuery = `
 		INSERT INTO top_playlists (period, period_start, period_end, time_zone, name, status,
 			spotify_playlist_id, spotify_url, track_count, total_plays, attempts, last_error,
 			next_attempt_at, published_at, live, refreshed_at, restored_at)
@@ -57,7 +52,14 @@ func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRec
 			attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error,
 			next_attempt_at = EXCLUDED.next_attempt_at, published_at = EXCLUDED.published_at,
 			live = EXCLUDED.live, refreshed_at = EXCLUDED.refreshed_at, restored_at = EXCLUDED.restored_at
-		WHERE top_playlists.status <> 'pruned'`,
+		WHERE top_playlists.status <> 'pruned'`
+
+// UpsertTopPlaylist writes a top playlist's state. A known Spotify playlist
+// ID is never cleared, so retries can't create duplicate playlists. A pruned
+// row is never changed by it (see PruneTopPlaylist), so nothing republishes
+// a playlist that was removed from Spotify.
+func (q *Queries) UpsertTopPlaylist(ctx context.Context, p domain.TopPlaylistRecord) error {
+	_, err := q.db.Exec(ctx, upsertTopPlaylistQuery,
 		p.Period, p.PeriodStart, p.PeriodEnd, p.TimeZone, p.Name, p.Status,
 		nullIfEmpty(p.SpotifyPlaylistID), nullIfEmpty(p.SpotifyURL), p.TrackCount, p.TotalPlays,
 		p.Attempts, nullIfEmpty(p.LastError), p.NextAttemptAt, p.PublishedAt, p.Live, p.RefreshedAt, p.RestoredAt)

@@ -81,3 +81,27 @@ func TestTopPlaylistsLiveMigration(t *testing.T) {
 		t.Errorf("unexpected migration:\n%s", b)
 	}
 }
+
+func TestTopPlaylistsPruneMigration(t *testing.T) {
+	b, err := fs.ReadFile(migrations.FS, "00009_top_playlists_prune.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, ok := strings.Cut(string(b), "-- +goose Down")
+	for _, want := range []string{"DROP CONSTRAINT IF EXISTS top_playlists_status_check", "'pruned'",
+		"ADD COLUMN pruned_at timestamptz", "ADD COLUMN spotify_removed boolean NOT NULL DEFAULT false",
+		"ADD COLUMN verified_at timestamptz", "ADD COLUMN restored_at timestamptz"} {
+		if !ok || !strings.Contains(up, want) {
+			t.Errorf("up lacks %q", want)
+		}
+	}
+	// Down never republishes a pruned playlist and runs before the old CHECK returns.
+	set := strings.Index(down, "SET status = 'empty' WHERE status = 'pruned'")
+	check := strings.Index(down, "ADD CONSTRAINT top_playlists_status_check")
+	if set < 0 || check < set || strings.Contains(down, "'pruned')") || !strings.Contains(down, "DROP COLUMN IF EXISTS pruned_at") {
+		t.Errorf("unexpected down:\n%s", down)
+	}
+	if !strings.Contains(upsertTopPlaylistQuery, "WHERE top_playlists.status <> 'pruned'") {
+		t.Error("upsert may change pruned rows")
+	}
+}

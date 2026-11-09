@@ -111,3 +111,25 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  backup:
+    name: Backup image — shellcheck, build, roundtrip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x deploy/backup/bin/* deploy/backup/test/*.sh
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/backup/Dockerfile
+          push: false
+          load: true
+          tags: spotify-tracker-backup:test
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
+      # Throwaway Postgres containers + a local rclone remote; no cloud access.
+      - name: Backup/restore roundtrip
+        run: SKIP_BUILD=1 sh deploy/backup/test/roundtrip.sh

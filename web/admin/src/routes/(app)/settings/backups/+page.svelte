@@ -5,7 +5,8 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import { ApiError, api, errorMessage } from '#lib/api.js';
-	import { backupAvailable } from '#lib/backups.js';
+	import { activePending, activeRun, backupAvailable } from '#lib/backups.js';
+	import { relativeClock } from '#lib/clock.svelte.js';
 	import { qk, queries } from '#lib/queries.js';
 	import { toasts } from '#lib/toast.svelte.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
@@ -21,8 +22,9 @@
 	const s = $derived(query.data);
 
 	const available = $derived(backupAvailable(s));
-	const running = $derived(s?.runs.some((r) => r.status === 'running') ?? false);
-	const pending = $derived(s?.pending_request ?? null);
+	// Runs / requests stuck for over 2 h (container restarted) are ignored.
+	const running = $derived(!!activeRun(s, relativeClock.now));
+	const pending = $derived(activePending(s, relativeClock.now));
 
 	function requestError(title: string, err: unknown) {
 		if (err instanceof ApiError && err.code === 'already_pending')

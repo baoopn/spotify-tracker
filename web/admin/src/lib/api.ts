@@ -217,6 +217,11 @@ export const api = {
 		request<V1Item<{ id: number }>>(`${ADMIN_API}/backups/refresh`, { method: 'POST' }).then(
 			(r) => r.data
 		),
+	/** Drop the dashboard settings and go back to env / built-in defaults. */
+	resetBackupSettings: () =>
+		request<V1Item<BackupSettings> & { note?: string }>(`${ADMIN_API}/backups/settings`, {
+			method: 'DELETE'
+		}),
 	/** The agent picks new settings up within a minute. */
 	saveBackupSettings: (body: BackupSettingsUpdate) =>
 		request<V1Item<BackupSettings> & { note?: string }>(`${ADMIN_API}/backups/settings`, {

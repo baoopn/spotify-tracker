@@ -232,9 +232,16 @@ export type BackupStatus = {
 	runs: BackupRun[];
 	/** Newest first. */
 	inventory: BackupObject[];
-	pending_request: { id: number; kind: BackupRequestKind; requested_at: string } | null;
+	pending_request: {
+		id: number;
+		kind: BackupRequestKind;
+		requested_at: string;
+		claimed_at?: string | null;
+	} | null;
 	settings: BackupSettings;
 	health: BackupHealth;
+	/** Server-side one-line explanation of `health`, when given. */
+	health_detail?: string | null;
 };
 
 // ---------- data ----------

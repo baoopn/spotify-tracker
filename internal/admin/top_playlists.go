@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -23,6 +24,10 @@ type TopPlaylistsAdmin interface {
 	// Regenerate is Generate for an existing row; on the running period of a
 	// live kind it forces a live refresh.
 	Regenerate(ctx context.Context, p topplaylists.Period, start time.Time) (domain.TopPlaylistRecord, error)
+	// Verify checks the published playlists against Spotify now.
+	Verify(ctx context.Context) error
+	// Owner is the owner name used in playlist names and its source.
+	Owner() (name, source string)
 }
 
 // topPlaylistStore reads and updates top playlist rows (implemented by *store.Store).
@@ -41,6 +46,7 @@ func (a *API) mountTopPlaylists(r chi.Router) {
 	r.Get("/top-playlists", a.listTopPlaylists)
 	r.Post("/top-playlists/run", a.runTopPlaylists)
 	r.Post("/top-playlists/generate", a.generateTopPlaylist)
+	r.Post("/top-playlists/verify", a.verifyTopPlaylists)
 	r.Get("/top-playlists/{period}/{start}", a.topPlaylist)
 	r.Patch("/top-playlists/{period}/{start}", a.setTopPlaylistHidden)
 	r.Post("/top-playlists/{period}/{start}/regenerate", a.regenerateTopPlaylist)
@@ -91,6 +97,9 @@ type adminTopPlaylist struct {
 	LastError     *string    `json:"last_error"`
 	NextAttemptAt *time.Time `json:"next_attempt_at"`
 	PublishedAt   *time.Time `json:"published_at"`
+	PrunedAt      *time.Time `json:"pruned_at"`   // kept beyond TOP_PLAYLISTS_KEEP: removed
+	RestoredAt    *time.Time `json:"restored_at"` // last restore after a delete outside
+	VerifiedAt    *time.Time `json:"verified_at"` // last check against Spotify
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
@@ -109,6 +118,14 @@ type topPlaylistsStatus struct {
 	// LivePeriods lists the kinds whose current period has a live playlist.
 	LivePeriods        []string `json:"live_periods"`
 	LiveRefreshSeconds int      `json:"live_refresh_seconds"`
+	// Keep is the playlists kept per kind (0 = all); VerifySeconds the
+	// time between two checks against Spotify (0 = off).
+	Keep          int `json:"keep"`
+	VerifySeconds int `json:"verify_seconds"`
+	// Owner is the name in "{owner}'s Top 50 · …" ("" = none) and
+	// OwnerSource where it comes from: config, spotify or none.
+	Owner       string `json:"owner"`
+	OwnerSource string `json:"owner_source"`
 }
 
 func optString(s string) *string {
@@ -150,7 +167,8 @@ func (a *API) toAdminTopPlaylist(row domain.TopPlaylistRecord) adminTopPlaylist 
 		SpotifyID: optString(row.SpotifyPlaylistID), SpotifyURL: optString(row.SpotifyURL),
 		TrackCount: row.TrackCount, TotalPlays: row.TotalPlays, Attempts: row.Attempts,
 		LastError: optString(row.LastError), NextAttemptAt: optUTC(row.NextAttemptAt),
-		PublishedAt: optUTC(row.PublishedAt), CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
+		PublishedAt: optUTC(row.PublishedAt), PrunedAt: optUTC(row.PrunedAt), RestoredAt: optUTC(row.RestoredAt),
+		VerifiedAt: optUTC(row.VerifiedAt), CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
 	}
 }
 
@@ -158,8 +176,11 @@ func (a *API) topPlaylistsStatus(ctx context.Context) (topPlaylistsStatus, error
 	st := topPlaylistsStatus{Periods: []string{}, TimeZone: a.topZone().String(),
 		IntervalSeconds: int(topplaylists.DefaultInterval / time.Second), LivePeriods: []string{},
 		LiveRefreshSeconds: int(a.TopPlaylistsConfig.Refresh() / time.Second)}
+	st.Keep, st.VerifySeconds = a.TopPlaylistsConfig.Keep, int(a.TopPlaylistsConfig.Verify/time.Second)
+	st.OwnerSource = topplaylists.OwnerSourceNone
 	if a.TopPlaylists != nil && a.TopPlaylistsConfig.Enabled() {
 		st.Enabled = true
+		st.Owner, st.OwnerSource = a.TopPlaylists.Owner()
 		for _, p := range a.TopPlaylistsConfig.Periods {
 			st.Periods = append(st.Periods, string(p))
 			if a.TopPlaylistsConfig.IsLive(p) {
@@ -360,6 +381,10 @@ func (a *API) regenerateTopPlaylist(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	if row.Status == domain.TopPlaylistPruned {
+		writePruned(w)
+		return
+	}
 	a.runGenerate(w, r, "top_playlists.regenerated", p, row.PeriodStart, a.TopPlaylists.Regenerate)
 }
 
@@ -382,6 +407,13 @@ func (a *API) runGenerate(w http.ResponseWriter, r *http.Request, action string,
 		return
 	case errors.Is(err, topplaylists.ErrPeriodDisabled):
 		writeError(w, http.StatusBadRequest, "invalid_period", "top playlists are not generated for this period kind")
+		return
+	case errors.Is(err, topplaylists.ErrTooOld):
+		writeError(w, http.StatusBadRequest, "period_too_old", fmt.Sprintf(
+			"only the newest %d playlists per kind are kept", a.TopPlaylistsConfig.Keep))
+		return
+	case errors.Is(err, topplaylists.ErrPruned):
+		writePruned(w)
 		return
 	}
 	if rec.Period != "" { // an attempt was made and stored
@@ -425,6 +457,18 @@ func (a *API) setTopPlaylistHidden(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &in); err != nil || in.Hidden == nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", `body must be {"hidden": true|false}`)
+		return
+	}
+	cur, err := a.topStore().TopPlaylist(r.Context(), string(p), start)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "top playlist not found")
+		return
+	case err != nil:
+		a.internal(w, r, err)
+		return
+	case cur.Status == domain.TopPlaylistPruned:
+		writePruned(w)
 		return
 	}
 	row, err := a.topStore().SetTopPlaylistHidden(r.Context(), string(p), start, *in.Hidden)

@@ -132,7 +132,12 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	svc := tracker.NewService(st, rdb, log, cfg.ReplayResetThreshold, cfg.EnrichMaxAttempts)
 	mgr := spotify.NewManager(&spotify.OAuth{ClientID: cfg.Spotify.ClientID, ClientSecret: cfg.Spotify.ClientSecret},
 		settingsStore, rdb, log)
-	notifier := notify.New(smtpFromSettings(settingsStore), rdb, log)
+	brand, err := notify.NewBrand(cfg.PublicURL, cfg.Email.LogoURL)
+	if err != nil {
+		log.Error("invalid EMAIL_LOGO_URL; using the default wordmark", logging.Err(err),
+			slog.String("default", brand.LogoURL))
+	}
+	notifier := notify.New(smtpFromSettings(settingsStore), rdb, brand, log)
 	checker := alerts.New(settingsStore, notifier, cfg.Spotify.TokenLifetimeDays,
 		strings.TrimRight(cfg.PublicURL, "/")+"/admin/settings/spotify", log)
 	mgr.OnInvalidGrant = checker.InvalidGrant

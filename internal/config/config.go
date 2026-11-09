@@ -100,6 +100,9 @@ type Email struct {
 	From         string `env:"EMAIL_FROM"`
 	// AlertTo is a comma-separated list of alert recipients.
 	AlertTo string `env:"ALERT_EMAIL_TO"`
+	// LogoURL overrides the absolute http(s) URL of the wordmark PNG shown in
+	// alert emails (default: PUBLIC_URL + /email/listening-wordmark-primary@2x.png).
+	LogoURL string `env:"EMAIL_LOGO_URL"`
 }
 
 // Spotify holds the Spotify app credentials used by the API.

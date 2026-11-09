@@ -1,0 +1,17 @@
+[Test]
+Email alerts are working
+========================
+
+This is a test email from the spotify-tracker admin dashboard. Alerts about the Spotify connection will arrive like this one.
+
+Sent by: admin@example.com
+Sent at: 2026-11-09 12:00 UTC
+SMTP host: smtp.example.com
+
+Open email settings:
+  https://listening.example.com/admin/settings/email
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

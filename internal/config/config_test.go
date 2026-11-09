@@ -87,7 +87,8 @@ func TestLoadAPITopPlaylists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.TopPlaylists.Periods != "week,month,year" || cfg.TopPlaylists.TimeZone != "UTC" ||
-		cfg.TopPlaylists.Live != "week" || cfg.TopPlaylists.LiveRefresh != "1h" {
+		cfg.TopPlaylists.Live != "week" || cfg.TopPlaylists.LiveRefresh != "1h" ||
+		cfg.TopPlaylists.Keep != "3" || cfg.TopPlaylists.Verify != "1h" || cfg.TopPlaylists.Owner != "" {
 		t.Errorf("defaults = %+v", cfg.TopPlaylists)
 	}
 	set()
@@ -100,6 +101,14 @@ func TestLoadAPITopPlaylists(t *testing.T) {
 	t.Setenv("TOP_PLAYLISTS_LIVE", "none")
 	t.Setenv("TOP_PLAYLISTS_LIVE_REFRESH", "not-a-duration") // parsed (and rejected) later, never fatal
 	if cfg, err = Load[API](); err != nil || cfg.TopPlaylists.Live != "none" || cfg.TopPlaylists.LiveRefresh != "not-a-duration" {
+		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
+	}
+	set()
+	t.Setenv("TOP_PLAYLISTS_KEEP", "-1") // parsed (and rejected) later, never fatal
+	t.Setenv("TOP_PLAYLISTS_VERIFY", "off")
+	t.Setenv("TOP_PLAYLISTS_OWNER", "alex")
+	if cfg, err = Load[API](); err != nil || cfg.TopPlaylists.Keep != "-1" || cfg.TopPlaylists.Verify != "off" ||
+		cfg.TopPlaylists.Owner != "alex" {
 		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
 	}
 }

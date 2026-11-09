@@ -194,7 +194,8 @@ func topPlaylistsConfig(cfg config.API, log *slog.Logger) topplaylists.Config {
 	applyLiveConfig(&topCfg, cfg.TopPlaylists, log)
 	log.Info("top playlists enabled", slog.String("periods", joinPeriods(topCfg.Periods)),
 		slog.String("time_zone", topCfg.Location.String()), slog.String("live", joinPeriods(topCfg.Live)),
-		slog.Duration("live_refresh", topCfg.Refresh()))
+		slog.Duration("live_refresh", topCfg.Refresh()), slog.Int("keep", topCfg.Keep),
+		slog.Duration("verify", topCfg.Verify), slog.Bool("owner_configured", topCfg.Owner != ""))
 	return topCfg
 }
 
@@ -216,6 +217,27 @@ func applyLiveConfig(topCfg *topplaylists.Config, raw config.TopPlaylists, log *
 			slog.Duration("live_refresh", refresh), logging.Err(err))
 	}
 	topCfg.Live, topCfg.LiveRefresh = live, refresh
+	applyKeepConfig(topCfg, raw, log)
+}
+
+// applyKeepConfig parses TOP_PLAYLISTS_KEEP, TOP_PLAYLISTS_VERIFY and
+// TOP_PLAYLISTS_OWNER. Invalid values fall back to the defaults (an owner
+// that is too long is cut); none of them stops the API.
+func applyKeepConfig(topCfg *topplaylists.Config, raw config.TopPlaylists, log *slog.Logger) {
+	keep, err := topplaylists.ParseKeep(raw.Keep)
+	if err != nil {
+		log.Error("invalid top playlists keep count; using the default", slog.Int("keep", keep), logging.Err(err))
+	}
+	verify, err := topplaylists.ParseVerify(raw.Verify)
+	if err != nil {
+		log.Error("invalid top playlists check interval; using the default",
+			slog.Duration("verify", verify), logging.Err(err))
+	}
+	owner, err := topplaylists.ParseOwner(raw.Owner)
+	if err != nil {
+		log.Error("top playlists owner name too long; cut", logging.Err(err))
+	}
+	topCfg.Keep, topCfg.Verify, topCfg.Owner = keep, verify, owner
 }
 
 func joinPeriods(ps []topplaylists.Period) string {

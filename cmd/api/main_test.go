@@ -49,3 +49,28 @@ func TestTopPlaylistsLiveConfig(t *testing.T) {
 		t.Errorf("invalid: %+v\n%s", cfg, logs)
 	}
 }
+
+func TestTopPlaylistsKeepConfig(t *testing.T) {
+	parse := func(keep, verify, owner string) (topplaylists.Config, string) {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, nil))
+		cfg := config.API{TopPlaylists: config.TopPlaylists{Periods: "week", TimeZone: "UTC", Live: "week",
+			LiveRefresh: "1h", Keep: keep, Verify: verify, Owner: owner}}
+		return topPlaylistsConfig(cfg, log), buf.String()
+	}
+	cfg, logs := parse("3", "1h", "")
+	if cfg.Keep != 3 || cfg.Verify != time.Hour || cfg.Owner != "" || strings.Contains(logs, "level=ERROR") {
+		t.Errorf("defaults: %+v\n%s", cfg, logs)
+	}
+	cfg, logs = parse("0", "off", "  alex ")
+	if cfg.Keep != 0 || cfg.Verify != 0 || cfg.Owner != "alex" || strings.Contains(logs, "level=ERROR") {
+		t.Errorf("off: %+v\n%s", cfg, logs)
+	}
+	cfg, logs = parse("-2", "5m", strings.Repeat("a", 41))
+	if cfg.Keep != 3 || cfg.Verify != time.Hour || len(cfg.Owner) != 40 || strings.Count(logs, "level=ERROR") != 3 {
+		t.Errorf("invalid: %+v\n%s", cfg, logs)
+	}
+	if strings.Contains(logs, strings.Repeat("a", 41)) {
+		t.Error("full owner name logged")
+	}
+}

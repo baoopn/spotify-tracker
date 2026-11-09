@@ -69,31 +69,20 @@ func (c *Checker) CheckExpiry(ctx context.Context) {
 	if !ok {
 		return
 	}
-	// Always state the zone: recipients may live anywhere, and local DST
-	// rules change; the instant itself is computed in UTC.
-	expires := exp.UTC().Format("2006-01-02 15:04 UTC")
-	subject := fmt.Sprintf("[spotify-tracker] Spotify token expires within %d day(s) (%s)", stage, expires)
 	if stage == 0 {
-		subject = fmt.Sprintf("[spotify-tracker] Spotify token expired on %s", expires)
-		c.log.ErrorContext(ctx, "spotify refresh token has expired; re-authorize", slog.String("expired_at", expires))
+		c.log.ErrorContext(ctx, "spotify refresh token has expired; re-authorize",
+			slog.String("expired_at", exp.UTC().Format(time.RFC3339)))
 	} else {
 		c.log.WarnContext(ctx, "spotify refresh token expires soon",
-			slog.String("expires_at", expires), slog.Duration("remaining", left.Round(time.Hour)))
+			slog.String("expires_at", exp.UTC().Format(time.RFC3339)), slog.Duration("remaining", left.Round(time.Hour)))
 	}
-	c.notifier.Once(ctx, fmt.Sprintf("spotify-expiry:%s:%d", expires, stage), 30*24*time.Hour, subject,
-		"The Spotify refresh token used by spotify-tracker expires on "+expires+
-			fmt.Sprintf(" (%d-day limit).\n\n", c.lifetimeDays)+
-			"Renew it in the admin dashboard (Settings → Spotify → Re-authorize):\n  "+c.reauthURL+"\n\n"+
-			"Nothing else needs to change; the poller picks up the new token automatically.\n")
+	key := fmt.Sprintf("spotify-expiry:%s:%d", exp.UTC().Format("2006-01-02 15:04 UTC"), stage)
+	c.notifier.Once(ctx, key, 30*24*time.Hour, ExpiryEmail(stage, exp, c.lifetimeDays, c.reauthURL, time.Now()))
 }
 
 // InvalidGrant sends (at most daily) an alert that Spotify rejected the token.
 func (c *Checker) InvalidGrant(ctx context.Context, cause error) {
-	c.notifier.Once(ctx, "spotify-auth-failed", 24*time.Hour,
-		"[spotify-tracker] Spotify authorization failed — re-authorize now",
-		"Spotify rejected the stored refresh token:\n\n  "+cause.Error()+
-			"\n\nListening history is NOT being recorded until this is fixed.\n"+
-			"Re-authorize in the admin dashboard (Settings → Spotify):\n  "+c.reauthURL+"\n")
+	c.notifier.Once(ctx, "spotify-auth-failed", 24*time.Hour, InvalidGrantEmail(cause, c.reauthURL))
 }
 
 // Stage maps the time left before expiry to an alert stage in days

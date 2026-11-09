@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/smtp"
@@ -43,32 +42,73 @@ type ConfigFunc func(ctx context.Context) (SMTPConfig, error)
 type Notifier struct {
 	config ConfigFunc
 	rdb    *redis.Client
+	brand  Brand
 	log    *slog.Logger
 }
 
-// New creates a Notifier. If the config is not Enabled, alerts are only logged.
-func New(config ConfigFunc, rdb *redis.Client, log *slog.Logger) *Notifier {
-	return &Notifier{config: config, rdb: rdb, log: log}
+// New creates a Notifier. If the config is not Enabled, alerts are only
+// logged. brand sets the header logo and footer links.
+func New(config ConfigFunc, rdb *redis.Client, brand Brand, log *slog.Logger) *Notifier {
+	return &Notifier{config: config, rdb: rdb, brand: brand, log: log}
 }
+
+// Brand is the brand the notifier's emails use.
+func (n *Notifier) Brand() Brand { return n.brand }
 
 // Send delivers a message immediately to the given recipients (or the
 // configured alert recipients when to is empty).
-func (n *Notifier) Send(ctx context.Context, to []string, subject, body string) error {
+func (n *Notifier) Send(ctx context.Context, to []string, e Email) error {
 	cfg, err := n.config(ctx)
 	if err != nil {
 		return err
 	}
+	return n.sendTo(cfg, to, e)
+}
+
+// SendTest sends the admin dashboard's test email (see TestEmail).
+func (n *Notifier) SendTest(ctx context.Context, to []string, sentBy string) error {
+	cfg, err := n.config(ctx)
+	if err != nil {
+		return err
+	}
+	return n.sendTo(cfg, to, TestEmail(sentBy, cfg.Host, n.brand, time.Now()))
+}
+
+func (n *Notifier) sendTo(cfg SMTPConfig, to []string, e Email) error {
 	if len(to) > 0 {
 		cfg.To = to
 	}
 	if cfg.Host == "" || cfg.From == "" || len(cfg.To) == 0 {
 		return errors.New("email is not configured: host, from and at least one recipient are required")
 	}
-	return send(cfg, subject, body)
+	return n.send(cfg, e)
+}
+
+// TestEmail is the "email alerts are working" message sent from Settings →
+// Email.
+func TestEmail(sentBy, smtpHost string, b Brand, now time.Time) Email {
+	e := Email{
+		Subject:    "[spotify-tracker] Test email",
+		Preheader:  "Your alert email settings work. Nothing else to do.",
+		Tone:       Success,
+		Badge:      "Test",
+		Title:      "Email alerts are working",
+		Paragraphs: []string{"This is a test email from the spotify-tracker admin dashboard. Alerts about the Spotify connection will arrive like this one."},
+		Facts: []Fact{
+			{"Sent by", sentBy},
+			{"Sent at", now.UTC().Format("2006-01-02 15:04 UTC")},
+			{"SMTP host", smtpHost},
+		},
+	}
+	if u := b.SettingsURL(); u != "" {
+		e.Action = &Action{Label: "Open email settings", URL: u}
+	}
+	return e
 }
 
 // Once sends an alert unless one with the same key was sent within ttl.
-func (n *Notifier) Once(ctx context.Context, key string, ttl time.Duration, subject, body string) {
+func (n *Notifier) Once(ctx context.Context, key string, ttl time.Duration, e Email) {
+	subject := e.Subject
 	cfg, err := n.config(ctx)
 	if err != nil {
 		n.log.WarnContext(ctx, "load email settings failed", logging.Err(err))
@@ -86,7 +126,7 @@ func (n *Notifier) Once(ctx context.Context, key string, ttl time.Duration, subj
 	if !ok {
 		return
 	}
-	if err := send(cfg, subject, body); err != nil {
+	if err := n.send(cfg, e); err != nil {
 		// Release the key so the alert is retried on the next check.
 		_ = n.rdb.Del(ctx, dedupePrefix+key).Err()
 		n.log.ErrorContext(ctx, "send alert email failed", slog.String("subject", subject), logging.Err(err))
@@ -95,9 +135,16 @@ func (n *Notifier) Once(ctx context.Context, key string, ttl time.Duration, subj
 	n.log.InfoContext(ctx, "alert email sent", slog.String("subject", subject), slog.Int("recipients", len(cfg.To)))
 }
 
-func send(cfg SMTPConfig, subject, body string) error {
+func (n *Notifier) send(cfg SMTPConfig, e Email) error {
+	msg, err := Message(cfg.From, cfg.To, e, n.brand, time.Now())
+	if err != nil {
+		return err
+	}
+	return deliver(cfg, msg)
+}
+
+func deliver(cfg SMTPConfig, msg []byte) error {
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	msg := buildMessage(cfg.From, cfg.To, subject, body, time.Now())
 
 	var auth smtp.Auth
 	if cfg.User != "" {
@@ -147,21 +194,6 @@ func send(cfg SMTPConfig, subject, body string) error {
 		return err
 	}
 	return c.Quit()
-}
-
-func buildMessage(from string, to []string, subject, body string, now time.Time) []byte {
-	clean := func(s string) string { return strings.NewReplacer("\r", "", "\n", " ").Replace(s) }
-	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", clean(from))
-	fmt.Fprintf(&b, "To: %s\r\n", clean(strings.Join(to, ", ")))
-	fmt.Fprintf(&b, "Subject: %s\r\n", clean(subject))
-	fmt.Fprintf(&b, "Date: %s\r\n", now.UTC().Format(time.RFC1123Z))
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
-	b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
-	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
-	b.WriteString("\r\n")
-	return []byte(b.String())
 }
 
 // ParseRecipients splits a comma-separated address list.

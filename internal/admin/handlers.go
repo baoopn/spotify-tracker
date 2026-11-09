@@ -550,9 +550,7 @@ func (a *API) testEmail(w http.ResponseWriter, r *http.Request) {
 		to = []string{in.To}
 	}
 	u, _ := UserFrom(r.Context())
-	err := a.Notifier.Send(r.Context(), to, "[spotify-tracker] Test email",
-		"This is a test email from the spotify-tracker admin dashboard.\n\nSent by "+u.Email+" at "+
-			time.Now().UTC().Format(time.RFC1123)+".\n")
+	err := a.Notifier.SendTest(r.Context(), to, u.Email)
 	a.audit(r, "settings.email.tested", map[string]any{"to": to, "ok": err == nil})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})

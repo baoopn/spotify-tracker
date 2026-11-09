@@ -62,3 +62,6 @@ web/*/.claude/
 
 # Agent worktrees (one per parallel writer)
 /.worktrees/
+
+# Email previews (go run ./cmd/emailpreview)
+/email-preview/

@@ -1,0 +1,20 @@
+[Expired]
+Your Spotify connection has expired
+===================================
+
+Listening history is not being recorded. The Spotify login that spotify-tracker uses has run out.
+
+Re-authorize Spotify in the admin dashboard to start tracking again.
+
+Expired: 2026-11-08 10:00 UTC (1 day ago)
+Token lifetime: 180-day limit
+
+Re-authorize Spotify:
+  https://listening.example.com/admin/settings/spotify
+
+The poller picks up the new token automatically.
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

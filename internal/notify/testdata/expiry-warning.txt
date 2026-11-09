@@ -1,0 +1,20 @@
+[Expires in 7 days]
+Your Spotify connection expires soon
+====================================
+
+Spotify logins only last a fixed time. When this one runs out, spotify-tracker stops recording your listening history.
+
+Re-authorize Spotify in the admin dashboard before then. It takes a few seconds.
+
+Expires: 2026-11-16 09:00 UTC (in 7 days)
+Token lifetime: 180-day limit
+
+Re-authorize Spotify:
+  https://listening.example.com/admin/settings/spotify
+
+The poller picks up the new token automatically.
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

@@ -1,0 +1,19 @@
+[Action needed]
+Spotify rejected the saved login
+================================
+
+Spotify refused the refresh token that spotify-tracker uses. Listening history is not being recorded until this is fixed.
+
+This happens when the token expires or access is revoked. Re-authorize Spotify to fix it. Spotify said:
+
+    spotify: refresh token: oauth2: "invalid_grant" "Refresh token revoked"
+
+Re-authorize Spotify:
+  https://listening.example.com/admin/settings/spotify
+
+The poller picks up the new token automatically.
+
+-- 
+Sent by spotify-tracker · listening.example.com (https://listening.example.com)
+You get these because you're an alert recipient. Change it in Settings → Email alerts:
+  https://listening.example.com/admin/settings/email

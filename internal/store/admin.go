@@ -79,9 +79,11 @@ func likePattern(q string) string {
 
 // foldMatch is an accent- and case-insensitive LIKE of col against the
 // pattern in parameter $n. Both sides go through search_fold (migration
-// 00010), so "ngay roi" matches "Ngày rời".
+// 00010), so "ngay roi" matches "Ngày rời". The pattern is folded once per
+// query by the scalar subquery. col is spliced into the SQL: it must be a
+// trusted constant identifier, never user input.
 func foldMatch(col string, n int) string {
-	return fmt.Sprintf("search_fold(%s) LIKE search_fold($%d)", col, n)
+	return fmt.Sprintf("search_fold(%s) LIKE (SELECT search_fold($%d))", col, n)
 }
 
 // AdminHistory lists history newest first, optionally filtered by a search

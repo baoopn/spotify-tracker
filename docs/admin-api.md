@@ -141,7 +141,7 @@ type EmailSettings = {
 
 Search (`q`) is case- and accent-insensitive on track, album and artist names:
 `ngay roi chuyen bay` matches "Ngày rời chuyến bay", and accented queries still
-match. It folds Vietnamese and other Latin diacritics (é, ñ, ü, đ …) with the
+match. It folds Vietnamese and most Latin accents (é, ñ, ü, đ, ø …) with the
 `search_fold` SQL function (migration `00010_search_fold.sql`, no extension
 needed). On `/admin/api/tracks`, `q` also matches the ISRC (case-insensitive).
 `%` and `_` in `q` are literal. There is no index for this; the tables are small.

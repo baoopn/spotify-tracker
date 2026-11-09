@@ -81,7 +81,7 @@ func TestAdminSearchFoldsNames(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 			for _, col := range tc.fold {
-				want := "search_fold(" + col + ") LIKE search_fold(" + tc.param + ")"
+				want := "search_fold(" + col + ") LIKE (SELECT search_fold(" + tc.param + "))"
 				if !strings.Contains(db.sql, want) {
 					t.Errorf("sql lacks %q:\n%s", want, db.sql)
 				}
@@ -120,7 +120,7 @@ func TestSearchFoldMigration(t *testing.T) {
 	}
 	up, down, ok := strings.Cut(string(b), "-- +goose Down")
 	for _, want := range []string{"CREATE OR REPLACE FUNCTION search_fold(text) RETURNS text",
-		"IMMUTABLE STRICT PARALLEL SAFE", "normalize($1, NFD)", `'[\u0300-\u036f]'`, "'đĐðÐ', 'dDdD'", "lower(",
+		"IMMUTABLE STRICT PARALLEL SAFE", "normalize(lower($1), NFD)", `'[\u0300-\u036f]'`, "'đðłø', 'ddlo'",
 		"-- +goose StatementBegin"} {
 		if !ok || !strings.Contains(up, want) {
 			t.Errorf("up lacks %q", want)

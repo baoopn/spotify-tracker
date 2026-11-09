@@ -1,7 +1,8 @@
 name: Release & deploy
 
-# On every push to main: run CI, build and push the image to GHCR (used by
-# docker-compose.prod.yml on plain VPS hosts), then trigger the Coolify
+# On every push to main: run CI, build and push the images to GHCR (used by
+# docker-compose.prod.yml on plain VPS hosts: the app and the -backup
+# sidecar), then trigger the Coolify
 # resource, which builds the same commit from the repo and deploys it.
 #
 # Required repository configuration (Settings → Secrets and variables → Actions):
@@ -83,6 +84,59 @@ jobs:
         if: ${{ !github.event.repository.private }}
         with:
           subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  # Off-site backup sidecar (deploy/backup), same tags as the app image. The
+  # deploy does not wait for it: Coolify builds the sidecar from the repo.
+  backup-image:
+    name: Build & push backup image
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}-backup
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/backup/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
+          provenance: true
+          sbom: true
+
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-name: ${{ env.IMAGE }}-backup
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 

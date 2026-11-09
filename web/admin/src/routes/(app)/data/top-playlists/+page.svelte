@@ -5,6 +5,7 @@
 		ListOrdered,
 		LoaderCircle,
 		Play,
+		ShieldCheck,
 		TriangleAlert
 	} from '@lucide/svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -98,6 +99,8 @@
 		if (err instanceof ApiError && err.code === 'no_plays') {
 			// Regenerate of a published playlist whose period now ranks nothing: left unchanged.
 			toasts.info('Playlist left unchanged', err.message);
+		} else if (err instanceof ApiError && err.code === 'pruned') {
+			toasts.info('Playlist was pruned', 'Only the newest playlists per kind are kept.');
 		} else if (err instanceof ApiError && err.code === 'busy') {
 			toasts.warning('Generator is busy', 'Another run is in progress. Try again in a moment.');
 		} else {
@@ -110,6 +113,14 @@
 		onSuccess: () => toasts.success('Generator ran', 'Due periods were processed.'),
 		onError: (err) => reportError('Run failed', err),
 		// Spotify failures are stored on the rows too, so refetch either way.
+		onSettled: () => invalidate()
+	}));
+
+	const verify = createMutation(() => ({
+		mutationFn: () => api.verifyTopPlaylists(),
+		onSuccess: () =>
+			toasts.success('Checked against Spotify', 'Missing playlists, if any, were restored.'),
+		onError: (err) => reportError('Check failed', err),
 		onSettled: () => invalidate()
 	}));
 
@@ -145,8 +156,10 @@
 		regenerate.isPending && regenerate.variables ? keyOf(regenerate.variables) : null
 	);
 
-	/** Run / generate / regenerate share the generator lock: one at a time. */
-	const generatorBusy = $derived(run.isPending || generate.isPending || regenerate.isPending);
+	/** Run / check / generate / regenerate share the generator lock: one at a time. */
+	const generatorBusy = $derived(
+		run.isPending || verify.isPending || generate.isPending || regenerate.isPending
+	);
 
 	function askRegenerate(r: AdminTopPlaylist) {
 		confirmTarget = r;
@@ -185,8 +198,8 @@
 
 	const confirmUi = $derived(confirmTarget ? ACTION_UI[rowAction(confirmTarget)] : null);
 
-	/** "1 h", "90 min": the live refresh interval, whole minutes or hours. */
-	function liveEvery(seconds: number): string {
+	/** "1 h", "90 min": an interval in whole minutes or hours. */
+	function interval(seconds: number): string {
 		const min = Math.max(1, Math.round(seconds / 60));
 		return min % 60 === 0 ? `${num(min / 60)} h` : `${num(min)} min`;
 	}
@@ -202,10 +215,27 @@
 			type="button"
 			class="btn btn-secondary"
 			onclick={() => (generateOpen = true)}
-			disabled={!enabled || !status?.periods.length || unauthorized || run.isPending}
+			disabled={!enabled ||
+				!status?.periods.length ||
+				unauthorized ||
+				run.isPending ||
+				verify.isPending}
 			title={unauthorized ? AUTH_HINT : undefined}
 		>
 			<CalendarPlus class="size-4" aria-hidden="true" /> Generate…
+		</button>
+		<button
+			type="button"
+			class="btn btn-secondary"
+			onclick={() => verify.mutate()}
+			disabled={!enabled || generatorBusy || unauthorized}
+			title={unauthorized ? AUTH_HINT : 'Check published playlists against Spotify now'}
+		>
+			{#if verify.isPending}<LoaderCircle
+					class="size-4 animate-spin"
+					aria-hidden="true"
+				/>{:else}<ShieldCheck class="size-4" aria-hidden="true" />{/if}
+			Check now
 		</button>
 		<button
 			type="button"
@@ -243,7 +273,21 @@
 						<span class="text-fg">
 							{status.live_periods.map((p) => p[0].toUpperCase() + p.slice(1)).join(' · ')}
 						</span>
-						<span>refreshed every {liveEvery(status.live_refresh_seconds)}</span>
+						<span>refreshed every {interval(status.live_refresh_seconds)}</span>
+					</span>
+				{/if}
+				<span class="text-muted">
+					{status.keep > 0 ? `Keeps the newest ${num(status.keep)} per kind` : 'Keeps all'}
+				</span>
+				<span class="text-muted">
+					{status.verify_seconds > 0
+						? `Checked against Spotify every ${interval(status.verify_seconds)}`
+						: 'Spotify check off'}
+				</span>
+				{#if status.owner && status.owner_source !== 'none'}
+					<span class="text-muted">
+						Named <span class="text-fg">“{status.owner}'s Top 50 · …”</span
+						>{#if status.owner_source === 'spotify'}&nbsp;(from Spotify profile){/if}
 					</span>
 				{/if}
 			{:else}
@@ -343,7 +387,7 @@
 	<GenerateDialog
 		bind:open={generateOpen}
 		{status}
-		blocked={run.isPending || regenerate.isPending}
+		blocked={run.isPending || verify.isPending || regenerate.isPending}
 		ongenerate={onGenerate}
 	/>
 {/if}

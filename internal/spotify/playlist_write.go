@@ -65,22 +65,33 @@ func (m *Manager) UpdatePlaylistDetails(ctx context.Context, id, name, descripti
 // and decodes a 2xx response into v (when v is not nil). Like getJSON it
 // retries once with a forced token refresh on 401. A 403 is returned as a
 // wrapped ErrForbidden and a 429 as *RateLimitError.
+// A nil body sends no request body. A 404 is returned as a wrapped
+// ErrNotFound.
 func (m *Manager) sendJSON(ctx context.Context, method, what, path string, body, v any) error {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("spotify: encode %s: %w", what, err)
+	var payload []byte
+	if body != nil {
+		var err error
+		if payload, err = json.Marshal(body); err != nil {
+			return fmt.Errorf("spotify: encode %s: %w", what, err)
+		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := m.token(ctx, attempt > 0)
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequestWithContext(ctx, method, m.oauth.api()+path, bytes.NewReader(payload))
+		var reqBody io.Reader
+		if payload != nil {
+			reqBody = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, m.oauth.api()+path, reqBody)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("Content-Type", "application/json")
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		resp, err := m.oauth.client().Do(req)
 		if err != nil {
 			return fmt.Errorf("spotify: %s: %w", what, err)
@@ -101,6 +112,8 @@ func (m *Manager) sendJSON(ctx context.Context, method, what, path string, body,
 			continue
 		case resp.StatusCode == http.StatusForbidden:
 			return fmt.Errorf("%w: %s: %s", ErrForbidden, what, truncate(respBody))
+		case resp.StatusCode == http.StatusNotFound:
+			return fmt.Errorf("%w: %s: %s", ErrNotFound, what, truncate(respBody))
 		case resp.StatusCode == http.StatusTooManyRequests:
 			return rateLimitFrom(&http.Response{Header: resp.Header, Body: io.NopCloser(bytes.NewReader(respBody))})
 		default:

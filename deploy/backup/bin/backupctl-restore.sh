@@ -32,59 +32,96 @@ parse_restore_args() {
 	WANT=${WANT:-latest}
 }
 
-# load_identity: copies the identity (file or stdin) into the work dir.
+
+# Plaintext never touches the disk here: only the ciphertext is downloaded,
+# and age decrypts into a fifo read by pg_restore. The one exception is
+# --to-file, which writes the decrypted dump because it was asked for.
+
+# load_identity: checks the identity source. A file is passed to age as is.
+# With "-" the key is read from stdin into memory once, and fed to each age
+# run through a fifo (never written to a file).
 load_identity() {
-	IDENTITY_FILE="$WORKDIR/identity"
+	IDENTITY_KEY=
+	ID_PID=
 	if [ "$IDENTITY" = - ]; then
-		cat >"$IDENTITY_FILE" || die "cannot read the identity from stdin"
-	elif [ -r "$IDENTITY" ]; then
-		cat "$IDENTITY" >"$IDENTITY_FILE" || die "cannot read the identity file"
-	else
+		[ ! -t 0 ] || die "-i - reads the age key from stdin: pipe it in (... < key.txt)"
+		IDENTITY_KEY=$(cat) || die "cannot read the age key from stdin"
+		[ -n "$IDENTITY_KEY" ] || die "no age key on stdin"
+	elif [ ! -r "$IDENTITY" ] || [ -d "$IDENTITY" ]; then
 		die "age identity not readable at $IDENTITY: mount your key there or pass -i PATH (or -i - to read it from stdin)"
 	fi
-	grep -q '^AGE-SECRET-KEY-' "$IDENTITY_FILE" || grep -q 'PRIVATE KEY' "$IDENTITY_FILE" ||
-		die "the identity does not look like an age key (AGE-SECRET-KEY-...)"
 }
 
-# fetch_and_decrypt NAME: downloads NAME and its manifest, checks the
-# ciphertext sha256 against the manifest, decrypts to $PLAIN and checks that
-# the result is a pg_dump archive.
-fetch_and_decrypt() {
-	name=$1
-	path=$(object_path "$name")
-	cipher="$WORKDIR/$name"
-	MANIFEST="$cipher.json"
-	PLAIN="$WORKDIR/restore.dump"
+# start_identity: sets AGE_ID, the path to pass to age -i.
+start_identity() {
+	if [ -z "$IDENTITY_KEY" ]; then
+		AGE_ID=$IDENTITY
+		return 0
+	fi
+	AGE_ID="$WORKDIR/identity.fifo"
+	[ -p "$AGE_ID" ] || mkfifo "$AGE_ID" || die "cannot create a fifo"
+	printf '%s\n' "$IDENTITY_KEY" >"$AGE_ID" &
+	ID_PID=$!
+}
 
-	info "$name: downloading"
-	rcl copyto "$path.json" "$MANIFEST" || die "$name: manifest not found or not readable"
-	rcl copyto "$path" "$cipher" || die "$name: backup file not found or not readable"
+stop_identity() {
+	if [ -n "$ID_PID" ]; then
+		kill "$ID_PID" 2>/dev/null
+		wait "$ID_PID" 2>/dev/null
+	fi
+	ID_PID=
+}
 
+# decrypt_failed: die with age's first error line.
+decrypt_failed() {
+	die "$1: decryption failed (wrong identity?): $(head -n 1 "$WORKDIR/age.err")"
+}
+
+# fetch NAME: downloads NAME (ciphertext) and its manifest and checks the
+# ciphertext sha256 against the manifest. Sets CIPHER and MANIFEST.
+fetch() {
+	path=$(object_path "$1")
+	CIPHER="$WORKDIR/$1"
+	MANIFEST="$CIPHER.json"
+	info "$1: downloading"
+	rcl copyto "$path.json" "$MANIFEST" || die "$1: manifest not found or not readable"
+	rcl copyto "$path" "$CIPHER" || die "$1: backup file not found or not readable"
 	want_sha=$(manifest_field "$MANIFEST" sha256)
-	[ -n "$want_sha" ] || die "$name: the manifest has no sha256"
-	got_sha=$(sha256sum "$cipher" | cut -d' ' -f1)
+	[ -n "$want_sha" ] || die "$1: the manifest has no sha256"
+	got_sha=$(sha256sum "$CIPHER" | cut -d' ' -f1)
 	if [ "$got_sha" != "$want_sha" ]; then
-		die "$name: sha256 mismatch (manifest $want_sha, file $got_sha): the file is damaged or was changed"
+		die "$1: sha256 mismatch (manifest $want_sha, file $got_sha): the file is damaged or was changed"
 	fi
-	info "$name: sha256 ok"
+	info "$1: sha256 ok"
+}
 
-	info "$name: decrypting"
-	if ! age -d -i "$IDENTITY_FILE" -o "$PLAIN" "$cipher" 2>"$WORKDIR/age.err"; then
-		die "$name: decryption failed (wrong identity?): $(head -n 1 "$WORKDIR/age.err")"
-	fi
-	rm -f "$cipher"
-	if ! pg_restore --list "$PLAIN" >"$WORKDIR/toc" 2>"$WORKDIR/toc.err"; then
-		die "$name: not a valid pg_dump archive: $(head -n 1 "$WORKDIR/toc.err")"
-	fi
-	TOC_ENTRIES=$(grep -c '^[0-9]' "$WORKDIR/toc")
+# check_archive NAME: streams the decrypted ciphertext into pg_restore --list.
+# Sets TOC_TABLES and TOC_ENTRIES.
+check_archive() {
+	fifo="$WORKDIR/plain.check"
+	mkfifo "$fifo" || die "cannot create a fifo"
+	start_identity
+	age -d -i "$AGE_ID" "$CIPHER" >"$fifo" 2>"$WORKDIR/age.err" &
+	age_pid=$!
+	res=$(toc_check "$fifo")
+	wait "$age_pid"
+	age_rc=$?
+	stop_identity
+	rm -f "$fifo"
+	[ "$age_rc" -eq 0 ] || decrypt_failed "$1"
+	# shellcheck disable=SC2086 # "rc tables entries"
+	set -- "$1" $res
+	[ "$2" = 0 ] || die "$1: not a valid pg_dump archive: $(head -n 1 "$WORKDIR/toc.err")"
+	TOC_TABLES=$3
+	TOC_ENTRIES=$4
 }
 
 restore_setup() {
 	require_storage
 	umask 077
 	make_workdir
-	trap 'cleanup_workdir' EXIT
-	trap 'cleanup_workdir; exit 130' INT TERM
+	trap 'stop_identity; cleanup_workdir' EXIT
+	trap 'stop_identity; cleanup_workdir; exit 130' INT TERM
 	load_identity
 }
 
@@ -93,8 +130,29 @@ cmd_verify() {
 	[ "$FORCE" = false ] && [ -z "$TO_FILE" ] || die "verify takes only a backup name and -i"
 	restore_setup
 	name=$(resolve_name "$WANT") || exit 1
-	fetch_and_decrypt "$name"
-	info "$name: ok, $TOC_ENTRIES archive entries, database $(manifest_field "$MANIFEST" database), server $(manifest_field "$MANIFEST" server_version), schema version $(manifest_field "$MANIFEST" goose_version)"
+	fetch "$name"
+	check_archive "$name"
+	info "$name: ok, $TOC_TABLES tables, $TOC_ENTRIES archive entries, database $(manifest_field "$MANIFEST" database), server $(manifest_field "$MANIFEST" server_version), schema version $(manifest_field "$MANIFEST" goose_version)"
+}
+
+restore_to_file() {
+	start_identity
+	age -d -i "$AGE_ID" -o "$TO_FILE" "$CIPHER" 2>"$WORKDIR/age.err"
+	age_rc=$?
+	stop_identity
+	if [ "$age_rc" -ne 0 ]; then
+		rm -f "$TO_FILE"
+		decrypt_failed "$1"
+	fi
+	res=$(toc_check "$TO_FILE")
+	# shellcheck disable=SC2086 # "rc tables entries"
+	set -- "$1" $res
+	if [ "$2" != 0 ]; then
+		rm -f "$TO_FILE"
+		die "$1: not a valid pg_dump archive: $(head -n 1 "$WORKDIR/toc.err")"
+	fi
+	info "$1: decrypted dump written to $TO_FILE ($3 tables, $4 archive entries); it is plaintext, delete it when done"
+	info "restore it with: pg_restore --no-owner --no-privileges --exit-on-error -d DATABASE $TO_FILE"
 }
 
 cmd_restore() {
@@ -102,35 +160,44 @@ cmd_restore() {
 	restore_setup
 	name=$(resolve_name "$WANT") || exit 1
 
-	if [ -z "$TO_FILE" ]; then
-		# Check the target before downloading anything.
-		setup_db
-		tables=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'" 2>"$WORKDIR/psql.err") ||
-			die "cannot connect to the target database: $(tail -n 1 "$WORKDIR/psql.err")"
-		if [ "$tables" -gt 0 ] && [ "$FORCE" != true ]; then
-			die "the target database already has $tables table(s) in schema public; refusing to restore over them (use --force to drop and replace the objects in the backup)"
-		fi
-	fi
-
-	fetch_and_decrypt "$name"
-
 	if [ -n "$TO_FILE" ]; then
-		# Keep the umask: the dump holds the plaintext data.
-		mv "$PLAIN" "$TO_FILE" || die "cannot write $TO_FILE"
-		info "$name: decrypted dump written to $TO_FILE ($TOC_ENTRIES archive entries)"
-		info "restore it with: pg_restore --no-owner --no-privileges --exit-on-error -d DATABASE $TO_FILE"
+		fetch "$name"
+		restore_to_file "$name"
 		return 0
 	fi
 
+	# Check the target before downloading anything.
+	setup_db
+	tables=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'" 2>"$WORKDIR/psql.err") ||
+		die "cannot connect to the target database: $(tail -n 1 "$WORKDIR/psql.err")"
+	if [ "$tables" -gt 0 ] && [ "$FORCE" != true ]; then
+		die "the target database already has $tables table(s) in schema public; refusing to restore over them (use --force to drop and replace the objects in the backup)"
+	fi
+
+	fetch "$name"
+	check_archive "$name"
+
 	if [ "$FORCE" = true ] && [ "$tables" -gt 0 ]; then
-		info "$name: restoring with --clean (replacing $tables existing table(s))"
+		info "$name: restoring $TOC_TABLES tables with --clean (replacing $tables existing table(s))"
 		set -- --clean --if-exists
 	else
-		info "$name: restoring into an empty database"
+		info "$name: restoring $TOC_TABLES tables into an empty database"
 		set --
 	fi
-	if ! pg_restore --no-owner --no-privileges --exit-on-error --single-transaction "$@" \
-		-d "$DB_TARGET" "$PLAIN" 2>"$WORKDIR/restore.err"; then
+	fifo="$WORKDIR/plain.restore"
+	mkfifo "$fifo" || die "cannot create a fifo"
+	start_identity
+	age -d -i "$AGE_ID" "$CIPHER" >"$fifo" 2>"$WORKDIR/age.err" &
+	age_pid=$!
+	pg_restore --no-owner --no-privileges --exit-on-error --single-transaction "$@" \
+		-d "$DB_NAME" <"$fifo" 2>"$WORKDIR/restore.err"
+	restore_rc=$?
+	wait "$age_pid"
+	age_rc=$?
+	stop_identity
+	rm -f "$fifo"
+	[ "$age_rc" -eq 0 ] || decrypt_failed "$name"
+	if [ "$restore_rc" -ne 0 ]; then
 		err "$name: pg_restore failed; nothing was changed (single transaction)"
 		tail -n 5 "$WORKDIR/restore.err" >&2
 		exit 1

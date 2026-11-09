@@ -10,7 +10,9 @@
 # second and compares row counts of every table and the goose version. Also
 # checks: no-recipient refusal, wrong identity, tampered ciphertext, non-empty
 # target refusal (and --force), --to-file, prune with BACKUP_KEEP_MIN, the
-# idle mode and the scheduler's healthcheck.
+# idle and misconfigured modes, the scheduler's healthcheck, an empty database,
+# a mounted key file, DATABASE_URL with an encoded password, and a prune
+# that must stop when the listing fails.
 #
 # Env: BACKUP_TEST_IMAGE (default spotify-tracker-backup:test), SKIP_BUILD=1
 # to reuse an existing image, KEEP_ON_FAIL=1 to leave the containers.
@@ -29,6 +31,10 @@ VOL="$ID-remote"
 SRC="$ID-src"
 DST="$ID-dst"
 TMP=$(mktemp -d)
+KEYVOL="$ID-key"
+# A password that needs URL encoding (DATABASE_URL coverage).
+PGPW="rt p@ss:w/rd"
+PGPW_URL="rt%20p%40ss%3Aw%2Frd"
 PASS=0
 FAILED=0
 
@@ -37,9 +43,9 @@ cleanup() {
 	if [ "$rc" -ne 0 ] && [ "${KEEP_ON_FAIL:-}" = 1 ]; then
 		echo "KEEP_ON_FAIL: leaving $SRC $DST $NET $VOL"
 	else
-		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" >/dev/null 2>&1 || true
+		docker rm -f "$SRC" "$DST" "$ID-run" "$ID-idle" "$ID-bad1" "$ID-bad2" >/dev/null 2>&1 || true
 		docker network rm "$NET" >/dev/null 2>&1 || true
-		docker volume rm "$VOL" >/dev/null 2>&1 || true
+		docker volume rm "$VOL" "$KEYVOL" >/dev/null 2>&1 || true
 	fi
 	rm -rf "$TMP"
 	exit "$rc"
@@ -60,9 +66,10 @@ bk() {
 	host=$1
 	shift
 	docker run --rm -i --network "$NET" -v "$VOL:/backups" \
-		-e PGHOST="$host" -e PGUSER=tracker -e PGPASSWORD=rt-password -e PGDATABASE=spotify_tracker \
+		-e PGHOST="$host" -e PGUSER=tracker -e PGPASSWORD="$PGPW" -e PGDATABASE="${DBNAME:-spotify_tracker}" \
 		-e BACKUP_REMOTE=/backups -e BACKUP_AGE_RECIPIENT="${RECIPIENT:-}" \
 		-e BACKUP_KEEP_DAYS="${KEEP_DAYS:-30}" -e BACKUP_KEEP_MIN="${KEEP_MIN:-7}" \
+		-e BACKUP_DEBUG_WORKDIR=1 \
 		"$IMAGE" "$@"
 }
 
@@ -78,8 +85,24 @@ bk_url() {
 	host=$1
 	shift
 	docker run --rm -i --network "$NET" -v "$VOL:/backups" -e BACKUP_REMOTE=/backups \
-		-e DATABASE_URL="postgres://tracker:rt-password@$host:5432/spotify_tracker?sslmode=disable" \
+		-e DATABASE_URL="postgres://tracker:$PGPW_URL@$host:5432/spotify_tracker?sslmode=disable" \
+		-e BACKUP_DEBUG_WORKDIR=1 \
 		"$IMAGE" "$@"
+}
+
+# check_workdir DESC FILE: FILE holds backupctl output with BACKUP_DEBUG_WORKDIR=1.
+# Only ciphertext, manifest, error logs, the recipient list and the TOC
+# counters may have been left in the work dir: never a plaintext dump.
+check_workdir() {
+	files=$(sed -n 's/.*workdir file: \([^ ]*\) .*/\1/p' "$2")
+	other=$(printf '%s\n' "$files" | grep -v -E '\.dump\.age(\.json)?$|\.err$|^recipients$|^toc\.result$' || true)
+	if [ -z "$files" ]; then
+		bad "$1: no work dir listing"
+	elif [ -n "$other" ]; then
+		bad "$1: unexpected files in the work dir: $other"
+	else
+		ok "$1: only ciphertext and logs in the work dir"
+	fi
 }
 
 # expect_fail DESC PATTERN CMD...: CMD must fail and print PATTERN.
@@ -99,7 +122,9 @@ expect_fail() {
 }
 
 psql_in() {
-	docker exec -i "$1" psql -X -q -v ON_ERROR_STOP=1 -U tracker -d spotify_tracker "$@"
+	c=$1
+	shift
+	docker exec -i "$c" psql -X -q -v ON_ERROR_STOP=1 -U tracker -d spotify_tracker "$@"
 }
 
 # counts CONTAINER: "table rows" for every base table in schema public.
@@ -115,7 +140,7 @@ counts() {
 
 start_pg() {
 	docker run -d --name "$1" --network "$NET" -e POSTGRES_USER=tracker \
-		-e POSTGRES_PASSWORD=rt-password -e POSTGRES_DB=spotify_tracker postgres:17-alpine >/dev/null
+		-e POSTGRES_PASSWORD="$PGPW" -e POSTGRES_DB=spotify_tracker postgres:17-alpine >/dev/null
 }
 
 wait_pg() {
@@ -181,6 +206,12 @@ n=$(docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c 'find /backup
 RECIPIENT="not-a-key"
 expect_fail "invalid recipient is refused" "invalid age recipient" bk "$SRC" backup
 RECIPIENT=$RECIPIENT_SAVE
+psql_in "$SRC" -c "CREATE DATABASE rt_empty" >/dev/null
+DBNAME=rt_empty
+expect_fail "backup of a database without tables is refused" "contains no tables" bk "$SRC" backup
+DBNAME=
+n=$(docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c 'find /backups -type f | wc -l')
+[ "$n" -eq 0 ] && ok "nothing was uploaded for the empty database" || bad "files found after empty dump: $n"
 
 echo "== backup"
 if bk "$SRC" backup >"$TMP/name" 2>"$TMP/out"; then ok "backup"; else
@@ -189,6 +220,7 @@ if bk "$SRC" backup >"$TMP/name" 2>"$TMP/out"; then ok "backup"; else
 	exit 1
 fi
 NAME=$(tail -n 1 "$TMP/name")
+check_workdir "backup" "$TMP/out"
 bk "$SRC" list >"$TMP/list" 2>&1
 grep -q "$NAME" "$TMP/list" && ok "list shows $NAME" || bad "list: $(cat "$TMP/list")"
 docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c "cat /backups/spotify-tracker/*/*/$NAME.json" >"$TMP/manifest"
@@ -204,6 +236,17 @@ if bk "$SRC" verify latest -i - <"$TMP/key.txt" >"$TMP/out" 2>&1; then ok "verif
 	bad "verify"
 	cat "$TMP/out"
 fi
+check_workdir "verify" "$TMP/out"
+docker volume create "$KEYVOL" >/dev/null
+docker run --rm -i -u 0 -v "$KEYVOL:/k" --entrypoint sh "$IMAGE" -c \
+	'cat >/k/backup-age-key && chown 10001 /k/backup-age-key && chmod 400 /k/backup-age-key' <"$TMP/key.txt"
+if docker run --rm -v "$VOL:/backups" -v "$KEYVOL:/run/secrets:ro" -e BACKUP_REMOTE=/backups \
+	"$IMAGE" verify latest >"$TMP/out" 2>&1; then
+	ok "verify with the key file at /run/secrets/backup-age-key"
+else
+	bad "verify with a mounted key"
+	cat "$TMP/out"
+fi
 expect_fail "verify with the wrong identity fails" "decryption failed" \
 	with_key "$TMP/wrong.txt" bk "" verify latest -i -
 expect_fail "restore without an identity fails" "identity not readable" bk "$DST" restore latest
@@ -212,6 +255,7 @@ if bk "$DST" restore latest -i - <"$TMP/key.txt" >"$TMP/out" 2>&1; then ok "rest
 	bad "restore"
 	cat "$TMP/out"
 fi
+check_workdir "restore" "$TMP/out"
 counts "$DST" >"$TMP/dst.counts"
 if cmp -s "$TMP/src.counts" "$TMP/dst.counts"; then
 	ok "row counts match for $(wc -l <"$TMP/src.counts" | tr -d ' ') tables + goose version"
@@ -223,10 +267,13 @@ fi
 expect_fail "restore into a non-empty database is refused" "refusing to restore" \
 	with_key "$TMP/key.txt" bk_url "$DST" restore latest -i -
 psql_in "$DST" -c "DELETE FROM rt_seed WHERE id <= 100" >/dev/null
-if bk "$DST" restore "$NAME" --force -i - <"$TMP/key.txt" >"$TMP/out" 2>&1; then ok "restore --force by name"; else
+if bk_url "$DST" restore "$NAME" --force -i - <"$TMP/key.txt" >"$TMP/out" 2>&1; then
+	ok "restore --force by name (DATABASE_URL, URL-encoded password)"
+else
 	bad "restore --force"
 	cat "$TMP/out"
 fi
+check_workdir "restore --force" "$TMP/out"
 counts "$DST" >"$TMP/dst.counts"
 cmp -s "$TMP/src.counts" "$TMP/dst.counts" && ok "row counts match after --force" || bad "row counts differ after --force"
 
@@ -240,8 +287,21 @@ else
 fi
 
 echo "== scheduler"
-docker run -d --name "$ID-idle" -e BACKUP_REMOTE=/backups "$IMAGE" run >/dev/null
+docker run -d --name "$ID-idle" "$IMAGE" run >/dev/null
+# Partial settings: a destination without a recipient, a recipient with 1 of 4 S3 values.
+docker run -d --name "$ID-bad1" -e BACKUP_REMOTE=/backups "$IMAGE" run >/dev/null
+docker run -d --name "$ID-bad2" -e BACKUP_AGE_RECIPIENT="$RECIPIENT" -e BACKUP_S3_BUCKET=x "$IMAGE" run >/dev/null
 sleep 2
+for c in bad1 bad2; do
+	if docker exec "$ID-$c" backupctl health >"$TMP/out" 2>&1; then
+		bad "$c: partial config reported healthy: $(cat "$TMP/out")"
+	elif grep -q misconfigured "$TMP/out" && docker logs "$ID-$c" 2>&1 | grep -q "ERROR.*misconfigured"; then
+		ok "$c: partial config logs an ERROR and is unhealthy"
+	else
+		bad "$c: $(cat "$TMP/out")"
+	fi
+done
+docker rm -f "$ID-bad1" "$ID-bad2" >/dev/null
 docker exec "$ID-idle" backupctl health | grep -q '^idle' && ok "unconfigured service idles and is healthy" || bad "idle health"
 docker logs "$ID-idle" 2>&1 | grep -q "WARN.*disabled" && ok "idle logs a WARN" || bad "idle WARN"
 t0=$(date +%s)
@@ -250,7 +310,7 @@ docker stop "$ID-idle" >/dev/null
 
 sleep 1 # next backup gets a new name
 docker run -d --name "$ID-run" --network "$NET" -v "$VOL:/backups" \
-	-e PGHOST="$SRC" -e PGUSER=tracker -e PGPASSWORD=rt-password -e PGDATABASE=spotify_tracker \
+	-e PGHOST="$SRC" -e PGUSER=tracker -e PGPASSWORD="$PGPW" -e PGDATABASE=spotify_tracker \
 	-e BACKUP_REMOTE=/backups -e BACKUP_AGE_RECIPIENT="$RECIPIENT" -e BACKUP_ON_START=true "$IMAGE" run >/dev/null
 i=0
 until docker exec "$ID-run" test -f /tmp/backup-status/last_success 2>/dev/null; do
@@ -263,7 +323,7 @@ docker exec "$ID-run" backupctl health | grep -q '^ok: last backup' && ok "BACKU
 docker logs "$ID-run" 2>&1 | grep -q "next backup at" && ok "scheduler waits for BACKUP_TIME" || bad "no next-run log"
 docker logs "$ID-run" >"$TMP/run.log" 2>&1
 rc=0
-grep -q -F -e "$RECIPIENT" -e rt-password "$TMP/run.log" || rc=$?
+grep -q -F -e "$RECIPIENT" -e "$PGPW" -e "$PGPW_URL" "$TMP/run.log" || rc=$?
 [ "$rc" -eq 1 ] && ok "logs contain no recipient or password" || bad "logs leak config values (grep exit $rc)"
 docker rm -f "$ID-run" >/dev/null
 NAME2=$(bk "$SRC" list 2>/dev/null | sed -n '2p' | cut -d' ' -f1)
@@ -290,6 +350,13 @@ count_objects() {
 	docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c 'find /backups -name "*.dump.age" | wc -l'
 }
 [ "$(count_objects)" -eq 13 ] && ok "BACKUP_KEEP_DAYS=0 keeps everything" || bad "KEEP_DAYS=0 deleted: $(count_objects)"
+# A listing error (unreadable directory) must stop the prune before it deletes anything.
+docker run --rm -u 0 -v "$VOL:/backups" --entrypoint chmod "$IMAGE" 000 /backups/spotify-tracker/2020
+KEEP_DAYS=30
+KEEP_MIN=7
+expect_fail "prune stops when the listing fails" "nothing deleted" bk "$SRC" prune
+docker run --rm -u 0 -v "$VOL:/backups" --entrypoint chmod "$IMAGE" 755 /backups/spotify-tracker/2020
+[ "$(count_objects)" -eq 13 ] && ok "nothing was deleted after the listing failure" || bad "listing failure deleted: $(count_objects)"
 KEEP_DAYS=30 KEEP_MIN=7 bk "$SRC" prune >"$TMP/out" 2>&1 || bad "prune exited non-zero"
 left=$(docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c 'find /backups -name "*.dump.age" | sed "s#.*/##" | sort')
 n=$(printf '%s\n' "$left" | wc -l | tr -d ' ')

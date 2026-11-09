@@ -52,6 +52,17 @@ idle() {
 	done
 }
 
+# misconfigured REASON: some backup settings are set but not usable. Stay up
+# (no crash loop), but log an ERROR, ping /fail and report unhealthy.
+misconfigured() {
+	status_write misconfigured "$1"
+	while :; do
+		err "offsite backups are misconfigured: $1 (see docs/backup.md); no backups will run"
+		ping_url /fail
+		sleep_for 86400
+	done
+}
+
 # next_run_epoch: next BACKUP_TIME (UTC) strictly after now.
 next_run_epoch() {
 	now=$(date -u +%s)
@@ -81,17 +92,21 @@ scheduled_backup() {
 cmd_run() {
 	trap on_stop TERM INT
 	mkdir -p "$STATUS_DIR" 2>/dev/null
-	rm -f "$STATUS_DIR/idle" "$STATUS_DIR/first_due"
+	rm -f "$STATUS_DIR/idle" "$STATUS_DIR/misconfigured" "$STATUS_DIR/first_due"
 
-	has_recipient || idle "BACKUP_AGE_RECIPIENT is not set"
-	setup_storage || idle "no destination (BACKUP_S3_* or BACKUP_REMOTE) is set"
+	# Nothing set at all: an install that does not use off-site backups.
+	config_untouched && idle "no BACKUP_AGE_RECIPIENT and no destination are set"
+	problems=$(config_problems)
+	[ -z "$problems" ] || misconfigured "$problems"
+	setup_storage || misconfigured "no usable destination"
 
 	BACKUP_TIME=${BACKUP_TIME:-03:00}
 	case $BACKUP_TIME in
 	[01][0-9]:[0-5][0-9] | 2[0-3]:[0-5][0-9]) ;;
-	*) die "BACKUP_TIME must be HH:MM (24-hour, UTC), e.g. 03:00" ;;
+	*) misconfigured "BACKUP_TIME must be HH:MM (24-hour, UTC), e.g. 03:00" ;;
 	esac
-	retry_minutes >/dev/null
+	(retry_minutes >/dev/null) 2>/dev/null || misconfigured "BACKUP_RETRY_MINUTES must be a whole number of minutes"
+	(setup_db) 2>/dev/null || misconfigured "no usable database settings (DATABASE_URL or PG*)"
 	setup_db
 
 	info "scheduler: daily at $BACKUP_TIME UTC to the $STORAGE_DESC, keep ${BACKUP_KEEP_DAYS:-30} days (at least ${BACKUP_KEEP_MIN:-7})"
@@ -112,13 +127,18 @@ cmd_run() {
 	done
 }
 
-# cmd_health: healthy while idle, while waiting for the first scheduled run
-# (plus retry and an hour of slack), or when the last success is recent.
+# cmd_health: unhealthy when misconfigured. Healthy while idle (nothing set),
+# while waiting for the first scheduled run (plus retry and an hour of
+# slack), or when the last success is recent.
 cmd_health() {
 	now=$(date -u +%s)
 	if [ -f "$STATUS_DIR/idle" ]; then
 		echo "idle: $(status_read idle)"
 		return 0
+	fi
+	if [ -f "$STATUS_DIR/misconfigured" ]; then
+		echo "unhealthy: misconfigured: $(status_read misconfigured)"
+		return 1
 	fi
 	first_due=$(status_read first_due)
 	if [ -z "$first_due" ]; then

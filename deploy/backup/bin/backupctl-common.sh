@@ -34,9 +34,31 @@ make_workdir() {
 
 cleanup_workdir() {
 	if [ -n "${WORKDIR:-}" ] && [ -d "$WORKDIR" ]; then
+		# Test hook (roundtrip.sh): list the regular files left in the work
+		# dir, to prove no plaintext dump was staged there.
+		if [ "${BACKUP_DEBUG_WORKDIR:-}" = 1 ]; then
+			find "$WORKDIR" -type f | while IFS= read -r f; do
+				log DEBUG "workdir file: ${f##*/} $(wc -c <"$f" | tr -d ' ')"
+			done
+		fi
 		rm -rf "$WORKDIR"
 	fi
 	WORKDIR=
+}
+
+# toc_check INPUT: reads a pg_dump custom archive from INPUT (a fifo or a
+# file) with pg_restore --list, then drains INPUT. Prints "rc tables entries".
+# The listing is counted in a pipe, never stored; errors go to toc.err.
+toc_check() {
+	{
+		pg_restore --list 2>"$WORKDIR/toc.err"
+		echo "#rc $?"
+		cat >/dev/null
+	} <"$1" | awk '
+		/^#rc / { rc = $2; next }
+		/^[0-9]+; [0-9]+ [0-9]+ TABLE / { t++ }
+		/^[0-9]+;/ { e++ }
+		END { print (rc == "" ? 99 : rc), t + 0, e + 0 }'
 }
 
 # ─── Status files (health) ────────────────────────────────────────────────────
@@ -124,6 +146,29 @@ require_storage() {
 	setup_storage || die "no backup destination: set BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_ACCESS_KEY_ID and BACKUP_S3_SECRET_ACCESS_KEY, or BACKUP_REMOTE"
 }
 
+
+# config_problems: prints what is missing when backups are partly configured
+# (empty output = complete). config_untouched: nothing BACKUP_* is set at all.
+s3_missing() {
+	for v in BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+		eval "val=\${$v:-}"
+		# shellcheck disable=SC2154 # set by eval
+		[ -n "$val" ] || printf '%s ' "$v"
+	done
+}
+
+config_untouched() {
+	! has_recipient && [ -z "${BACKUP_REMOTE:-}" ] && [ "$(s3_missing | wc -w)" -eq 4 ]
+}
+
+config_problems() {
+	has_recipient || printf '%s' "BACKUP_AGE_RECIPIENT is not set. "
+	if [ -z "${BACKUP_REMOTE:-}" ]; then
+		missing=$(s3_missing)
+		[ -z "$missing" ] || printf 'incomplete destination, missing: %s' "$missing"
+	fi
+}
+
 # rcl ARGS...: rclone with quiet output; errors go to stderr.
 rcl() {
 	rclone -q --retries 3 --low-level-retries 10 "$@"
@@ -136,20 +181,33 @@ object_path() {
 		"$(printf %s "$stamp" | cut -c5-6)" "$1"
 }
 
-# list_objects: prints "name;size;modtime" for every backup that has both its
-# .dump.age and its .json manifest, newest first. Lone files (an interrupted
-# upload) are ignored here; prune still removes them once old.
-list_objects() {
-	listing=$(rcl lsf -R --files-only --format pst --separator ';' \
-		--include '*.dump.age' --include '*.dump.age.json' "$REMOTE_BASE" 2>&1) || {
-		# A missing prefix (no backups yet) is not an error.
-		case $listing in
-		*"directory not found"* | *"not found"*) return 0 ;;
-		esac
-		printf '%s\n' "$listing" >&2
-		return 1
-	}
-	printf '%s\n' "$listing" | awk -F';' '
+# remote_listing: prints "path;size;modtime" for every backup object (dumps
+# and manifests). rclone's stderr is kept apart from the listing; any error
+# fails, except a missing prefix (no backups yet), which is an empty list.
+remote_listing() {
+	errf=$(mktemp "${TMPDIR:-/tmp}/backupctl-ls.XXXXXX") || return 1
+	if out=$(rcl lsf -R --files-only --format pst --separator ';' \
+		--include '*.dump.age' --include '*.dump.age.json' "$REMOTE_BASE" 2>"$errf"); then
+		rm -f "$errf"
+		[ -z "$out" ] || printf '%s\n' "$out"
+		return 0
+	fi
+	if [ -z "$out" ] && grep -q 'directory not found' "$errf" &&
+		! grep -v 'directory not found' "$errf" | grep -q ERROR; then
+		rm -f "$errf"
+		return 0
+	fi
+	sed 's/^/rclone: /' "$errf" | tail -n 5 >&2
+	rm -f "$errf"
+	return 1
+}
+
+# complete_from LISTING: "name;size;modtime" for every backup that has both
+# its .dump.age and its .json manifest, newest first. Lone files (an
+# interrupted upload) are ignored; prune still removes them once old.
+complete_from() {
+	printf '%s\n' "$1" | awk -F';' '
+		NF < 2 { next }
 		{ n = $1; sub(/.*\//, "", n) }
 		n ~ /\.dump\.age\.json$/ { sub(/\.json$/, "", n); man[n] = 1; next }
 		n ~ /\.dump\.age$/ { size[n] = $2; t[n] = $3 }
@@ -157,18 +215,14 @@ list_objects() {
 	' | sort -r
 }
 
-# list_all_names: every backup name present in storage (dump or manifest),
-# newest first. Used by prune.
-list_all_names() {
-	listing=$(rcl lsf -R --files-only --include '*.dump.age' --include '*.dump.age.json' \
-		"$REMOTE_BASE" 2>&1) || {
-		case $listing in
-		*"directory not found"* | *"not found"*) return 0 ;;
-		esac
-		printf '%s\n' "$listing" >&2
-		return 1
-	}
-	printf '%s\n' "$listing" | sed -e 's#.*/##' -e 's/\.json$//' | sort -ru
+# names_from LISTING: every backup name present (dump or manifest), newest first.
+names_from() {
+	printf '%s\n' "$1" | cut -d';' -f1 | sed -e 's#.*/##' -e 's/\.json$//' -e '/^$/d' | sort -ru
+}
+
+list_objects() {
+	listing=$(remote_listing) || return 1
+	complete_from "$listing"
 }
 
 # valid_name NAME: accepts only names this tool creates.
@@ -200,21 +254,136 @@ resolve_name() {
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 
-# DB_TARGET: the -d argument for psql/pg_dump/pg_restore. DATABASE_URL wins
-# over the libpq PG* variables.
+urldecode() {
+	printf '%s' "$1" | awk '
+		function hexval(h,   i, n, c) {
+			n = 0; h = tolower(h)
+			for (i = 1; i <= 2; i++) {
+				c = index("0123456789abcdef", substr(h, i, 1)) - 1
+				if (c < 0) return -1
+				n = n * 16 + c
+			}
+			return n
+		}
+		{
+			s = $0; out = ""
+			for (i = 1; i <= length(s); i++) {
+				c = substr(s, i, 1)
+				if (c == "%" && (v = hexval(substr(s, i + 1, 2))) >= 0) { out = out sprintf("%c", v); i += 2 }
+				else out = out c
+			}
+			printf "%s", out
+		}'
+}
+
+# parse_database_url: exports libpq PG* variables from DATABASE_URL, so the
+# password never appears in a command line (ps). Format:
+# postgres[ql]://user:password@host:port/dbname?sslmode=...
+parse_database_url() {
+	url=$DATABASE_URL
+	case $url in
+	postgres://* | postgresql://*) rest=${url#*://} ;;
+	*) die "DATABASE_URL must start with postgres:// or postgresql://" ;;
+	esac
+	unset PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+	userinfo=
+	case $rest in
+	*@*)
+		userinfo=${rest%@*}
+		rest=${rest##*@}
+		;;
+	esac
+	query=
+	case $rest in
+	*\?*)
+		query=${rest#*\?}
+		rest=${rest%%\?*}
+		;;
+	esac
+	db=
+	case $rest in
+	*/*)
+		db=${rest#*/}
+		rest=${rest%%/*}
+		;;
+	esac
+	case $rest in
+	*,*) die "DATABASE_URL with several hosts is not supported; use PGHOST" ;;
+	\[*\]:*)
+		host=${rest%%]*}
+		host=${host#\[}
+		port=${rest##*]:}
+		;;
+	\[*\]) host=${rest#\[} host=${host%]} port= ;;
+	*:*) host=${rest%:*} port=${rest##*:} ;;
+	*) host=$rest port= ;;
+	esac
+	if [ -n "$userinfo" ]; then
+		case $userinfo in
+		*:*)
+			PGUSER=$(urldecode "${userinfo%%:*}")
+			PGPASSWORD=$(urldecode "${userinfo#*:}")
+			export PGUSER PGPASSWORD
+			;;
+		*)
+			PGUSER=$(urldecode "$userinfo")
+			export PGUSER
+			;;
+		esac
+	fi
+	if [ -n "$host" ]; then
+		PGHOST=$(urldecode "$host")
+		export PGHOST
+	fi
+	[ -z "$port" ] || export PGPORT="$port"
+	if [ -n "$db" ]; then
+		PGDATABASE=$(urldecode "$db")
+		export PGDATABASE
+	fi
+	old_ifs=$IFS
+	IFS='&'
+	set -f
+	for kv in $query; do
+		[ -n "$kv" ] || continue
+		k=${kv%%=*}
+		v=$(urldecode "${kv#*=}")
+		case $k in
+		sslmode) export PGSSLMODE="$v" ;;
+		sslrootcert) export PGSSLROOTCERT="$v" ;;
+		sslcert) export PGSSLCERT="$v" ;;
+		sslkey) export PGSSLKEY="$v" ;;
+		connect_timeout) export PGCONNECT_TIMEOUT="$v" ;;
+		application_name) export PGAPPNAME="$v" ;;
+		options) export PGOPTIONS="$v" ;;
+		target_session_attrs) export PGTARGETSESSIONATTRS="$v" ;;
+		*)
+			IFS=$old_ifs
+			die "unsupported DATABASE_URL parameter: $k (use the PG* variables instead)"
+			;;
+		esac
+	done
+	set +f
+	IFS=$old_ifs
+}
+
+# setup_db: DATABASE_URL (parsed into PG*) wins over the PG* variables.
+# DB_NAME is the database name for pg_restore -d (never a connection string).
 setup_db() {
 	if [ -n "${DATABASE_URL:-}" ]; then
-		DB_TARGET=$DATABASE_URL
-	elif [ -n "${PGDATABASE:-}" ]; then
-		DB_TARGET=$PGDATABASE
-	else
-		die "no database: set DATABASE_URL, or PGHOST, PGPORT, PGUSER, PGPASSWORD and PGDATABASE"
+		parse_database_url
 	fi
+	DB_NAME=${PGDATABASE:-${PGUSER:-}}
+	[ -n "$DB_NAME" ] && [ -n "${PGHOST:-}${DATABASE_URL:-}" ] ||
+		die "no database: set DATABASE_URL, or PGHOST, PGPORT, PGUSER, PGPASSWORD and PGDATABASE"
+	case $DB_NAME in
+	*=* | *://*) die "PGDATABASE must be a plain database name" ;;
+	esac
+	export PGDATABASE="$DB_NAME"
 }
 
 # sql QUERY: runs one query, prints unaligned tuples.
 sql() {
-	psql -X -q -A -t -v ON_ERROR_STOP=1 -d "$DB_TARGET" -c "$1"
+	psql -X -q -A -t -v ON_ERROR_STOP=1 -c "$1"
 }
 
 json_str() {
@@ -222,7 +391,7 @@ json_str() {
 }
 
 # manifest_field FILE KEY: reads a top-level string or number value from a
-# manifest written by write_manifest (one key per line).
+# manifest written by cmd_backup (one key per line).
 manifest_field() {
 	sed -n "s/^[[:space:]]*\"$2\":[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}[[:space:]]*\$/\1/p" "$1" | head -n 1
 }

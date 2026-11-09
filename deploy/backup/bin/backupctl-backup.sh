@@ -36,17 +36,34 @@ cmd_backup() {
 
 	info "backup $name: dumping and encrypting"
 	out="$WORKDIR/$name"
-	mkfifo "$WORKDIR/pipe" || die "cannot create a fifo"
-	pg_dump -Fc -Z 6 --no-owner --no-privileges -d "$DB_TARGET" >"$WORKDIR/pipe" 2>"$WORKDIR/pg_dump.err" &
+	# pg_dump → tee → age, with tee's second copy read by pg_restore --list
+	# (then drained), so the archive's table list is checked without ever
+	# writing plaintext to disk. Fifos instead of pipes: every exit status is
+	# checked (POSIX sh has no pipefail).
+	mkfifo "$WORKDIR/dump" "$WORKDIR/enc" "$WORKDIR/toc.pipe" || die "cannot create fifos"
+	pg_dump -Fc -Z 6 --no-owner --no-privileges >"$WORKDIR/dump" 2>"$WORKDIR/pg_dump.err" &
 	dump_pid=$!
-	age -R "$recipients" -o "$out" <"$WORKDIR/pipe" 2>"$WORKDIR/age.err"
+	tee "$WORKDIR/toc.pipe" <"$WORKDIR/dump" >"$WORKDIR/enc" 2>"$WORKDIR/tee.err" &
+	tee_pid=$!
+	# Only three counters ("rc tables entries") reach the disk, not the TOC.
+	toc_check "$WORKDIR/toc.pipe" >"$WORKDIR/toc.result" &
+	toc_pid=$!
+	age -R "$recipients" -o "$out" <"$WORKDIR/enc" 2>"$WORKDIR/age.err"
 	age_rc=$?
 	wait "$dump_pid"
 	dump_rc=$?
+	wait "$tee_pid"
+	tee_rc=$?
+	wait "$toc_pid"
 	if [ "$dump_rc" -ne 0 ]; then
 		die "pg_dump failed (exit $dump_rc): $(tail -n 3 "$WORKDIR/pg_dump.err" | tr '\n' ' ')"
 	fi
 	[ "$age_rc" -eq 0 ] || die "age failed (exit $age_rc): $(head -n 1 "$WORKDIR/age.err")"
+	[ "$tee_rc" -eq 0 ] || die "tee failed (exit $tee_rc): $(head -n 1 "$WORKDIR/tee.err")"
+	read -r toc_rc tables _ <"$WORKDIR/toc.result" || toc_rc=99
+	[ "$toc_rc" = 0 ] ||
+		die "the dump is not a readable archive: $(head -n 1 "$WORKDIR/toc.err")"
+	[ "$tables" -gt 0 ] || die "the dump contains no tables (wrong or empty database?); not uploading it"
 
 	size=$(wc -c <"$out" | tr -d ' ')
 	sha=$(sha256sum "$out" | cut -d' ' -f1)
@@ -83,7 +100,7 @@ cmd_backup() {
 		die "manifest upload failed; backup removed"
 	}
 
-	info "backup $name: done ($(human_size "$size"), sha256 $sha, schema version ${goose_version:-none})"
+	info "backup $name: done ($tables tables, $(human_size "$size"), sha256 $sha, schema version ${goose_version:-none})"
 	printf '%s\n' "$name"
 }
 
@@ -117,6 +134,8 @@ cmd_prune() {
 	keep_min=${BACKUP_KEEP_MIN:-7}
 	is_uint "$keep_days" || die "BACKUP_KEEP_DAYS must be a whole number of days"
 	is_uint "$keep_min" || die "BACKUP_KEEP_MIN must be a whole number"
+	# The newest backup is never pruned.
+	[ "$keep_min" -ge 1 ] || keep_min=1
 	if [ "$keep_days" -eq 0 ]; then
 		info "prune: BACKUP_KEEP_DAYS=0, keeping every backup"
 		return 0
@@ -124,8 +143,11 @@ cmd_prune() {
 	cutoff_epoch=$(($(date -u +%s) - keep_days * 86400))
 	cutoff="$NAME_BASE-$(date -u -d "@$cutoff_epoch" +%Y%m%dT%H%M%SZ).dump.age"
 
-	complete=$(list_objects | cut -d';' -f1) || die "prune: cannot list backups"
-	all=$(list_all_names) || die "prune: cannot list backups"
+	# One listing for both sets; any listing error stops the prune, so a
+	# failed list can never make every old backup look unprotected.
+	listing=$(remote_listing) || die "prune: cannot list backups; nothing deleted"
+	complete=$(complete_from "$listing" | cut -d';' -f1)
+	all=$(names_from "$listing")
 	victims=$(
 		{
 			printf '%s\n' "$complete" | sed -n "1,${keep_min}p" | sed 's/^/K /'

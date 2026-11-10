@@ -334,8 +334,10 @@ NAME2=$(bk "$SRC" list 2>/dev/null | sed -n '2p' | cut -d' ' -f1)
 [ -n "$NAME2" ] && [ "$NAME2" != "$NAME" ] && ok "second backup $NAME2" || bad "second backup missing"
 
 echo "== tamper"
+# Change byte 200 to a value it does not already have: a fixed 'X' was a
+# no-op whenever that byte was already 'X' (about 1 run in 256).
 docker run --rm -v "$VOL:/backups" --entrypoint sh "$IMAGE" -c \
-	"f=\$(ls /backups/spotify-tracker/*/*/$NAME2); printf 'X' | dd of=\"\$f\" bs=1 seek=200 conv=notrunc 2>/dev/null"
+	"f=\$(ls /backups/spotify-tracker/*/*/$NAME2); b=\$(dd if=\"\$f\" bs=1 skip=200 count=1 2>/dev/null); c=X; [ \"\$b\" = X ] && c=Y; printf '%s' \"\$c\" | dd of=\"\$f\" bs=1 seek=200 conv=notrunc 2>/dev/null"
 expect_fail "tampered ciphertext fails the sha256 check" "sha256 mismatch" \
 	with_key "$TMP/key.txt" bk "" verify "$NAME2" -i -
 

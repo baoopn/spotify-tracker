@@ -165,28 +165,32 @@ test.describe('footer credit', () => {
 	const CREDIT_URL = /^https:\/\/baoopn\.com\/api\/v1\/credit(\?|$)/;
 	const LIGHT_LOGO = 'https://media.baoopn.com/brand/e2e-light.svg';
 	const DARK_LOGO = 'https://media.baoopn.com/brand/e2e-dark.svg';
-	const credit = (kind: string) => ({
+	const credit = (kind: string, over: Record<string, unknown> = {}, size = [200, 200], style = 'color') => ({
 		data: {
-			text: 'Made with care by',
+			text: 'by',
+			prefix: 'by',
+			suffix: 'baoopn',
 			url: 'https://baoopn.com',
 			alt: 'baoopn.com',
 			logo: {
 				kind,
-				light: { url: LIGHT_LOGO, width: 200, height: 200, content_type: 'image/svg+xml' },
-				dark: { url: DARK_LOGO, width: 200, height: 200, content_type: 'image/svg+xml' }
+				style,
+				light: { url: LIGHT_LOGO, width: size[0], height: size[1], content_type: 'image/svg+xml' },
+				dark: { url: DARK_LOGO, width: size[0], height: size[1], content_type: 'image/svg+xml' }
 			},
-			updated_at: null
+			updated_at: null,
+			...over
 		}
 	});
 	const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200"/></svg>';
 
-	async function routeCredit(page: Page, kind: string) {
+	async function routeCredit(page: Page, kind: string, body: object = credit(kind)) {
 		await page.route(CREDIT_URL, (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				headers: { 'access-control-allow-origin': '*' },
-				body: JSON.stringify(credit(kind))
+				body: JSON.stringify(body)
 			})
 		);
 		await page.route('https://media.baoopn.com/**', (route) =>
@@ -204,10 +208,11 @@ test.describe('footer credit', () => {
 		const link = footer.getByRole('link', { name: 'by baoopn', exact: true });
 		await expect(link).toHaveAttribute('href', 'https://baoopn.com');
 		await expect(link).toHaveAttribute('rel', 'noopener');
-		await expect(footer.getByText('Made with care by')).toHaveCount(0);
 		const img = link.locator('img');
 		await expect(img).toHaveAttribute('alt', '');
 		await expect(img).toHaveAttribute('width', '24');
+		await expect(img).toHaveAttribute('height', '24');
+		await expect(img).toHaveClass(/rounded-\[5px\]/);
 
 		// Light first, then the inverse monogram once the theme switches.
 		await page.getByRole('button', { name: 'Appearance' }).click();
@@ -217,6 +222,21 @@ test.describe('footer credit', () => {
 		await panel.locator('input[name="mode"][value="dark"]').check({ force: true });
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 		await expect(img).toHaveAttribute('src', DARK_LOGO);
+		expectClean(problems);
+	});
+
+	test('a mono glyph keeps its shape and the saved prefix and suffix', async ({ page, problems }) => {
+		await routeCredit(page, 'mark', credit('mark', { prefix: 'Made by', suffix: '' }, [160, 78], 'mono'));
+		await page.goto('/');
+		const footer = page.getByRole('contentinfo');
+		const link = footer.getByRole('link', { name: 'Made by', exact: true });
+		await expect(link).toHaveAttribute('href', 'https://baoopn.com');
+		const img = link.locator('img');
+		await expect(img).toHaveAttribute('width', '49');
+		await expect(img).toHaveAttribute('height', '24');
+		await expect(img).not.toHaveClass(/rounded/);
+		// No empty suffix span, so no stray gap after the glyph.
+		await expect(link.locator('span')).toHaveCount(1);
 		expectClean(problems);
 	});
 

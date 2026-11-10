@@ -4,6 +4,11 @@ export type Problems = { pageErrors: string[]; cspViolations: string[]; consoleE
 
 /** Collects uncaught exceptions, CSP violations and console errors per page. */
 export const test = base.extend<{ problems: Problems }>({
+	// Never call the real baoopn.com credit from tests; the credit tests route their own.
+	page: async ({ page }, use) => {
+		await page.route('https://baoopn.com/api/v1/credit', (route) => route.abort());
+		await use(page);
+	},
 	problems: async ({ page }, use, testInfo) => {
 		const problems: Problems = { pageErrors: [], cspViolations: [], consoleErrors: [] };
 		page.on('pageerror', (err) => problems.pageErrors.push(err.message));

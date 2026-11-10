@@ -22,8 +22,20 @@ const isHttps = (v: unknown): v is string => typeof v === 'string' && v.startsWi
 
 const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
+// Logos may only come from the brand media host, the one the page CSP allows.
+const LOGO_ORIGIN = 'https://media.baoopn.com';
+
+function isLogoUrl(v: unknown): v is string {
+	if (!isHttps(v)) return false;
+	try {
+		return new URL(v).origin === LOGO_ORIGIN;
+	} catch {
+		return false;
+	}
+}
+
 function parseLogo(v: unknown): CreditLogo | null {
-	if (!isRecord(v) || !isHttps(v.url) || !isSize(v.width) || !isSize(v.height)) return null;
+	if (!isRecord(v) || !isLogoUrl(v.url) || !isSize(v.width) || !isSize(v.height)) return null;
 	return { url: v.url, width: v.width, height: v.height };
 }
 
@@ -37,7 +49,9 @@ export function parseCredit(json: unknown): Credit | null {
 	const light = parseLogo(d.logo.light);
 	const dark = parseLogo(d.logo.dark);
 	if (!light || !dark) return null;
-	const alt = typeof d.alt === 'string' ? d.alt : 'baoopn.com';
+	// The image is the link's only content, so it always needs a name.
+	const rawAlt = typeof d.alt === 'string' ? d.alt.trim().slice(0, MAX_TEXT).trim() : '';
+	const alt = rawAlt || 'baoopn.com';
 	return { text, url: d.url, alt, logo: { light, dark } };
 }
 

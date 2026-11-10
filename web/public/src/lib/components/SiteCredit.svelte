@@ -8,12 +8,16 @@
 
 	// Prerendered fallback; the live credit replaces it only once it is known to be good.
 	let credit = $state<Credit | null>(null);
-	let logoFailed = $state(false);
+	// Logo URLs that failed to load; another variant may still work.
+	let failed = $state<string[]>([]);
 
 	const logo = $derived(
 		credit && (theme.resolved === 'dark' ? credit.logo.dark : credit.logo.light)
 	);
-	const logoWidth = $derived(logo ? Math.round((LOGO_HEIGHT * logo.width) / logo.height) : 0);
+	// Width from the aspect ratio, clamped so odd sizes can't reserve silly space.
+	const logoWidth = $derived(
+		logo ? Math.min(Math.max(1, Math.round((LOGO_HEIGHT * logo.width) / logo.height)), 200) : 0
+	);
 
 	onMount(() => {
 		const ctrl = new AbortController();
@@ -25,8 +29,8 @@
 </script>
 
 <p class="flex flex-wrap items-center gap-x-2">
-	{#if credit && logo && !logoFailed}
-		<span class="label text-ink-soft">{credit.text}</span>
+	{#if credit && logo && !failed.includes(logo.url)}
+		<span class="text-sm text-ink-soft">{credit.text}</span>
 		<a
 			href={credit.url}
 			rel="noopener"
@@ -39,11 +43,11 @@
 				height={LOGO_HEIGHT}
 				decoding="async"
 				class="h-5 w-auto"
-				onerror={() => (logoFailed = true)}
+				onerror={() => (failed = [...failed, logo.url])}
 			/>
 		</a>
 	{:else}
-		<span class="label text-ink-soft">Designed &amp; built by</span>
+		<span class="text-sm text-ink-soft">Designed &amp; built by</span>
 		<a
 			href={SITE_URL}
 			class="link flex min-h-11 items-center gap-2 rounded-[8px] text-sm font-medium text-ink"

@@ -221,6 +221,9 @@ test.describe('footer credit', () => {
 		await expect(footer.getByText('Designed & built by', { exact: true })).toBeVisible();
 		const link = footer.getByRole('link', { name: 'baoopn', exact: true });
 		await expect(link).toHaveAttribute('href', 'https://baoopn.com');
+		// Give the failed fetch time to settle, then the fallback must still be there.
+		await page.waitForTimeout(500);
+		await expect(link).toBeVisible();
 		await expect(footer.locator('img')).toHaveCount(0);
 		expectClean(problems);
 	});

@@ -69,13 +69,21 @@ export default defineConfig({
 			: undefined,
 		proxy: {
 			'/admin/api': { target: API_TARGET, changeOrigin: false },
-			'/api': { target: API_TARGET, changeOrigin: false }
+			'/api': { target: API_TARGET, changeOrigin: false },
+			// Brand assets (and their static fallbacks) are served by the Go API.
+			'/brand': { target: API_TARGET, changeOrigin: false },
+			'/logo': { target: API_TARGET, changeOrigin: false },
+			'/icons': { target: API_TARGET, changeOrigin: false }
 		}
 	},
 	preview: {
 		proxy: {
 			'/admin/api': { target: API_TARGET, changeOrigin: false },
-			'/api': { target: API_TARGET, changeOrigin: false }
+			'/api': { target: API_TARGET, changeOrigin: false },
+			// Brand assets (and their static fallbacks) are served by the Go API.
+			'/brand': { target: API_TARGET, changeOrigin: false },
+			'/logo': { target: API_TARGET, changeOrigin: false },
+			'/icons': { target: API_TARGET, changeOrigin: false }
 		}
 	},
 	build: {

@@ -234,7 +234,7 @@
 	{:else}
 		<div class="hero">
 			<img
-				src="/logo/listening-mark-primary.svg"
+				src="/brand/mark_primary"
 				alt=""
 				width="200"
 				height="200"

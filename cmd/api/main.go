@@ -205,7 +205,7 @@ func newBrandCache(cfg config.API, log *slog.Logger) *brandkit.Cache {
 	case err != nil:
 		log.Error("invalid BRAND_API_URL; brand assets use the static copies", logging.Err(err))
 	case !c.Enabled():
-		log.Info("brand API disabled (BRAND_API_URL empty); using static copies")
+		log.Info("brand API disabled (BRAND_API_URL empty or off); using static copies")
 	}
 	return c
 }

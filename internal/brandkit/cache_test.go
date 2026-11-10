@@ -126,6 +126,8 @@ func TestRefreshRejectsBadEntries(t *testing.T) {
 		"wordmark_navy":         {"slot": "wordmark_cream"},
 		"icon_track_navy":       {"url": "/other/x.svg"},
 		"icon_track_cream":      {"url": "//evil.com/x.svg"},
+		"favicon_16":            {"url": "/media/../x.png"},
+		"favicon_32":            {"url": "/media/%2e%2e/x.png"},
 		"icon_paused_navy":      {"url": "https://media.baoopn.com/x\".svg"},
 		"icon_paused_cream":     {"url": "https://media.baoopn.com/a b.svg"},
 		"icon_playlist_navy":    {"url": ""},

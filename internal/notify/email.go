@@ -80,7 +80,7 @@ type Brand struct {
 // LogoHeightFor is the shown height of a w × h logo at 160 px wide. It is
 // 66 when the size is unknown or the result falls outside 16..320 px.
 func LogoHeightFor(w, h int) int {
-	if w <= 0 || h <= 0 {
+	if w <= 0 || h <= 0 || w > 1<<20 || h > 1<<20 {
 		return logoHeight
 	}
 	got := (logoWidth*h + w/2) / w

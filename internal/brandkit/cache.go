@@ -117,6 +117,9 @@ func (c *Cache) Refresh(ctx context.Context) error {
 	c.refreshing.Lock()
 	defer c.refreshing.Unlock()
 	n, err := c.fetch(ctx)
+	if err != nil && ctx.Err() != nil {
+		return err // shutting down: not a brand API failure
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
@@ -268,6 +271,9 @@ func (c *Cache) resolve(raw string) (string, string) {
 			return "", "relative url outside /media/"
 		}
 		u = c.origin.ResolveReference(u)
+		if !strings.HasPrefix(u.EscapedPath(), "/media/") || strings.Contains(strings.ToLower(u.EscapedPath()), "%2e") {
+			return "", "relative url outside /media/"
+		}
 	}
 	switch {
 	case u.Scheme != "https":

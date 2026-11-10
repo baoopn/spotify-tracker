@@ -101,8 +101,7 @@ services:
       - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-}
       - EMAIL_LOGO_URL=${EMAIL_LOGO_URL:-}
       # Brand files from the baoopn brand API. Coolify may treat an empty value
-      # as unset, so to always use the static copies set BRAND_API_URL=off
-      # (any non-https value disables it, with an error in the log).
+      # as unset, so to always use the static copies set BRAND_API_URL=off.
       - BRAND_API_URL=${BRAND_API_URL:-https://baoopn.com/api/v1/brand/listening}
       - BRAND_REFRESH=${BRAND_REFRESH:-60s}
       - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY:-}

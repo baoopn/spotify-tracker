@@ -145,6 +145,14 @@ func TestLoadAPIBrand(t *testing.T) {
 		t.Errorf("empty BRAND_API_URL = %+v, %v; want disabled", cfg.Brand, err)
 	}
 
+	for _, off := range []string{"off", "OFF", " none ", "disabled"} {
+		set()
+		t.Setenv("BRAND_API_URL", off)
+		if cfg, err = Load[API](); err != nil || cfg.Brand.APIURL != "" {
+			t.Errorf("BRAND_API_URL=%q = %+v, %v; want disabled", off, cfg.Brand, err)
+		}
+	}
+
 	set()
 	t.Setenv("BRAND_API_URL", "  https://staging.baoopn.com/api/v1/brand/listening ")
 	t.Setenv("BRAND_REFRESH", "5m")

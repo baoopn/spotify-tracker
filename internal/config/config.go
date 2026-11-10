@@ -301,6 +301,10 @@ func (a *API) validate() error {
 		a.Brand.APIURL = DefaultBrandAPIURL
 	}
 	a.Brand.APIURL = strings.TrimSpace(a.Brand.APIURL)
+	switch strings.ToLower(a.Brand.APIURL) {
+	case "off", "none", "disabled":
+		a.Brand.APIURL = "" // explicit opt-out, for hosts that drop empty values
+	}
 	if a.Brand.Refresh < 10*time.Second || a.Brand.Refresh > 24*time.Hour {
 		return fmt.Errorf("BRAND_REFRESH must be between 10s and 24h")
 	}

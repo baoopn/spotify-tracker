@@ -31,6 +31,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/alerts"
 	"github.com/baoopn/spotify-tracker/internal/analytics"
 	"github.com/baoopn/spotify-tracker/internal/artistimages"
+	"github.com/baoopn/spotify-tracker/internal/brandkit"
 	"github.com/baoopn/spotify-tracker/internal/config"
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
@@ -98,6 +99,7 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
 	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
+	g.Go(func() error { return c.brand.Run(gctx) })
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
 	}
@@ -117,6 +119,8 @@ type components struct {
 	alerts    *alerts.Checker
 	analytics *analytics.Recorder
 	images    *artistimages.Refresher
+	// brand is never nil; it is disabled when BRAND_API_URL is empty.
+	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
 	topPlaylists *topplaylists.Runner
 }
@@ -142,6 +146,8 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 			slog.String("public_url", cfg.PublicURL))
 	}
 	notifier := notify.New(smtpFromSettings(settingsStore), rdb, brand, log)
+	brandCache := newBrandCache(cfg, log)
+	notifier.SetLogo(brandkit.EmailLogo(brandCache))
 	checker := alerts.New(settingsStore, notifier, cfg.Spotify.TokenLifetimeDays,
 		strings.TrimRight(cfg.PublicURL, "/")+"/admin/settings/spotify", log)
 	checker.WatchBackups(st, strings.TrimRight(cfg.PublicURL, "/")+alerts.BackupStatusPath)
@@ -179,14 +185,29 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
 		ops:          opsSrv,
-		http:         newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), topCfg, log),
+		http:         newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), topCfg, brandCache, log),
 		grpc:         grpcSrv,
 		health:       hs,
 		alerts:       checker,
 		analytics:    recorder,
 		images:       artistimages.New(st, mgr, log),
 		topPlaylists: topRunner,
+		brand:        brandCache,
 	}, nil
+}
+
+// newBrandCache builds the brand API cache. An invalid or empty
+// BRAND_API_URL disables it: every brand file then comes from the static
+// copies, and the API still starts.
+func newBrandCache(cfg config.API, log *slog.Logger) *brandkit.Cache {
+	c, err := brandkit.New(cfg.Brand.APIURL, cfg.Brand.Refresh, nil, log.With(slog.String("component", "brandkit")))
+	switch {
+	case err != nil:
+		log.Error("invalid BRAND_API_URL; brand assets use the static copies", logging.Err(err))
+	case !c.Enabled():
+		log.Info("brand API disabled (BRAND_API_URL empty); using static copies")
+	}
+	return c
 }
 
 // topPlaylistsConfig parses the top playlists settings. Invalid values are
@@ -291,10 +312,11 @@ func newAuthenticator(cfg config.API, rdb *redis.Client, log *slog.Logger) *admi
 	return auth
 }
 
-// newHTTPServer builds the public HTTP server: /api/v1, /admin and the
-// public site at /.
+// newHTTPServer builds the public HTTP server: /api/v1, /admin, the brand
+// files and the public site at /.
 func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder *analytics.Recorder,
-	adminAPI *admin.API, auth *admin.Authenticator, topCfg topplaylists.Config, log *slog.Logger) *http.Server {
+	adminAPI *admin.API, auth *admin.Authenticator, topCfg topplaylists.Config, brand *brandkit.Cache,
+	log *slog.Logger) *http.Server {
 	return &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(st, rdb, log, httpapi.Options{
@@ -308,6 +330,8 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			V1Middleware:         []func(http.Handler) http.Handler{recorder.Middleware},
 			Events:               recorder.EventsHandler,
 			Mount: func(r chi.Router) {
+				// Brand files first: /admin/site.webmanifest must win over the SPA.
+				brandkit.Mount(r, brand, publicui.FS())
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)
 			},

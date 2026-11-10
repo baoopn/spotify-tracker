@@ -23,7 +23,7 @@ export default defineConfig({
 		locale: 'en-US'
 	},
 	projects: [
-		{ name: 'api', testMatch: /api\.spec\.ts/, use: { baseURL: API } },
+		{ name: 'api', testMatch: /(api|brand)\.spec\.ts/, use: { baseURL: API } },
 		{
 			name: 'embedded',
 			testMatch: /(public|admin)\.spec\.ts/,

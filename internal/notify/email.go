@@ -72,6 +72,40 @@ type Brand struct {
 	Host string
 	// LogoURL is the absolute URL of the header wordmark ("" for none).
 	LogoURL string
+	// LogoHeight is the wordmark's shown height in CSS px at 160 px wide
+	// (0 = 66, the default wordmark's ratio).
+	LogoHeight int
+}
+
+// LogoHeightFor is the shown height of a w × h logo at 160 px wide. It is
+// 66 when the size is unknown or the result falls outside 16..320 px.
+func LogoHeightFor(w, h int) int {
+	if w <= 0 || h <= 0 {
+		return logoHeight
+	}
+	got := (logoWidth*h + w/2) / w
+	if got < 16 || got > 320 {
+		return logoHeight
+	}
+	return got
+}
+
+// WithLogo returns b with the header wordmark at logoURL (w × h px, used for
+// the aspect ratio). An unsafe logoURL leaves b unchanged.
+func (b Brand) WithLogo(logoURL string, w, h int) Brand {
+	if safeURL(logoURL) == "" {
+		return b
+	}
+	b.LogoURL = logoURL
+	b.LogoHeight = LogoHeightFor(w, h)
+	return b
+}
+
+func (b Brand) logoH() int {
+	if b.LogoHeight <= 0 {
+		return logoHeight
+	}
+	return b.LogoHeight
 }
 
 // ErrLogoURL means EMAIL_LOGO_URL is not an absolute http(s) URL.
@@ -172,7 +206,7 @@ func (e Email) view(b Brand) view {
 		t = Info
 	}
 	v := view{Email: e, Brand: b, Tone: tones[t], Code: truncate(e.Code, maxCode),
-		SettingsURL: b.SettingsURL(), LogoW: logoWidth, LogoH: logoHeight}
+		SettingsURL: b.SettingsURL(), LogoW: logoWidth, LogoH: b.logoH()}
 	if e.Action != nil {
 		v.ActionURL = safeURL(e.Action.URL)
 	}

@@ -179,6 +179,29 @@ token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
 is written to `admin_audit`.
 
+## Brand assets
+
+Logos, icons, favicons, og:image and the email logo come from the baoopn brand
+API (`BRAND_API_URL`, default `https://baoopn.com/api/v1/brand/listening`), so a
+file replaced in the baoopn admin shows up here within minutes, without a
+deploy. `internal/brandkit` fetches the JSON every `BRAND_REFRESH` (default 60
+s, 3 s timeout) and keeps the last good copy in memory; a failed refresh is
+logged and never clears it. An entry is used only when its URL is https on
+`media.baoopn.com` or `baoopn.com` (a relative `/media/...` URL is resolved
+against the API origin) and its content type fits the slot (svg, png or ico).
+
+- `GET /brand/{slot}` redirects (302) to the cached media URL, or to the static
+  copy in `web/public/static` when nothing is cached. The frontends use these
+  stable paths, so the prerendered HTML and its CSP hashes never change.
+- `/favicon.ico`, `/favicon.svg`, `/apple-touch-icon.png`, `/favicon-{16,32,48}.png`,
+  `/icon-{192,512}.png`, `/icon-maskable-512.png` and `/og-image.png` redirect
+  to the media URL when cached, else serve the embedded static file.
+- `/site.webmanifest` and `/admin/site.webmanifest` are generated; their icons
+  point at the media URLs (static paths as the fallback).
+- Every brand response has `Cache-Control: public, max-age=300`.
+- An empty `BRAND_API_URL` disables the API; the static copies are then always
+  used. Every slot has a static copy (checked by a test).
+
 ## Observability
 
 - Structured JSON logs (`log/slog`) with request IDs.

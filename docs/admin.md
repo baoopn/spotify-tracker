@@ -52,9 +52,12 @@ part and a branded HTML part (table layout, inline styles, light and dark mode).
 The layout lives in `internal/notify/templates/email.html.tmpl`; the content of
 each alert is in `internal/alerts/emails.go`.
 
-- The header logo is `web/public/static/email/listening-wordmark-primary@2x.png`,
-  served at `<PUBLIC_URL>/email/listening-wordmark-primary@2x.png`. Set
-  `EMAIL_LOGO_URL` to load it from somewhere else.
+- The header logo is picked at send time, in this order: the brand API's
+  `email_logo` (see `BRAND_API_URL`, linked directly from `media.baoopn.com`),
+  then `EMAIL_LOGO_URL` if set, then
+  `<PUBLIC_URL>/email/listening-wordmark-primary@2x.png` (the static copy in
+  `web/public/static/email/`). It is shown 160 px wide; the height follows the
+  file's aspect ratio (66 px when unknown).
 - Preview every email (HTML, text and raw `.eml`; nothing is sent):
   `go run ./cmd/emailpreview -out ./email-preview -public-url https://listening.example.com`
 - Golden files are in `internal/notify/testdata/`. After changing a template or

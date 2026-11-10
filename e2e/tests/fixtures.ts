@@ -6,7 +6,7 @@ export type Problems = { pageErrors: string[]; cspViolations: string[]; consoleE
 export const test = base.extend<{ problems: Problems }>({
 	// Never call the real baoopn.com credit from tests; the credit tests route their own.
 	page: async ({ page }, use) => {
-		await page.route('https://baoopn.com/api/v1/credit', (route) => route.abort());
+		await page.route(/^https:\/\/baoopn\.com\/api\/v1\/credit(\?|$)/, (route) => route.abort());
 		await use(page);
 	},
 	problems: async ({ page }, use, testInfo) => {

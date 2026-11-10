@@ -23,10 +23,12 @@ func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
 		Prefix: "/admin",
 		SPA:    true,
 		ExtraCSP: map[string]string{
-			"script-src":  clerk,
-			"connect-src": clerk,
+			"script-src": clerk,
+			// The sidebar credit fetches https://baoopn.com/api/v1/credit and
+			// shows the brand mark from media.baoopn.com.
+			"connect-src": clerk + " https://baoopn.com",
 			"frame-src":   clerk,
-			"img-src":     "https://img.clerk.com",
+			"img-src":     "https://img.clerk.com https://media.baoopn.com",
 		},
 		Placeholder: "The admin UI was not built. Run <code>pnpm --dir web/admin build</code>.",
 	})

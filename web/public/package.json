@@ -16,7 +16,7 @@
 		"build": "vite build && node scripts/postbuild.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-time.mjs",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-time.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-credit.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint . --max-warnings 0",
 		"format": "prettier --write ."

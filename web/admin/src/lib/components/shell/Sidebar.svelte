@@ -1,6 +1,6 @@
 <script lang="ts">
 	import BrandLogo from '../BrandLogo.svelte';
-	import OutLink from '../OutLink.svelte';
+	import SiteCredit from './SiteCredit.svelte';
 	import ListeningIcon, { type ListeningIconName } from '../ListeningIcon.svelte';
 	import {
 		ChartLine,
@@ -144,14 +144,8 @@
 		{/each}
 	</nav>
 
-	<!-- The master baoopn logo only links back to the main site. -->
+	<!-- Live baoopn credit (same as the public footer), linking back to the main site. -->
 	<div class="border-t border-rule px-5 py-3">
-		<OutLink
-			href="https://baoopn.com"
-			class="inline-flex items-center gap-2 rounded-lg font-mono text-xs text-ink-soft hover:text-ink"
-		>
-			<BrandLogo kind="baoopn-wordmark" alt="baoopn" class="h-6 w-auto" />
-			<span>baoopn.com</span>
-		</OutLink>
+		<SiteCredit />
 	</div>
 </aside>

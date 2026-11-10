@@ -58,6 +58,24 @@ func TestSPA(t *testing.T) {
 	if !strings.Contains(csp, "https://a.clerk.accounts.dev") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("unexpected CSP: %s", csp)
 	}
+	// The sidebar credit: only baoopn.com for the fetch and media.baoopn.com for the mark.
+	directive := func(name string) string {
+		for _, d := range strings.Split(csp, "; ") {
+			if v, ok := strings.CutPrefix(d, name+" "); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	if c := directive("connect-src"); !strings.HasSuffix(c, " https://baoopn.com") || strings.Count(c, "baoopn") != 1 {
+		t.Errorf("connect-src should add only https://baoopn.com: %q", c)
+	}
+	if i := directive("img-src"); !strings.HasSuffix(i, " https://img.clerk.com https://media.baoopn.com") {
+		t.Errorf("img-src should add only https://media.baoopn.com: %q", i)
+	}
+	if strings.Contains(directive("script-src"), "unsafe-inline") {
+		t.Errorf("script-src must not allow unsafe-inline: %s", csp)
+	}
 
 	if rec := get("/admin/_app/immutable/entry.js"); rec.Code != 200 ||
 		!strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {

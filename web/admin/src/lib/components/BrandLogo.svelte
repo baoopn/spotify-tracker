@@ -1,9 +1,5 @@
 <script lang="ts" module>
-	export type BrandAsset =
-		| 'listening-wordmark'
-		| 'listening-mark'
-		/** Master baoopn wordmark: only for the link back to baoopn.com. */
-		| 'baoopn-wordmark';
+	export type BrandAsset = 'listening-wordmark' | 'listening-mark';
 </script>
 
 <script lang="ts">
@@ -21,17 +17,10 @@
 	} = $props();
 
 	// Brand-kit files, used as-is: primary (navy badge) in light mode, inverse in dark mode.
-	const src = $derived(
-		kind === 'baoopn-wordmark'
-			? {
-					light: asset('brand/baoopn-wordmark-primary.svg'),
-					dark: asset('brand/baoopn-wordmark-inverse.svg')
-				}
-			: {
-					light: asset(`brand/listening/${kind}-primary.svg`),
-					dark: asset(`brand/listening/${kind}-inverse.svg`)
-				}
-	);
+	const src = $derived({
+		light: asset(`brand/listening/${kind}-primary.svg`),
+		dark: asset(`brand/listening/${kind}-inverse.svg`)
+	});
 	const size = $derived(kind === 'listening-mark' ? { w: 200, h: 200 } : { w: 320, h: 132 });
 </script>
 

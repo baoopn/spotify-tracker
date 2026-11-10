@@ -1,6 +1,6 @@
 <script lang="ts">
 	import BrandLogo from '../BrandLogo.svelte';
-	import { Globe, LogOut, Menu, Monitor, Moon, Palette, Sun } from '@lucide/svelte';
+	import { Globe, LogOut, Menu, Monitor, Moon, Palette, Sun, UserCog } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import Popover from './Popover.svelte';
 	import ZoneNotice from '../ZoneNotice.svelte';
@@ -106,6 +106,13 @@
 						API <span class="font-mono text-ink">{auth.version}</span>
 					</p>
 				{/if}
+				<a
+					href={resolve('settings/account')}
+					class="btn btn-ghost w-full justify-start"
+					onclick={close}
+				>
+					<UserCog class="size-4" aria-hidden="true" /> Manage account
+				</a>
 				<button
 					type="button"
 					class="btn btn-ghost w-full justify-start"

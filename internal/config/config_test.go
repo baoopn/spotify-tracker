@@ -112,3 +112,60 @@ func TestLoadAPITopPlaylists(t *testing.T) {
 		t.Errorf("got %+v, %v", cfg.TopPlaylists, err)
 	}
 }
+
+func TestLoadAPIBrand(t *testing.T) {
+	set := func() {
+		t.Setenv("DATABASE_URL", "postgres://u:p@localhost/db")
+		t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+		t.Setenv("SECRETS_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		t.Setenv("INTERNAL_API_TOKEN", "0123456789abcdef")
+	}
+	// t.Setenv restores the original value after the test; Unsetenv then
+	// removes it for this test only.
+	t.Setenv("BRAND_API_URL", "")
+	if err := os.Unsetenv("BRAND_API_URL"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BRAND_REFRESH", "")
+	if err := os.Unsetenv("BRAND_REFRESH"); err != nil {
+		t.Fatal(err)
+	}
+	set()
+	cfg, err := Load[API]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Brand.APIURL != DefaultBrandAPIURL || cfg.Brand.Refresh != 60*time.Second {
+		t.Errorf("defaults = %+v", cfg.Brand)
+	}
+
+	set()
+	t.Setenv("BRAND_API_URL", "")
+	if cfg, err = Load[API](); err != nil || cfg.Brand.APIURL != "" {
+		t.Errorf("empty BRAND_API_URL = %+v, %v; want disabled", cfg.Brand, err)
+	}
+
+	for _, off := range []string{"off", "OFF", " none ", "disabled"} {
+		set()
+		t.Setenv("BRAND_API_URL", off)
+		if cfg, err = Load[API](); err != nil || cfg.Brand.APIURL != "" {
+			t.Errorf("BRAND_API_URL=%q = %+v, %v; want disabled", off, cfg.Brand, err)
+		}
+	}
+
+	set()
+	t.Setenv("BRAND_API_URL", "  https://staging.baoopn.com/api/v1/brand/listening ")
+	t.Setenv("BRAND_REFRESH", "5m")
+	if cfg, err = Load[API](); err != nil || cfg.Brand.APIURL != "https://staging.baoopn.com/api/v1/brand/listening" ||
+		cfg.Brand.Refresh != 5*time.Minute {
+		t.Errorf("custom = %+v, %v", cfg.Brand, err)
+	}
+
+	for _, bad := range []string{"5s", "25h"} {
+		set()
+		t.Setenv("BRAND_REFRESH", bad)
+		if _, err := Load[API](); err == nil {
+			t.Errorf("BRAND_REFRESH=%s: expected an error", bad)
+		}
+	}
+}

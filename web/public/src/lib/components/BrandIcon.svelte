@@ -1,5 +1,7 @@
 <script lang="ts">
-	// Listening sub-brand UI glyphs (static/icons, copied as-is from the brand kit).
+	// Listening sub-brand UI glyphs, served via /brand/<slot> (302 to the baoopn
+	// brand API's media URL, or to the static/icons copy when it is unavailable).
+	// Names here have no hyphens except now-playing, which has its own branch.
 	// tone="auto" swaps navy (light theme) and cream (dark theme); "cream"/"navy"
 	// pin one variant, e.g. cream inside the always-navy brand chip.
 	type Name = 'now-playing' | 'paused' | 'track' | 'playlist' | 'headphones';
@@ -28,10 +30,10 @@
 			<picture>
 				<source
 					media="(prefers-reduced-motion: reduce)"
-					srcset="/icons/now-playing-static-{t.tone}.svg"
+					srcset="/brand/icon_now_playing_static_{t.tone}"
 				/>
 				<img
-					src="/icons/now-playing-{t.tone}.svg"
+					src="/brand/icon_now_playing_{t.tone}"
 					alt=""
 					width="200"
 					height="200"
@@ -40,7 +42,7 @@
 			</picture>
 		{:else}
 			<img
-				src="/icons/{name}-{t.tone}.svg"
+				src="/brand/icon_{name}_{t.tone}"
 				alt=""
 				width="200"
 				height="200"

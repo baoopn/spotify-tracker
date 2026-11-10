@@ -29,7 +29,7 @@
 {:else}
 	<!-- No album art: fall back to the listening mark (sub-brand kit). -->
 	<img
-		src="/logo/listening-mark-primary.svg"
+		src="/brand/mark_primary"
 		alt={alt ? 'baoopn listening' : ''}
 		width="200"
 		height="200"

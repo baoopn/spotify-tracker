@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -69,6 +70,7 @@ type API struct {
 
 	Spotify
 	Email
+	Brand
 	Admin
 	TopPlaylists
 
@@ -103,6 +105,22 @@ type Email struct {
 	// LogoURL overrides the absolute http(s) URL of the wordmark PNG shown in
 	// alert emails (default: PUBLIC_URL + /email/listening-wordmark-primary@2x.png).
 	LogoURL string `env:"EMAIL_LOGO_URL"`
+}
+
+// DefaultBrandAPIURL is the baoopn brand API the listening brand files come
+// from when BRAND_API_URL is not set.
+const DefaultBrandAPIURL = "https://baoopn.com/api/v1/brand/listening"
+
+// Brand configures the brand files (logos, icons, favicons, email logo)
+// read from the baoopn brand API, with the repository's static copies as
+// the fallback. The URL itself is checked by internal/brandkit, so a bad
+// value falls back to the static copies instead of stopping the API.
+type Brand struct {
+	// APIURL is the brand API endpoint. Unset uses DefaultBrandAPIURL; an
+	// empty value disables it (the static copies are always used).
+	APIURL string `env:"BRAND_API_URL"`
+	// Refresh is the time between two fetches of the brand API (10s..24h).
+	Refresh time.Duration `env:"BRAND_REFRESH" envDefault:"60s"`
 }
 
 // Spotify holds the Spotify app credentials used by the API.
@@ -276,6 +294,19 @@ func (a *API) validate() error {
 	}
 	if a.EnrichMaxAttempts <= 0 {
 		return fmt.Errorf("ENRICH_MAX_ATTEMPTS must be > 0")
+	}
+	// An empty BRAND_API_URL disables the brand API, so the default applies
+	// only when the variable is not set at all.
+	if _, set := os.LookupEnv("BRAND_API_URL"); !set {
+		a.Brand.APIURL = DefaultBrandAPIURL
+	}
+	a.Brand.APIURL = strings.TrimSpace(a.Brand.APIURL)
+	switch strings.ToLower(a.Brand.APIURL) {
+	case "off", "none", "disabled":
+		a.Brand.APIURL = "" // explicit opt-out, for hosts that drop empty values
+	}
+	if a.Brand.Refresh < 10*time.Second || a.Brand.Refresh > 24*time.Hour {
+		return fmt.Errorf("BRAND_REFRESH must be between 10s and 24h")
 	}
 	return nil
 }

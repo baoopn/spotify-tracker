@@ -11,6 +11,7 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -38,11 +39,16 @@ func (c SMTPConfig) Enabled() bool { return c.Host != "" && c.From != "" && len(
 // dashboard edits apply without a restart).
 type ConfigFunc func(ctx context.Context) (SMTPConfig, error)
 
+// LogoFunc returns the current header logo (e.g. from the brand API cache)
+// and its size in px; ok is false when there is none.
+type LogoFunc func() (url string, width, height int, ok bool)
+
 // Notifier sends alerts.
 type Notifier struct {
 	config ConfigFunc
 	rdb    *redis.Client
 	brand  Brand
+	logo   atomic.Pointer[LogoFunc]
 	log    *slog.Logger
 }
 
@@ -52,8 +58,27 @@ func New(config ConfigFunc, rdb *redis.Client, brand Brand, log *slog.Logger) *N
 	return &Notifier{config: config, rdb: rdb, brand: brand, log: log}
 }
 
-// Brand is the brand the notifier's emails use.
-func (n *Notifier) Brand() Brand { return n.brand }
+// SetLogo sets where the header logo comes from at send time. When f
+// reports no logo, the static brand (EMAIL_LOGO_URL or PUBLIC_URL +
+// LogoPath) is used.
+func (n *Notifier) SetLogo(f LogoFunc) {
+	if f == nil {
+		n.logo.Store(nil)
+		return
+	}
+	n.logo.Store(&f)
+}
+
+// Brand is the brand the notifier's emails use, resolved at call time: the
+// SetLogo logo when it has one, else the static brand.
+func (n *Notifier) Brand() Brand {
+	if f := n.logo.Load(); f != nil {
+		if u, w, h, ok := (*f)(); ok {
+			return n.brand.WithLogo(u, w, h)
+		}
+	}
+	return n.brand
+}
 
 // Send delivers a message immediately to the given recipients (or the
 // configured alert recipients when to is empty).
@@ -71,7 +96,7 @@ func (n *Notifier) SendTest(ctx context.Context, to []string, sentBy string) err
 	if err != nil {
 		return err
 	}
-	return n.sendTo(cfg, to, TestEmail(sentBy, cfg.Host, n.brand, time.Now()))
+	return n.sendTo(cfg, to, TestEmail(sentBy, cfg.Host, n.Brand(), time.Now()))
 }
 
 func (n *Notifier) sendTo(cfg SMTPConfig, to []string, e Email) error {
@@ -136,7 +161,7 @@ func (n *Notifier) Once(ctx context.Context, key string, ttl time.Duration, e Em
 }
 
 func (n *Notifier) send(cfg SMTPConfig, e Email) error {
-	msg, err := Message(cfg.From, cfg.To, e, n.brand, time.Now())
+	msg, err := Message(cfg.From, cfg.To, e, n.Brand(), time.Now())
 	if err != nil {
 		return err
 	}

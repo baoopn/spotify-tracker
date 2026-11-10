@@ -1,18 +1,16 @@
-// The live "Designed & built by" credit served by the main baoopn site.
+// The live footer credit served by the main baoopn site. The footer reads
+// "by [monogram] baoopn", so it asks for the monogram (?logo=mark) and uses
+// only the link and the logo files, not the endpoint's text.
 // Everything is validated before use; any failure means "keep the fallback".
 
-export const CREDIT_ENDPOINT = 'https://baoopn.com/api/v1/credit';
+export const CREDIT_ENDPOINT = 'https://baoopn.com/api/v1/credit?logo=mark';
 
 export type CreditLogo = { url: string; width: number; height: number };
 
 export type Credit = {
-	text: string;
 	url: string;
-	alt: string;
 	logo: { light: CreditLogo; dark: CreditLogo };
 };
-
-const MAX_TEXT = 80;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
 	return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -43,16 +41,13 @@ function parseLogo(v: unknown): CreditLogo | null {
 export function parseCredit(json: unknown): Credit | null {
 	if (!isRecord(json) || !isRecord(json.data)) return null;
 	const d = json.data;
-	if (typeof d.text !== 'string') return null;
-	const text = d.text.trim().slice(0, MAX_TEXT).trim();
-	if (!text || !isHttps(d.url) || !isRecord(d.logo)) return null;
+	// Only the monogram fits this footer; an endpoint that ignores ?logo=mark
+	// (a wordmark) keeps the plain "by baoopn" text.
+	if (!isHttps(d.url) || !isRecord(d.logo) || d.logo.kind !== 'mark') return null;
 	const light = parseLogo(d.logo.light);
 	const dark = parseLogo(d.logo.dark);
 	if (!light || !dark) return null;
-	// The image is the link's only content, so it always needs a name.
-	const rawAlt = typeof d.alt === 'string' ? d.alt.trim().slice(0, MAX_TEXT).trim() : '';
-	const alt = rawAlt || 'baoopn.com';
-	return { text, url: d.url, alt, logo: { light, dark } };
+	return { url: d.url, logo: { light, dark } };
 }
 
 let memo: Promise<Credit | null> | null = null;

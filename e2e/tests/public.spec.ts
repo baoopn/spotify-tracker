@@ -161,6 +161,74 @@ test.describe('public page', () => {
 	});
 });
 
+test.describe('footer credit', () => {
+	const LIGHT_LOGO = 'https://media.baoopn.com/brand/e2e-light.svg';
+	const DARK_LOGO = 'https://media.baoopn.com/brand/e2e-dark.svg';
+	const CREDIT = {
+		data: {
+			text: 'Made with care by',
+			url: 'https://baoopn.com',
+			alt: 'E2E credit logo',
+			logo: {
+				kind: 'wordmark',
+				light: { url: LIGHT_LOGO, width: 320, height: 132, content_type: 'image/svg+xml' },
+				dark: { url: DARK_LOGO, width: 320, height: 132, content_type: 'image/svg+xml' }
+			},
+			updated_at: null
+		}
+	};
+	const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="132"><rect width="320" height="132"/></svg>';
+
+	test('shows the live credit logo and follows the theme', async ({ page, problems }) => {
+		await page.route('https://baoopn.com/api/v1/credit', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: { 'access-control-allow-origin': '*' },
+				body: JSON.stringify(CREDIT)
+			})
+		);
+		await page.route('https://media.baoopn.com/**', (route) =>
+			route.fulfill({ status: 200, contentType: 'image/svg+xml', body: SVG })
+		);
+		await page.goto('/');
+		await expect(page.getByText('Updated live')).toBeVisible({ timeout: 20_000 });
+		const footer = page.getByRole('contentinfo');
+		await expect(footer.getByText('Made with care by', { exact: true })).toBeVisible();
+		const link = footer.locator('a[href="https://baoopn.com"]');
+		await expect(link).toHaveAttribute('rel', 'noopener');
+		const img = link.getByRole('img', { name: 'E2E credit logo' });
+		await expect(img).toHaveAttribute('width', '48');
+		await expect(img).toHaveAttribute('height', '20');
+
+		// Light first, then the dark variant once the theme switches.
+		await page.getByRole('button', { name: 'Appearance' }).click();
+		const panel = page.locator('#theme-panel');
+		await panel.locator('input[name="mode"][value="light"]').check({ force: true });
+		await expect(img).toHaveAttribute('src', LIGHT_LOGO);
+		await panel.locator('input[name="mode"][value="dark"]').check({ force: true });
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+		await expect(img).toHaveAttribute('src', DARK_LOGO);
+		expectClean(problems);
+	});
+
+	test('keeps the text credit when the credit request fails', async ({ page, problems }) => {
+		await page.route('https://baoopn.com/api/v1/credit', (route) => route.abort());
+		const failed = page.waitForEvent('requestfailed', (r) => r.url() === 'https://baoopn.com/api/v1/credit');
+		await page.goto('/');
+		await failed;
+		const footer = page.getByRole('contentinfo');
+		await expect(footer.getByText('Designed & built by', { exact: true })).toBeVisible();
+		const link = footer.getByRole('link', { name: 'baoopn', exact: true });
+		await expect(link).toHaveAttribute('href', 'https://baoopn.com');
+		// Give the failed fetch time to settle, then the fallback must still be there.
+		await page.waitForTimeout(500);
+		await expect(link).toBeVisible();
+		await expect(footer.locator('img')).toHaveCount(0);
+		expectClean(problems);
+	});
+});
+
 /**
  * Deterministic playback at `at` (0-1) of a 240 s track: no stream (falls back
  * to polling), and each poll reports the position a real player would be at.

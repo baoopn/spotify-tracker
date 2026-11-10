@@ -23,6 +23,28 @@ func TestPublicSiteCSPAllowsSpotifyEmbed(t *testing.T) {
 	}
 }
 
+// The live footer credit: fetched from baoopn.com, logo from media.baoopn.com.
+func TestPublicSiteCSPAllowsSiteCredit(t *testing.T) {
+	csp := staticsite.BuildCSP(nil, publicSiteOptions().ExtraCSP)
+	directives := map[string]string{}
+	for _, d := range strings.Split(csp, "; ") {
+		name, value, _ := strings.Cut(d, " ")
+		directives[name] = value
+	}
+	if got := directives["connect-src"]; got != "'self' https://baoopn.com" {
+		t.Errorf("connect-src = %q, want 'self' https://baoopn.com", got)
+	}
+	if !strings.Contains(" "+directives["img-src"]+" ", " https://media.baoopn.com ") {
+		t.Errorf("img-src should allow media.baoopn.com: %q", directives["img-src"])
+	}
+	if got := directives["frame-src"]; got != "https://open.spotify.com" {
+		t.Errorf("frame-src = %q, want only https://open.spotify.com", got)
+	}
+	if strings.Contains(directives["script-src"], "'unsafe-inline'") {
+		t.Errorf("script-src must not allow 'unsafe-inline': %q", directives["script-src"])
+	}
+}
+
 func TestTopPlaylistsLiveConfig(t *testing.T) {
 	parse := func(periods, live, refresh string) (topplaylists.Config, string) {
 		var buf bytes.Buffer

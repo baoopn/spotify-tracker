@@ -4,6 +4,7 @@
 	import NowPlayingHero from '#lib/components/NowPlayingHero.svelte';
 	import RecentList from '#lib/components/RecentList.svelte';
 	import RecentPlaylists from '#lib/components/RecentPlaylists.svelte';
+	import SiteCredit from '#lib/components/SiteCredit.svelte';
 	import SongStats from '#lib/components/stats/SongStats.svelte';
 	import TopPlaylists from '#lib/components/TopPlaylists.svelte';
 	import TopTracks from '#lib/components/TopTracks.svelte';
@@ -11,7 +12,7 @@
 	import { zone } from '#lib/zone.svelte.js';
 	import { live } from '#lib/live.svelte.js';
 	import { NOW_POLL_MS, nowPlayingQuery } from '#lib/queries.js';
-	import { CONTACT_URL, SITE_URL } from '#lib/links.js';
+	import { CONTACT_URL } from '#lib/links.js';
 
 	const queryClient = useQueryClient();
 	onMount(() => live.start(queryClient));
@@ -101,27 +102,6 @@
 			href={CONTACT_URL}
 			class="link flex min-h-11 items-center rounded-[8px] text-sm font-medium text-ink">Contact</a
 		>
-		<!-- Master brand only as the link back to the main site (monogram, 24 px). -->
-		<a
-			href={SITE_URL}
-			class="link flex min-h-11 items-center gap-2 rounded-[8px] text-sm font-medium text-ink"
-		>
-			by
-			<img
-				src="/logo/baoopn-monogram-primary.svg"
-				alt=""
-				width="200"
-				height="200"
-				class="size-6 rounded-[5px] dark:hidden"
-			/>
-			<img
-				src="/logo/baoopn-monogram-inverse.svg"
-				alt=""
-				width="200"
-				height="200"
-				class="hidden size-6 rounded-[5px] dark:block"
-			/>
-			baoopn
-		</a>
+		<SiteCredit />
 	</div>
 </footer>

@@ -322,10 +322,15 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 }
 
 // publicSiteOptions configures the public page: its CSP also allows the
-// Spotify embed player used for the top playlists.
+// Spotify embed player used for the top playlists, and the live footer credit
+// (fetched from baoopn.com, logo served from media.baoopn.com).
 func publicSiteOptions() staticsite.Options {
 	return staticsite.Options{
-		ExtraCSP:    map[string]string{"frame-src": "https://open.spotify.com"},
+		ExtraCSP: map[string]string{
+			"frame-src":   "https://open.spotify.com",
+			"connect-src": "https://baoopn.com",
+			"img-src":     "https://media.baoopn.com",
+		},
 		Placeholder: "The public page was not built. Run <code>pnpm --dir web/public build</code>.",
 	}
 }

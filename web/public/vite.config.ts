@@ -35,7 +35,9 @@ const apiProxy: Record<string, ProxyOptions> = {
 				});
 			});
 		}
-	}
+	},
+	// Brand assets: the Go API 302s to the brand API's media URL or a static copy.
+	'/brand': { target: API_TARGET, changeOrigin: false }
 };
 
 export default defineConfig({
@@ -58,6 +60,14 @@ export default defineConfig({
 			}),
 			paths: {
 				base: ''
+			},
+			prerender: {
+				// /brand/<slot> is a Go API route (302 to the brand media or a static
+				// copy), so it does not exist at prerender time. Fail on anything else.
+				handleHttpError: ({ path, message }) => {
+					if (path.startsWith('/brand/')) return;
+					throw new Error(message);
+				}
 			},
 			version: {
 				// The site is embedded in the API binary; no need to poll for new builds.

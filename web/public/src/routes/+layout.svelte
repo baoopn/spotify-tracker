@@ -48,14 +48,14 @@
 			<a href={resolve('/')} class="shrink-0 rounded-brand" aria-label="baoopn listening, home">
 				<!-- Listening sub-brand: primary badge in light mode, inverse in dark (>= 120 px wide). -->
 				<img
-					src="/logo/listening-wordmark-primary.svg"
+					src="/brand/wordmark_primary"
 					alt="baoopn listening"
 					width="320"
 					height="132"
 					class="h-[50px] w-auto sm:h-14 dark:hidden"
 				/>
 				<img
-					src="/logo/listening-wordmark-inverse.svg"
+					src="/brand/wordmark_inverse"
 					alt="baoopn listening"
 					width="320"
 					height="132"

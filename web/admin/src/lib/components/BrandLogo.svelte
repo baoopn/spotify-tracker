@@ -3,8 +3,6 @@
 </script>
 
 <script lang="ts">
-	import { asset } from '$app/paths';
-
 	let {
 		kind = 'listening-wordmark',
 		alt = 'baoopn listening',
@@ -16,10 +14,12 @@
 		class?: string;
 	} = $props();
 
-	// Brand-kit files, used as-is: primary (navy badge) in light mode, inverse in dark mode.
+	// Brand-kit files via /brand/<slot> (302 to the baoopn brand API's media URL,
+	// or the static copy): primary (navy badge) in light mode, inverse in dark mode.
+	const base = $derived(kind === 'listening-mark' ? 'mark' : 'wordmark');
 	const src = $derived({
-		light: asset(`brand/listening/${kind}-primary.svg`),
-		dark: asset(`brand/listening/${kind}-inverse.svg`)
+		light: `/brand/${base}_primary`,
+		dark: `/brand/${base}_inverse`
 	});
 	const size = $derived(kind === 'listening-mark' ? { w: 200, h: 200 } : { w: 320, h: 132 });
 </script>

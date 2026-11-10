@@ -4,8 +4,6 @@
 </script>
 
 <script lang="ts">
-	import { asset } from '$app/paths';
-
 	let {
 		name,
 		alt = '',
@@ -24,8 +22,11 @@
 		class?: string;
 	} = $props();
 
-	const navy = $derived(asset(`brand/listening/${name}-navy.svg`));
-	const cream = $derived(asset(`brand/listening/${name}-cream.svg`));
+	// Brand-kit files via /brand/<slot> (302 to the baoopn brand API's media URL,
+	// or the static copy). Slot names use underscores: now-playing -> now_playing.
+	const slug = $derived(name.replaceAll('-', '_'));
+	const navy = $derived(`/brand/icon_${slug}_navy`);
+	const cream = $derived(`/brand/icon_${slug}_cream`);
 </script>
 
 {#if mode === 'mask'}

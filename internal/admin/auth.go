@@ -116,14 +116,14 @@ func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next h
 	u, err := a.lookup(r.Context(), subject)
 	switch {
 	case err == nil:
-		// The session token is fresher than the cached profile (tokens
-		// live ~60s), so prefer its role/email claims when present.
-		if tc != nil && tc.Role != "" {
-			u.Role = tc.Role
+		// Clerk answered: its profile decides. Token claims are used only
+		// when Clerk cannot be reached (below).
+	case errors.Is(err, errBlocked):
+		if a.onForbidden != nil {
+			a.onForbidden(r.Context(), u, clientIP(r))
 		}
-		if tc != nil && u.Email == "" && tc.Email != "" {
-			u.Email = tc.Email
-		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account is banned or locked")
+		return
 	case errors.Is(err, errNoVerifiedEmail):
 		if a.onForbidden != nil {
 			a.onForbidden(r.Context(), u, clientIP(r))
@@ -156,6 +156,9 @@ func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next h
 	}
 	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 }
+
+// errBlocked means Clerk has the user but the account is banned or locked.
+var errBlocked = errors.New("user is banned or locked")
 
 // errNoVerifiedEmail means Clerk has the user but no verified email address,
 // and neither a user-ID allow-list nor a role can authorize them.
@@ -207,7 +210,7 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 		return User{}, err
 	}
 	if cu.Banned || cu.Locked {
-		return User{ID: cu.ID}, nil // never allowed: empty email/role
+		return User{ID: cu.ID}, errBlocked // never cached, never allowed
 	}
 	u := User{ID: cu.ID, Role: metadataRole(cu.PublicMetadata)}
 	if cu.ImageURL != nil {

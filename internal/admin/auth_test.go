@@ -149,3 +149,42 @@ func TestClerkUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// A banned or locked user is refused even with admin claims in the token.
+func TestAdminBannedOrLocked403(t *testing.T) {
+	for name, cu := range map[string]clerk.User{"banned": {Banned: true}, "locked": {Locked: true}} {
+		t.Run(name, func(t *testing.T) {
+			a, forbidden := newTestAuth(t, func(_ context.Context, id string) (*clerk.User, error) {
+				u := cu
+				u.ID = id
+				u.PublicMetadata = json.RawMessage(`{"role":"admin"}`)
+				return &u, nil
+			})
+			rec, reached := serve(a, "user_1", &TokenClaims{Role: "admin", Email: "admin@example.com"})
+			if reached || rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, reached = %v; want 403", rec.Code, reached)
+			}
+			if code, msg := errorCode(t, rec); code != "forbidden" || msg != "this account is banned or locked" {
+				t.Errorf("error = %q %q", code, msg)
+			}
+			if len(*forbidden) != 1 {
+				t.Errorf("onForbidden calls = %d, want 1", len(*forbidden))
+			}
+		})
+	}
+}
+
+// Claims never add a role or email to a successful lookup.
+func TestAdminClaimsIgnoredAfterLookup(t *testing.T) {
+	a, _ := newTestAuth(t, func(_ context.Context, id string) (*clerk.User, error) {
+		email := &clerk.EmailAddress{ID: "e1", EmailAddress: "someone@example.com", Verification: &clerk.Verification{Status: "verified"}}
+		return &clerk.User{ID: id, EmailAddresses: []*clerk.EmailAddress{email}}, nil
+	})
+	rec, reached := serve(a, "user_1", &TokenClaims{Role: "admin", Email: "admin@example.com"})
+	if reached || rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, reached = %v; want 403", rec.Code, reached)
+	}
+	if code, msg := errorCode(t, rec); code != "forbidden" || msg != "this account is not an admin" {
+		t.Errorf("error = %q %q", code, msg)
+	}
+}

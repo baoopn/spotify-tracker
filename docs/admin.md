@@ -30,19 +30,21 @@ API contract: [admin-api.md](admin-api.md).
 4. Access is granted to users in `ADMIN_ALLOWED_EMAILS` (verified emails),
    `ADMIN_ALLOWED_USER_IDS`, or whose Clerk `public_metadata.role` equals
    `ADMIN_ROLE` (default `admin`; public metadata can only be set server-side).
-   Everyone else gets *403 forbidden* and the attempt is audited.
+   Everyone else gets *403 forbidden* and the attempt is audited, as do
+   banned or locked Clerk users whatever their role.
 5. Session token claims (Configure → Sessions → Customize session token), on
    both instances:
    ```json
    { "role": "{{user.public_metadata.role}}", "email": "{{user.primary_email_address}}" }
    ```
-   The API prefers these claims (fresh with every ~60 s token) over its cached
-   profile lookup, and can still authorize from them if Clerk's Backend API is
-   briefly unreachable.
+   The API decides from its Clerk profile lookup (cached 5 minutes) and uses
+   these claims only when Clerk's Backend API is briefly unreachable (network
+   error, 5xx or 429); they never override a successful lookup.
 
 The publishable key is served at runtime from `GET /admin/api/config`, so the
 same image works for every environment. The CSP automatically allows the
-Clerk Frontend API host encoded in the key.
+Clerk Frontend API host encoded in the key (and only that host; Clerk's
+wildcard hosts are a fallback for a key without one).
 
 ## Alert emails
 

@@ -1,8 +1,17 @@
 package notify
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/mail"
+	"net/textproto"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -118,5 +127,184 @@ func TestRenderedLogoHeight(t *testing.T) {
 	_, html, _ = sampleEmail().Render(testBrand(t))
 	if !strings.Contains(html, `width="160" height="66"`) {
 		t.Error("default logo height is not 66")
+	}
+}
+
+// fakeSMTP is a minimal SMTP server. It offers STARTTLS before TLS and, when
+// advertiseAuth is set, AUTH PLAIN after it. It records the commands it got.
+type fakeSMTP struct {
+	ln            net.Listener
+	tlsConfig     *tls.Config
+	advertiseAuth bool
+
+	mu   sync.Mutex
+	cmds []string
+	data string
+	done chan struct{}
+}
+
+func newFakeSMTP(t *testing.T, advertiseAuth bool) *fakeSMTP {
+	t.Helper()
+	// Borrow httptest's certificate (valid for 127.0.0.1) and trust it.
+	hs := httptest.NewTLSServer(http.NotFoundHandler())
+	certs := hs.TLS.Certificates
+	pool := x509.NewCertPool()
+	pool.AddCert(hs.Certificate())
+	hs.Close()
+	old := smtpRootCAs
+	smtpRootCAs = pool
+	t.Cleanup(func() { smtpRootCAs = old })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeSMTP{ln: ln, tlsConfig: &tls.Config{Certificates: certs}, advertiseAuth: advertiseAuth, done: make(chan struct{})}
+	t.Cleanup(func() { _ = ln.Close() })
+	go f.serve()
+	return f
+}
+
+func (f *fakeSMTP) port() int { return f.ln.Addr().(*net.TCPAddr).Port }
+
+func (f *fakeSMTP) commands() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.cmds)
+}
+
+func (f *fakeSMTP) serve() {
+	defer close(f.done)
+	conn, err := f.ln.Accept()
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	tp := textproto.NewConn(conn)
+	secure := false
+	_ = tp.PrintfLine("220 fake ESMTP")
+	for {
+		line, err := tp.ReadLine()
+		if err != nil {
+			return
+		}
+		verb := strings.ToUpper(strings.Fields(line + " x")[0])
+		f.mu.Lock()
+		f.cmds = append(f.cmds, verb)
+		f.mu.Unlock()
+		switch verb {
+		case "EHLO":
+			switch {
+			case !secure:
+				_ = tp.PrintfLine("250-fake\r\n250 STARTTLS")
+			case f.advertiseAuth:
+				_ = tp.PrintfLine("250-fake\r\n250 AUTH PLAIN")
+			default:
+				_ = tp.PrintfLine("250 fake")
+			}
+		case "STARTTLS":
+			_ = tp.PrintfLine("220 go ahead")
+			tc := tls.Server(conn, f.tlsConfig)
+			if tc.Handshake() != nil {
+				return
+			}
+			conn, secure = tc, true
+			tp = textproto.NewConn(tc)
+		case "AUTH":
+			_ = tp.PrintfLine("235 ok")
+		case "DATA":
+			_ = tp.PrintfLine("354 go")
+			b, err := tp.ReadDotBytes()
+			if err != nil {
+				return
+			}
+			f.mu.Lock()
+			f.data = string(b)
+			f.mu.Unlock()
+			_ = tp.PrintfLine("250 queued")
+		case "QUIT":
+			_ = tp.PrintfLine("221 bye")
+			return
+		default:
+			_ = tp.PrintfLine("250 ok")
+		}
+	}
+}
+
+func TestDeliverStartTLSAndAuth(t *testing.T) {
+	f := newFakeSMTP(t, true)
+	cfg := SMTPConfig{Host: "127.0.0.1", Port: f.port(), User: "u", Password: "p", From: "a@example.com", To: []string{"b@example.com"}}
+	if err := deliver(cfg, []byte("Subject: hi\r\n\r\nbody\r\n")); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	<-f.done
+	want := []string{"EHLO", "STARTTLS", "EHLO", "AUTH", "MAIL", "RCPT", "DATA", "QUIT"}
+	if got := f.commands(); !slices.Equal(got, want) {
+		t.Errorf("commands = %v, want %v", got, want)
+	}
+	if !strings.Contains(f.data, "body") {
+		t.Errorf("message not delivered: %q", f.data)
+	}
+}
+
+func TestDeliverAuthRequiredButNotAdvertised(t *testing.T) {
+	f := newFakeSMTP(t, false)
+	cfg := SMTPConfig{Host: "127.0.0.1", Port: f.port(), User: "u", Password: "p", From: "a@example.com", To: []string{"b@example.com"}}
+	err := deliver(cfg, []byte("x\r\n"))
+	if err == nil || !strings.Contains(err.Error(), "AUTH") {
+		t.Fatalf("err = %v, want an AUTH error", err)
+	}
+	if slices.Contains(f.commands(), "MAIL") {
+		t.Error("sent MAIL without authenticating")
+	}
+}
+
+func TestDeliverWithoutAuth(t *testing.T) {
+	f := newFakeSMTP(t, false)
+	cfg := SMTPConfig{Host: "127.0.0.1", Port: f.port(), From: "a@example.com", To: []string{"b@example.com"}}
+	if err := deliver(cfg, []byte("x\r\n")); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	<-f.done
+	if slices.Contains(f.commands(), "AUTH") {
+		t.Error("authenticated without credentials")
+	}
+}
+
+func TestDeliverDeadline(t *testing.T) {
+	old := smtpTimeout
+	smtpTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { smtpTimeout = old })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		// Accept and say nothing until the client hangs up.
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = io.Copy(io.Discard, c)
+	}()
+
+	cfg := SMTPConfig{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, From: "a@example.com", To: []string{"b@example.com"}}
+	start := time.Now()
+	errc := make(chan error, 1)
+	go func() { errc <- deliver(cfg, []byte("x\r\n")) }()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("deliver to a silent server succeeded")
+		}
+		if d := time.Since(start); d > 3*time.Second {
+			t.Errorf("deliver took %s, want about %s", d, smtpTimeout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deliver did not return from a silent server")
 	}
 }

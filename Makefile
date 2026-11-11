@@ -74,7 +74,7 @@ tools: ## Install code generation and lint tools
 	$(GO) install github.com/bufbuild/buf/cmd/buf@v1.75.0
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
 	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 ## ── Local development ────────────────────────────────────────────────────────
 

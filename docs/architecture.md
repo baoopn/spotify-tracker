@@ -136,7 +136,9 @@ that order (a Spotify rate limit at any step ends the tick):
 
 - **Prune.** Only the newest `TOP_PLAYLISTS_KEEP` (default 3; `0` keeps all)
   `created` rows per kind are kept, the live and hidden ones included. Older
-  rows are pruned oldest first, ten per tick: the row becomes `pruned`
+  rows are pruned oldest first, ten per tick, and so are `failed` and
+  `waiting_auth` rows that hold a Spotify playlist and have `TOP_PLAYLISTS_KEEP`
+  newer `created` rows of their kind (they are no longer generated): the row becomes `pruned`
   (`pruned_at`, not live, snapshot deleted) before Spotify is asked to delete
   the playlist, so nothing restores it, and upserts never touch a pruned row.
   The removal (`DELETE /me/library?uris=spotify:playlist:{id}`, falling back

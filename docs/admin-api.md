@@ -296,6 +296,8 @@ finished (`live: false`).
 hidden ones count. A tick prunes older ones: the row becomes `pruned`
 (`pruned_at`), leaves the public page and the Spotify playlist is deleted
 (retried on later ticks until Spotify confirms; `last_error` shows a failure).
+A `failed` or `waiting_auth` row that holds a Spotify playlist is pruned the
+same way once `keep` newer `created` playlists of its kind exist.
 Pruned rows are history: they cannot be regenerated, hidden or shown.
 
 **Restoring deleted playlists.** Every `verify_seconds`

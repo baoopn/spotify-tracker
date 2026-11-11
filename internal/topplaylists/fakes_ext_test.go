@@ -35,6 +35,18 @@ func (f *fakeStore) CreatedTopPlaylists(_ context.Context, period string) ([]dom
 	return out, f.ext.createdErr
 }
 
+func (f *fakeStore) StuckTopPlaylists(_ context.Context, period string) ([]domain.TopPlaylistRecord, error) {
+	var out []domain.TopPlaylistRecord
+	for _, r := range f.rows {
+		stuck := r.Status == domain.TopPlaylistFailed || r.Status == domain.TopPlaylistWaitingAuth
+		if r.Period == period && stuck && r.SpotifyPlaylistID != "" {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PeriodStart.After(out[j].PeriodStart) })
+	return out, nil
+}
+
 func (f *fakeStore) AllCreatedTopPlaylists(context.Context) ([]domain.TopPlaylistRecord, error) {
 	out := f.created()
 	sort.Slice(out, func(i, j int) bool {

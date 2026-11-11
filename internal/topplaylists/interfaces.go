@@ -27,6 +27,9 @@ type Store interface {
 	// CreatedTopPlaylists lists the created rows of one kind (live or not,
 	// hidden or not), newest period first.
 	CreatedTopPlaylists(ctx context.Context, period string) ([]domain.TopPlaylistRecord, error)
+	// StuckTopPlaylists lists the failed and waiting_auth rows of one kind
+	// that hold a Spotify playlist, newest period first.
+	StuckTopPlaylists(ctx context.Context, period string) ([]domain.TopPlaylistRecord, error)
 	// AllCreatedTopPlaylists lists the created rows of every kind, oldest first.
 	AllCreatedTopPlaylists(ctx context.Context) ([]domain.TopPlaylistRecord, error)
 	// PruneTopPlaylist marks a row pruned (not live, removal pending) and

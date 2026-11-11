@@ -35,6 +35,18 @@ func (q *Queries) CreatedTopPlaylists(ctx context.Context, period string) ([]dom
 	return collectTopPlaylists(rows)
 }
 
+// StuckTopPlaylists lists the failed and waiting_auth top playlists of one
+// period kind that hold a Spotify playlist, newest period first.
+func (q *Queries) StuckTopPlaylists(ctx context.Context, period string) ([]domain.TopPlaylistRecord, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+topPlaylistColumns+` FROM top_playlists
+		WHERE period = $1 AND status IN ('failed', 'waiting_auth') AND spotify_playlist_id IS NOT NULL
+		ORDER BY period_start DESC`, period)
+	if err != nil {
+		return nil, fmt.Errorf("stuck top playlists: %w", err)
+	}
+	return collectTopPlaylists(rows)
+}
+
 // PruneTopPlaylist marks a top playlist pruned (unpublished, not live, its
 // Spotify removal still pending) and deletes its snapshot, in one
 // transaction. domain.ErrNotFound when the row does not exist.

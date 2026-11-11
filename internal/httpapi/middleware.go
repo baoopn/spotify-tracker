@@ -8,7 +8,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -101,8 +104,26 @@ func (b *bufferedWriter) Header() http.Header         { return b.header }
 func (b *bufferedWriter) Write(p []byte) (int, error) { return b.buf.Write(p) }
 func (b *bufferedWriter) WriteHeader(code int)        { b.status = code }
 
+// cacheKey is the Redis key of a cached response: the cache generation, the
+// path and only the query params the handler reads (first value each, as
+// Query().Get sees them; empty ones mean the default). Unknown params, order
+// and duplicates cannot create new entries.
+func cacheKey(gen, path string, q url.Values, params []string) string {
+	var b strings.Builder
+	b.WriteString(gen + "|" + path + "?")
+	for _, name := range slices.Sorted(slices.Values(params)) {
+		if v := q.Get(name); v != "" {
+			b.WriteString(url.QueryEscape(name) + "=" + url.QueryEscape(v) + "&")
+		}
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return redisx.KeyCachePrefix + hex.EncodeToString(sum[:16])
+}
+
 // cached serves successful JSON responses from Redis for opts.CacheTTL.
-func (h *Handler) cached(next http.HandlerFunc) http.HandlerFunc {
+// params are the query parameters next reads; only they are part of the
+// cache key.
+func (h *Handler) cached(next http.HandlerFunc, params ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.opts.CacheTTL <= 0 {
 			next(w, r)
@@ -111,8 +132,7 @@ func (h *Handler) cached(next http.HandlerFunc) http.HandlerFunc {
 		// The generation changes whenever listening data changes (see
 		// redisx.BumpCache), so a cached response is never older than the data.
 		gen, _ := h.rdb.Get(r.Context(), redisx.KeyCacheGeneration).Result()
-		sum := sha256.Sum256([]byte(gen + "|" + r.URL.Path + "?" + r.URL.Query().Encode()))
-		key := redisx.KeyCachePrefix + hex.EncodeToString(sum[:16])
+		key := cacheKey(gen, r.URL.Path, r.URL.Query(), params)
 
 		// Clients must revalidate every time: freshness is handled server-side,
 		// so browser and CDN caches can never serve outdated stats.

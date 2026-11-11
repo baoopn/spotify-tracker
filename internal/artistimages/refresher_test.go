@@ -78,3 +78,24 @@ func TestRunOnceStopsOnAuthError(t *testing.T) {
 		t.Errorf("recorded lookups after an auth error: %v", st.set)
 	}
 }
+
+// A permanent 4xx for one artist is recorded without an image and the batch
+// goes on; a 5xx still stops the batch for a retry.
+func TestRunOnceSkipsPermanentClientError(t *testing.T) {
+	st := &fakeStore{ids: []string{"bad", "a1"}, set: map[string]string{}}
+	f := fakeFetcher{"bad": &spotify.StatusError{Code: 400}}
+	newTest(st, f).RunOnce(context.Background())
+	if got, ok := st.set["bad"]; !ok || got != "" {
+		t.Errorf("bad: got %q (recorded %v), want recorded empty", got, ok)
+	}
+	if got := st.set["a1"]; got != "https://i.scdn.co/image/a1" {
+		t.Errorf("a1 not fetched after a 400: %q", got)
+	}
+
+	st = &fakeStore{ids: []string{"down", "a1"}, set: map[string]string{}}
+	f = fakeFetcher{"down": &spotify.StatusError{Code: 503}}
+	newTest(st, f).RunOnce(context.Background())
+	if len(st.set) != 0 {
+		t.Errorf("recorded lookups after a 5xx: %v", st.set)
+	}
+}

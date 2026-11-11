@@ -242,8 +242,17 @@ func (s *Service) SubmitFeatures(ctx context.Context, trackID string, found bool
 	return nil
 }
 
-// ReportFailure schedules a retry for a failed enrichment.
-func (s *Service) ReportFailure(ctx context.Context, trackID, msg string) (bool, error) {
+// ReportFailure schedules a retry for a failed enrichment. A retryable
+// (transient provider) failure only pushes the retry back, after retryAfter
+// when set, and never uses up an attempt.
+func (s *Service) ReportFailure(ctx context.Context, trackID, msg string, retryable bool, retryAfter time.Duration) (bool, error) {
+	if retryable {
+		if err := s.store.PostponeEnrichment(ctx, trackID, msg, retryAfter); err != nil {
+			return false, err
+		}
+		observability.EnrichmentResults.WithLabelValues(domain.EnrichmentFailed).Inc()
+		return false, nil
+	}
 	exhausted, err := s.store.RecordFailure(ctx, trackID, msg, s.maxAttempts)
 	if err != nil {
 		return false, err

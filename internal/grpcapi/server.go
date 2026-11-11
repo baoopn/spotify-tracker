@@ -189,7 +189,8 @@ func (s *enrichmentServer) ReportEnrichmentFailure(ctx context.Context, req *tra
 	if req.GetTrackId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "track_id is required")
 	}
-	exhausted, err := s.svc.ReportFailure(ctx, req.GetTrackId(), req.GetError())
+	retryAfter := time.Duration(max(req.GetRetryAfterSeconds(), 0)) * time.Second
+	exhausted, err := s.svc.ReportFailure(ctx, req.GetTrackId(), req.GetError(), req.GetRetryable(), retryAfter)
 	if err != nil {
 		return nil, toStatus(err)
 	}

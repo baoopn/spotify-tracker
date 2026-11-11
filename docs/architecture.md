@@ -60,6 +60,9 @@ Lookups are rate limited client-side (`SOUNDCHARTS_RPS`, shared by
 `ENRICH_CONCURRENCY` workers). A 429 pauses all workers for `Retry-After`.
 Failures back off exponentially (1 min → 24 h) up to `ENRICH_MAX_ATTEMPTS`,
 then the track is marked `failed`; it can be re-queued from the dashboard.
+Transient provider failures (429, 5xx, network) are reported as `retryable`
+and only push `next_attempt_at` back (`Retry-After` when sent, else the
+backoff for the attempts so far) without using up an attempt.
 ISRCs unknown to Soundcharts are marked `unavailable`.
 
 ## Spotify tokens

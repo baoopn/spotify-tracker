@@ -271,6 +271,37 @@ func (q *Queries) RecordFailure(ctx context.Context, trackID, msg string, maxAtt
 	return false, err
 }
 
+// PostponeEnrichment schedules the next try of a track after a transient
+// provider failure (rate limit, 5xx, network) without counting an attempt:
+// after retryAfter when the provider sent one, else the normal backoff for
+// the attempts so far.
+func (q *Queries) PostponeEnrichment(ctx context.Context, trackID, msg string, retryAfter time.Duration) error {
+	var attempts int
+	err := q.db.QueryRow(ctx, `UPDATE track_features SET last_error = left($2, 2000)
+		WHERE track_id = $1 RETURNING attempts`, trackID, msg).Scan(&attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("postpone enrichment %s: %w", trackID, err)
+	}
+	_, err = q.db.Exec(ctx, `UPDATE track_features SET next_attempt_at = now() + $2::interval WHERE track_id = $1`,
+		trackID, fmt.Sprintf("%d seconds", int64(PostponeDelay(attempts, retryAfter).Seconds())))
+	if err != nil {
+		return fmt.Errorf("postpone enrichment %s: %w", trackID, err)
+	}
+	return nil
+}
+
+// PostponeDelay is the wait after a transient failure: retryAfter (capped
+// at 24h) when set, else Backoff(attempts).
+func PostponeDelay(attempts int, retryAfter time.Duration) time.Duration {
+	if retryAfter > 0 {
+		return min(retryAfter, 24*time.Hour)
+	}
+	return Backoff(attempts)
+}
+
 // Backoff returns the retry delay after n failed attempts.
 func Backoff(n int) time.Duration {
 	if n < 1 {

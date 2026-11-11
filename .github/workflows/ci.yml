@@ -92,7 +92,8 @@ jobs:
         run: |
           cp .env.example .env
           docker compose -f docker-compose.yml config -q
-          API_DOMAIN=example.com POSTGRES_PASSWORD=x REDIS_PASSWORD=x INTERNAL_API_TOKEN=x \
+          IMAGE_TAG=sha-0000000 SECRETS_KEY=x \
+            API_DOMAIN=example.com POSTGRES_PASSWORD=x REDIS_PASSWORD=x INTERNAL_API_TOKEN=x \
             CORS_ALLOWED_ORIGINS=https://example.com \
             docker compose -f docker-compose.prod.yml config -q
           docker compose -f docker-compose.coolify.yml config -q

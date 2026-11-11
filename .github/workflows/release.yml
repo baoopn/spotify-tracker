@@ -172,17 +172,22 @@ jobs:
 
       # Coolify v4 /deploy builds the branch head, not a given commit. Deploy
       # only while main still points at the commit this run tested; if it
-      # moved, the newer run in the same concurrency group deploys it.
+      # moved, the newer run in the same concurrency group deploys it. A v*
+      # tag deploys only when it tags main's head: Coolify would build main,
+      # not the tagged commit.
       - name: Check main still points at this commit
         id: head
-        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           head=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
           if [ "$head" != "${{ github.sha }}" ]; then
-            echo "::notice::main moved to $head since ${{ github.sha }}; skipping this deploy, the newer run deploys."
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "::notice::Tag ${{ github.ref_name }} points at ${{ github.sha }}, but main is at $head; Coolify builds main, so this tag is not deployed."
+            else
+              echo "::notice::main moved to $head since ${{ github.sha }}; skipping this deploy, the newer run deploys."
+            fi
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -214,11 +219,25 @@ jobs:
           set -euo pipefail
           # First builds compile both frontends + Go on the server: allow 20 min.
           for i in $(seq 1 120); do
-            status=$(curl -fsS "$COOLIFY_URL/api/v1/deployments/$DEPLOYMENT" \
-              -H "Authorization: Bearer $COOLIFY_TOKEN" -A github-actions | jq -r 'if type == "array" then .[0].status else .status end')
+            resp=$(curl -fsS "$COOLIFY_URL/api/v1/deployments/$DEPLOYMENT" \
+              -H "Authorization: Bearer $COOLIFY_TOKEN" -A github-actions | jq -c 'if type == "array" then .[0] else . end')
+            status=$(echo "$resp" | jq -r '.status')
             echo "[$i] status=$status"
             case "$status" in
-              finished) exit 0 ;;
+              finished)
+                # Coolify records the commit it built (ApplicationDeploymentQueue.commit).
+                # It may be "HEAD" or empty when it did not resolve one.
+                built=$(echo "$resp" | jq -r '.commit // ""')
+                if [[ "$built" =~ ^[0-9a-f]{40}$ ]]; then
+                  if [ "$built" != "${{ github.sha }}" ]; then
+                    echo "::error::Coolify built $built, not the tested commit ${{ github.sha }}. Production may run untested code; redeploy the tested commit or check the Coolify resource's branch."
+                    exit 1
+                  fi
+                  echo "Coolify built the tested commit."
+                else
+                  echo "::notice::Coolify did not report the commit it built ('$built')."
+                fi
+                exit 0 ;;
               failed|cancelled*) echo "::error::Coolify deployment $status"; exit 1 ;;
             esac
             sleep 10

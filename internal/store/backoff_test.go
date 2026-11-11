@@ -31,20 +31,3 @@ func TestSortedSubGenres(t *testing.T) {
 		t.Errorf("nil map should give empty slice, got %#v", out)
 	}
 }
-
-func TestPostponeDelay(t *testing.T) {
-	for _, c := range []struct {
-		attempts   int
-		retryAfter time.Duration
-		want       time.Duration
-	}{
-		{0, 0, time.Minute},                     // normal backoff, no attempt counted
-		{3, 0, 4 * time.Minute},                 // backoff for the attempts so far
-		{3, 90 * time.Second, 90 * time.Second}, // Retry-After wins
-		{0, 48 * time.Hour, 24 * time.Hour},     // capped
-	} {
-		if got := PostponeDelay(c.attempts, c.retryAfter); got != c.want {
-			t.Errorf("PostponeDelay(%d, %s) = %s, want %s", c.attempts, c.retryAfter, got, c.want)
-		}
-	}
-}

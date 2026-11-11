@@ -15,8 +15,14 @@ func TestFailureRequest(t *testing.T) {
 		r.GetTrackId() != "t1" || r.GetError() == "" {
 		t.Errorf("429: %+v", r)
 	}
-	if r := failureRequest("t1", &soundcharts.RetryableError{Status: 503}); !r.GetRetryable() || r.GetRetryAfterSeconds() != 0 {
-		t.Errorf("503: %+v", r)
+	if r := failureRequest("t1", &soundcharts.RetryableError{Status: 503, RetryAfter: time.Minute}); !r.GetRetryable() ||
+		r.GetRetryAfterSeconds() != 60 {
+		t.Errorf("503 with Retry-After: %+v", r)
+	}
+	for _, re := range []*soundcharts.RetryableError{{Status: 503}, {Status: 500}, {Status: 502, RetryAfter: time.Minute}, {Status: 0}} {
+		if r := failureRequest("t1", re); r.GetRetryable() {
+			t.Errorf("%d (retry-after %s) must count as an attempt: %+v", re.Status, re.RetryAfter, r)
+		}
 	}
 	if r := failureRequest("t1", errors.New("decode song: bad json")); r.GetRetryable() || r.GetRetryAfterSeconds() != 0 {
 		t.Errorf("permanent: %+v", r)

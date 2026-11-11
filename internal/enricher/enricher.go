@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -243,13 +244,15 @@ func isBusyGroup(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "BUSYGROUP")
 }
 
-// failureRequest reports err for trackID. A soundcharts.RetryableError (429,
-// 5xx, network) is marked retryable, with its Retry-After, so the API pushes
-// the retry back without using up an attempt.
+// failureRequest reports err for trackID. Only a rate limit (429, or 503
+// with Retry-After) is marked retryable, with its Retry-After, so the API
+// pushes the retry back without using up an attempt. Other 5xx, network and
+// body errors count as attempts: one bad ISRC must not retry forever.
 func failureRequest(trackID string, err error) *trackerv1.ReportEnrichmentFailureRequest {
 	req := &trackerv1.ReportEnrichmentFailureRequest{TrackId: trackID, Error: err.Error()}
 	var re *soundcharts.RetryableError
-	if errors.As(err, &re) {
+	if errors.As(err, &re) && (re.Status == http.StatusTooManyRequests ||
+		(re.Status == http.StatusServiceUnavailable && re.RetryAfter > 0)) {
 		req.Retryable = true
 		req.RetryAfterSeconds = int32(min(re.RetryAfter/time.Second, math.MaxInt32))
 	}

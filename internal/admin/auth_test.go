@@ -149,3 +149,86 @@ func TestClerkUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// A banned or locked user is refused even with admin claims in the token.
+func TestAdminBannedOrLocked403(t *testing.T) {
+	for name, cu := range map[string]clerk.User{"banned": {Banned: true}, "locked": {Locked: true}} {
+		t.Run(name, func(t *testing.T) {
+			a, forbidden := newTestAuth(t, func(_ context.Context, id string) (*clerk.User, error) {
+				u := cu
+				u.ID = id
+				u.PublicMetadata = json.RawMessage(`{"role":"admin"}`)
+				return &u, nil
+			})
+			rec, reached := serve(a, "user_1", &TokenClaims{Role: "admin", Email: "admin@example.com"})
+			if reached || rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, reached = %v; want 403", rec.Code, reached)
+			}
+			if code, msg := errorCode(t, rec); code != "forbidden" || msg != "this account is banned or locked" {
+				t.Errorf("error = %q %q", code, msg)
+			}
+			if len(*forbidden) != 1 {
+				t.Errorf("onForbidden calls = %d, want 1", len(*forbidden))
+			}
+		})
+	}
+}
+
+// Claims never add a role or email to a successful lookup.
+func TestAdminClaimsIgnoredAfterLookup(t *testing.T) {
+	a, _ := newTestAuth(t, func(_ context.Context, id string) (*clerk.User, error) {
+		email := &clerk.EmailAddress{ID: "e1", EmailAddress: "someone@example.com", Verification: &clerk.Verification{Status: "verified"}}
+		return &clerk.User{ID: id, EmailAddresses: []*clerk.EmailAddress{email}}, nil
+	})
+	rec, reached := serve(a, "user_1", &TokenClaims{Role: "admin", Email: "admin@example.com"})
+	if reached || rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, reached = %v; want 403", rec.Code, reached)
+	}
+	if code, msg := errorCode(t, rec); code != "forbidden" || msg != "this account is not an admin" {
+		t.Errorf("error = %q %q", code, msg)
+	}
+}
+
+type mapCache map[string][]byte
+
+func (m mapCache) get(key string) ([]byte, error) {
+	if v, ok := m[key]; ok {
+		return v, nil
+	}
+	return nil, redis.Nil
+}
+
+func (m mapCache) set(key string, raw []byte) { m[key] = raw }
+
+// A token role claim that differs from the cached profile refetches it from
+// Clerk; the claim itself never grants the role.
+func TestAdminRoleClaimChangeRefetches(t *testing.T) {
+	role, fetches := "", 0
+	a, _ := newTestAuth(t, func(_ context.Context, id string) (*clerk.User, error) {
+		fetches++
+		email := &clerk.EmailAddress{ID: "e1", EmailAddress: "someone@example.com", Verification: &clerk.Verification{Status: "verified"}}
+		return &clerk.User{ID: id, EmailAddresses: []*clerk.EmailAddress{email},
+			PublicMetadata: json.RawMessage(`{"role":"` + role + `"}`)}, nil
+	})
+	a.cache = mapCache{}
+	if _, reached := serve(a, "user_1", nil); reached || fetches != 1 {
+		t.Fatalf("no role: reached=%v fetches=%d", reached, fetches)
+	}
+	if _, reached := serve(a, "user_1", &TokenClaims{}); reached || fetches != 1 {
+		t.Fatalf("same role served from cache: reached=%v fetches=%d", reached, fetches)
+	}
+	// Role granted in Clerk: the fresh token's claim no longer matches the cache.
+	role = "admin"
+	if rec, reached := serve(a, "user_1", &TokenClaims{Role: "admin"}); !reached || fetches != 2 {
+		t.Fatalf("granted: %d reached=%v fetches=%d", rec.Code, reached, fetches)
+	}
+	if _, reached := serve(a, "user_1", &TokenClaims{Role: "admin"}); !reached || fetches != 2 {
+		t.Fatalf("cached after refetch: reached=%v fetches=%d", reached, fetches)
+	}
+	// A claim Clerk does not confirm is refetched but never trusted.
+	role = ""
+	a.cache = mapCache{}
+	if _, reached := serve(a, "user_1", &TokenClaims{Role: "admin"}); reached {
+		t.Fatal("unconfirmed role claim authorized the user")
+	}
+}

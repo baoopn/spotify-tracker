@@ -52,8 +52,8 @@ func (r *Runner) Verify(ctx context.Context) error {
 // verify checks every created playlist (hidden and live ones included)
 // against the owner's Spotify library once per Config.Verify (always when
 // forced) and restores the missing ones, a few per check. When the library
-// cannot be read, or reads as empty while playlists are published, nothing
-// is changed. It reports whether Spotify rate-limited a request.
+// cannot be read, reads as empty while playlists are published, or lists
+// none of the checked playlists, nothing is changed. It reports whether Spotify rate-limited a request.
 func (r *Runner) verify(ctx context.Context, now time.Time, force bool) bool {
 	if !force {
 		if r.Config.Verify <= 0 {
@@ -102,7 +102,10 @@ func (r *Runner) verify(ctx context.Context, now time.Time, force bool) bool {
 			present++
 		}
 	}
-	if present == 0 && len(checked) >= 2 {
+	// Not one of them listed points at another account (or a bad listing)
+	// rather than deletions, even with a single published playlist:
+	// restoring would follow or recreate playlists in the wrong library.
+	if present == 0 && len(checked) >= 1 {
 		r.Log.WarnContext(ctx, "none of the top playlists is in the Spotify library (another account?); not restoring anything",
 			slog.Int("published", len(checked)))
 		return false
@@ -176,7 +179,7 @@ func (r *Runner) recreate(ctx context.Context, rec domain.TopPlaylistRecord, des
 	if _, pending := r.unsavedPlaylist(keyOf(rec)); !pending {
 		rec.SpotifyPlaylistID, rec.SpotifyURL = "", ""
 	}
-	out, err := r.create(ctx, rec, description)
+	out, _, err := r.create(ctx, rec, description, rec.Attempts > 0)
 	if err != nil {
 		return out, fmt.Errorf("recreate playlist: %w", err)
 	}

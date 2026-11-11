@@ -39,14 +39,21 @@ func (r *Runner) prune(ctx context.Context, now time.Time) bool {
 			r.Log.WarnContext(ctx, "list top playlists to prune failed", slog.String("period", string(p)), logging.Err(err))
 			continue
 		}
-		for i := len(rows) - 1; i >= r.Config.Keep && budget > 0; i-- { // oldest first
-			rec := rows[i]
+		var old []domain.TopPlaylistRecord
+		for i := len(rows) - 1; i >= r.Config.Keep; i-- { // oldest first
+			old = append(old, rows[i])
+		}
+		old = append(old, r.stuckToPrune(ctx, p, rows)...)
+		for _, rec := range old {
+			if budget <= 0 {
+				break
+			}
 			if err := r.Store.PruneTopPlaylist(ctx, rec.Period, rec.PeriodStart, now.UTC()); err != nil {
 				r.Log.WarnContext(ctx, "prune top playlist failed", slog.String("name", rec.Name), logging.Err(err))
 				continue
 			}
 			budget--
-			r.Log.InfoContext(ctx, "top playlist pruned", slog.String("name", rec.Name),
+			r.Log.InfoContext(ctx, "top playlist pruned", slog.String("name", rec.Name), slog.String("status", rec.Status),
 				slog.String("spotify_id", rec.SpotifyPlaylistID), slog.Int("keep", r.Config.Keep))
 			if r.Invalidate != nil {
 				r.Invalidate(ctx)
@@ -54,6 +61,31 @@ func (r *Runner) prune(ctx context.Context, now time.Time) bool {
 		}
 	}
 	return r.unfollowPruned(ctx)
+}
+
+// stuckToPrune returns the failed and waiting_auth rows of kind p that hold
+// a Spotify playlist and have Config.Keep newer created playlists (created
+// is the kind's created rows, newest first), oldest first. Such a period is
+// no longer generated, so without this its playlist would stay on Spotify.
+func (r *Runner) stuckToPrune(ctx context.Context, p Period, created []domain.TopPlaylistRecord) []domain.TopPlaylistRecord {
+	stuck, err := r.Store.StuckTopPlaylists(ctx, string(p))
+	if err != nil {
+		r.Log.WarnContext(ctx, "list stuck top playlists to prune failed", slog.String("period", string(p)), logging.Err(err))
+		return nil
+	}
+	var out []domain.TopPlaylistRecord
+	for i := len(stuck) - 1; i >= 0; i-- {
+		rec, newer := stuck[i], 0
+		for _, c := range created {
+			if c.PeriodStart.After(rec.PeriodStart) {
+				newer++
+			}
+		}
+		if newer >= r.Config.Keep {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 // unfollowPruned removes pruned playlists from Spotify (a few per tick,

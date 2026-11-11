@@ -73,6 +73,7 @@ func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
 		}
 		img, err := r.Fetcher.ArtistImage(ctx, id)
 		var rl *spotify.RateLimitError
+		var se *spotify.StatusError
 		switch {
 		case errors.As(err, &rl):
 			r.Log.WarnContext(ctx, "artist images rate limited", slog.Duration("retry_after", rl.RetryAfter))
@@ -81,8 +82,15 @@ func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
 			// Waiting for (re-)authorization; alerts cover this already.
 			r.Log.DebugContext(ctx, "artist images paused: spotify not authorized", logging.Err(err))
 			return 0
+		case errors.As(err, &se) && se.Permanent():
+			// Spotify refuses this artist for good (e.g. 400 for a bad ID):
+			// record the lookup without an image so it does not block the
+			// rest of the queue; it is re-checked after MaxAge.
+			r.Log.WarnContext(ctx, "artist image lookup refused; recorded without image",
+				slog.String("artist_id", id), logging.Err(err))
+			img = ""
 		case err != nil:
-			// Transient failure; try again next batch.
+			// Transient failure (5xx, network); try again next batch.
 			r.Log.WarnContext(ctx, "fetch artist image failed", slog.String("artist_id", id), logging.Err(err))
 			return 0
 		}

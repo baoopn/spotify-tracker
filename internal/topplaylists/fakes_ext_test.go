@@ -35,6 +35,18 @@ func (f *fakeStore) CreatedTopPlaylists(_ context.Context, period string) ([]dom
 	return out, f.ext.createdErr
 }
 
+func (f *fakeStore) StuckTopPlaylists(_ context.Context, period string) ([]domain.TopPlaylistRecord, error) {
+	var out []domain.TopPlaylistRecord
+	for _, r := range f.rows {
+		stuck := r.Status == domain.TopPlaylistFailed || r.Status == domain.TopPlaylistWaitingAuth
+		if r.Period == period && stuck && r.SpotifyPlaylistID != "" {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PeriodStart.After(out[j].PeriodStart) })
+	return out, nil
+}
+
 func (f *fakeStore) AllCreatedTopPlaylists(context.Context) ([]domain.TopPlaylistRecord, error) {
 	out := f.created()
 	sort.Slice(out, func(i, j int) bool {
@@ -129,6 +141,10 @@ type spotifyExt struct {
 	detailCalls int
 	detErrFor   func(id string) error
 	replErrFor  func(id string) error
+	named       map[string]string // name -> id of every created playlist
+	loseCreates int               // creates whose response is lost (error after creating)
+	findCalls   int
+	findErr     error
 }
 
 func (f *fakeSpotify) UnfollowPlaylist(_ context.Context, id string) error {
@@ -153,6 +169,18 @@ func (f *fakeSpotify) FollowPlaylist(_ context.Context, id string) error {
 func (f *fakeSpotify) OwnedPlaylistIDs(context.Context) (map[string]bool, error) {
 	f.ext.ownedCalls++
 	return f.ext.owned, f.ext.ownedErr
+}
+
+func (f *fakeSpotify) FindOwnedPlaylist(_ context.Context, name string) (string, string, error) {
+	f.ext.findCalls++
+	if f.ext.findErr != nil {
+		return "", "", f.ext.findErr
+	}
+	id, ok := f.ext.named[name]
+	if !ok {
+		return "", "", nil
+	}
+	return id, "https://open.spotify.com/playlist/" + id, nil
 }
 
 func (f *fakeSpotify) CurrentUserName(context.Context) (string, error) {

@@ -262,12 +262,16 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 		if live {
 			descr = LiveDescription(p, start, r.Config.Refresh())
 		}
-		if rec, err = r.create(ctx, rec, descr); err != nil {
+		// A row that existed before this attempt (crashed mid-create, or
+		// failed) may already have a playlist on Spotify.
+		var adopted bool
+		if rec, adopted, err = r.create(ctx, rec, descr, prev != "" || rec.Attempts > 0); err != nil {
 			if rec.SpotifyPlaylistID != "" {
 				return false, err // created but not saved: logged; retried next tick
 			}
 			return r.spotifyError(ctx, rec, prev, err, now)
 		}
+		staleDetails = staleDetails || (adopted && !live) // it may carry the live description
 	}
 
 	uris := make([]string, len(tracks))
@@ -313,35 +317,6 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 		r.Invalidate(ctx)
 	}
 	return limited, err
-}
-
-// create makes the Spotify playlist and persists its ID before anything
-// else can fail, so a retry reuses it. Both steps run detached from shutdown
-// (bounded by createTimeout): a create that reached Spotify is always saved.
-// On a save error the returned record carries the new ID and err is set; the
-// ID is also kept in memory, so the next attempt of this process saves and
-// reuses it instead of creating another playlist.
-func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, description string) (domain.TopPlaylistRecord, error) {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
-	defer cancel()
-	k := keyOf(rec)
-	u, ok := r.unsavedPlaylist(k)
-	if !ok {
-		id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, description, true)
-		if err != nil {
-			return rec, err
-		}
-		u = unsavedPlaylist{id: id, url: link}
-	}
-	rec.SpotifyPlaylistID, rec.SpotifyURL = u.id, u.url
-	if err := r.Store.UpsertTopPlaylist(cctx, rec); err != nil {
-		r.setUnsaved(k, &u)
-		r.Log.ErrorContext(ctx, "save created spotify playlist id failed",
-			slog.String("name", rec.Name), slog.String("spotify_id", u.id), logging.Err(err))
-		return rec, err
-	}
-	r.setUnsaved(k, nil)
-	return rec, nil
 }
 
 // authProblem returns a waiting_auth message when Spotify is not connected

@@ -63,6 +63,7 @@ type Authenticator struct {
 	// fetchUser reads a user from Clerk's Backend API (user.Get; tests
 	// replace it).
 	fetchUser func(ctx context.Context, id string) (*clerk.User, error)
+	cache     profileCache // nil: Redis
 }
 
 // NewAuthenticator configures Clerk. authorizedParties are the origins
@@ -113,7 +114,11 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 // authorize looks up the verified token's user and serves next if the user
 // is an admin.
 func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next http.Handler, subject string, tc *TokenClaims) {
-	u, err := a.lookup(r.Context(), subject)
+	claimRole := ""
+	if tc != nil {
+		claimRole = tc.Role
+	}
+	u, err := a.lookup(r.Context(), subject, claimRole)
 	switch {
 	case err == nil:
 		// Clerk answered: its profile decides. Token claims are used only
@@ -192,12 +197,15 @@ func (a *Authenticator) allowed(u User) bool {
 	return u.Email != "" && slices.Contains(a.allowedEmails, strings.ToLower(u.Email))
 }
 
-// lookup fetches the user's profile from Clerk, cached in Redis for 5 minutes.
-func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
+// lookup fetches the user's profile from Clerk, cached in Redis for 5
+// minutes. A cached profile whose role differs from the token's role claim
+// (claimRole, "" when absent) is stale, e.g. the role was just granted or
+// revoked: it is fetched again. The claim itself never sets the role.
+func (a *Authenticator) lookup(ctx context.Context, id, claimRole string) (User, error) {
 	key := "spotify-tracker:admin:user:" + id
-	if raw, err := a.rdb.Get(ctx, key).Bytes(); err == nil {
+	if raw, err := a.cacheGet(ctx, key); err == nil {
 		var u User
-		if json.Unmarshal(raw, &u) == nil {
+		if json.Unmarshal(raw, &u) == nil && (claimRole == "" || u.Role == claimRole) {
 			return u, nil
 		}
 	}
@@ -240,9 +248,30 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 		return u, errNoVerifiedEmail
 	}
 	if raw, err := json.Marshal(u); err == nil {
-		_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()
+		a.cacheSet(ctx, key, raw)
 	}
 	return u, nil
+}
+
+func (a *Authenticator) cacheGet(ctx context.Context, key string) ([]byte, error) {
+	if a.cache != nil {
+		return a.cache.get(key)
+	}
+	return a.rdb.Get(ctx, key).Bytes()
+}
+
+func (a *Authenticator) cacheSet(ctx context.Context, key string, raw []byte) {
+	if a.cache != nil {
+		a.cache.set(key, raw)
+		return
+	}
+	_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()
+}
+
+// profileCache replaces Redis for the profile cache in tests.
+type profileCache interface {
+	get(key string) ([]byte, error)
+	set(key string, raw []byte)
 }
 
 // metadataRole reads "role" from Clerk public_metadata (set server-side only;

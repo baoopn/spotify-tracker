@@ -37,7 +37,8 @@ API contract: [admin-api.md](admin-api.md).
    ```json
    { "role": "{{user.public_metadata.role}}", "email": "{{user.primary_email_address}}" }
    ```
-   The API decides from its Clerk profile lookup (cached 5 minutes) and uses
+   The API decides from its Clerk profile lookup (cached 5 minutes; a role
+   claim that differs from the cached profile triggers a fresh lookup) and uses
    these claims only when Clerk's Backend API is briefly unreachable (network
    error, 5xx or 429); they never override a successful lookup.
 

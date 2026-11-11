@@ -51,6 +51,10 @@ type Handler struct {
 	log   *slog.Logger
 	opts  Options
 	now   func() time.Time // test seam; nil = time.Now
+	// streams caps open now-playing streams; streamAge is a test seam for
+	// their lifetime (nil = randomStreamAge).
+	streams   *streamSlots
+	streamAge func() time.Duration
 }
 
 func (h *Handler) clock() time.Time {
@@ -62,7 +66,7 @@ func (h *Handler) clock() time.Time {
 
 // NewRouter builds the HTTP router.
 func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Options) http.Handler {
-	h := &Handler{store: st, rdb: rdb, log: log, opts: opts}
+	h := &Handler{store: st, rdb: rdb, log: log, opts: opts, streams: newStreamSlots()}
 	if st != nil {
 		h.top = st
 	}

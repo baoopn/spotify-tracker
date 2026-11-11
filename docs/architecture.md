@@ -222,3 +222,6 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   exposed.
 - The client IP trust model is explicit (`TRUSTED_PROXY_HOPS` /
   `CLIENT_IP_HEADER`), so `X-Forwarded-For` can't be spoofed into the rate limiter.
+- `GET /api/v1/now-playing/stream` (SSE) holds one Redis subscription per
+  stream, so streams are capped: at most 6 per client IP (429) and 256 in all
+  (503); each stream closes after about 30 minutes and clients reconnect.

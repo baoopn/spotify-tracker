@@ -114,8 +114,20 @@ func (m *Manager) refreshLocked(ctx context.Context, force bool) (string, time.T
 	now := time.Now().UTC()
 	if err != nil {
 		cur.LastError = err.Error()
+		// Some failures (ErrMissingScope) still carry a rotated refresh
+		// token; the old one may already be revoked, so keep the new one.
+		cur.RefreshToken = refresh
+		if tok.RefreshToken != "" {
+			cur.RefreshToken = tok.RefreshToken
+		}
+		rotated := cur.RefreshToken != stored
 		if saveErr := m.saveState(ctx, "system", cur); saveErr != nil {
+			if rotated {
+				m.unsaved = cur.RefreshToken
+			}
 			m.log.WarnContext(ctx, "save spotify error state failed", slog.Any("error", saveErr))
+		} else {
+			m.unsaved = ""
 		}
 		return "", time.Time{}, err
 	}

@@ -293,3 +293,21 @@ func TestAccessTokenUnrotatedSaveFailureOnlyLogged(t *testing.T) {
 		t.Error("unrotated token marked unsaved")
 	}
 }
+
+func TestConnectClearsUnsaved(t *testing.T) {
+	acc := &accountsServer{reply: func(string) (int, map[string]any) { return http.StatusOK, tokenBody("c1") }}
+	st := &fakeStore{s: settings.Spotify{RefreshToken: "r1"}}
+	m := newTestManager(t, acc, st, nil)
+	m.oauth.APIBase = m.oauth.AccountsBase // keep /me on the fake server
+	m.unsaved = "r2"
+
+	if _, err := m.Connect(context.Background(), "admin", "code", "http://127.0.0.1/callback"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if m.unsaved != "" {
+		t.Errorf("unsaved = %q after Connect, want empty", m.unsaved)
+	}
+	if got := st.stored(); got != "c1" {
+		t.Errorf("stored refresh token = %q, want c1", got)
+	}
+}

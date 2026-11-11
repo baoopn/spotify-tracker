@@ -5,6 +5,7 @@ package notify
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net"
@@ -168,35 +169,55 @@ func (n *Notifier) send(cfg SMTPConfig, e Email) error {
 	return deliver(cfg, msg)
 }
 
+// smtpTimeout bounds one delivery, from dial to QUIT; dialTimeout bounds the
+// TCP connect. Variables so tests can shorten them.
+var (
+	smtpTimeout = 30 * time.Second
+	dialTimeout = 15 * time.Second
+	// smtpRootCAs overrides the system roots for TLS (tests only).
+	smtpRootCAs *x509.CertPool
+)
+
+// deliver sends msg over SMTP. Port 465 uses implicit TLS; other ports
+// upgrade with STARTTLS when the server offers it. It authenticates only
+// when the server advertises AUTH, and fails if credentials are set but it
+// does not. The whole exchange must finish within smtpTimeout.
 func deliver(cfg SMTPConfig, msg []byte) error {
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	tlsConfig := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12, RootCAs: smtpRootCAs}
 
-	var auth smtp.Auth
-	if cfg.User != "" {
-		auth = smtp.PlainAuth("", cfg.User, cfg.Password, cfg.Host)
-	}
-	if cfg.Port != 465 {
-		// net/smtp upgrades with STARTTLS when the server advertises it.
-		return smtp.SendMail(addr, auth, cfg.From, cfg.To, msg)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	d := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: 15 * time.Second},
-		Config:    &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12},
-	}
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	conn, err := (&net.Dialer{Timeout: dialTimeout}).Dial("tcp", addr)
 	if err != nil {
 		return err
+	}
+	if err := conn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if cfg.Port == 465 {
+		conn = tls.Client(conn, tlsConfig)
 	}
 	c, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
+		_ = conn.Close()
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	if auth != nil {
-		if err := c.Auth(auth); err != nil {
+	if err := c.Hello("localhost"); err != nil {
+		return err
+	}
+	if cfg.Port != 465 {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(tlsConfig); err != nil {
+				return err
+			}
+		}
+	}
+	if cfg.User != "" {
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return errors.New("smtp: server doesn't support AUTH")
+		}
+		if err := c.Auth(smtp.PlainAuth("", cfg.User, cfg.Password, cfg.Host)); err != nil {
 			return err
 		}
 	}

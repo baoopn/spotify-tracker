@@ -36,9 +36,11 @@ deployed** — and (3) a local pre-push hook (`git config core.hooksPath
   2. Builds the app image and the backup image (`<repo>-backup`) and pushes
      them to GHCR with the tags `sha-<short>`, `latest` (and the semver tag),
      plus provenance and SBOM.
-  3. **Deploy** (environment `production`): sets `IMAGE_TAG=sha-<short>` on the
-     Coolify resource through the Coolify API, triggers a deployment, and waits
-     until Coolify reports `finished` (the job fails if the deploy fails).
+  3. **Deploy** (environment `production`): triggers the Coolify resource
+     through the Coolify API and waits until Coolify reports `finished` (the
+     job fails if the deploy fails). Coolify builds the images itself from Git
+     (branch `main`); the job does not set `IMAGE_TAG`. The deploy runs only if
+     `main` still points at the tested commit; otherwise the newer run deploys.
 
 Repository settings required:
 
@@ -48,8 +50,9 @@ Repository settings required:
 | Variable | `COOLIFY_URL` | `https://coolify.example.com` |
 | Variable | `COOLIFY_RESOURCE_UUID` | UUID of the spotify-tracker application in Coolify |
 
-Rollback: re-run an older successful `Release & deploy` run, or set
-`IMAGE_TAG` to an older `sha-…` in Coolify and redeploy.
+Rollback: revert the change with a pull request (merging it deploys), or
+use Coolify's rollback to redeploy an earlier deployment. Re-running an older
+`Release & deploy` run does not roll back: Coolify builds the current `main`.
 
 ## Coolify
 

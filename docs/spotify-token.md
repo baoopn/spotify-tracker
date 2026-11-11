@@ -111,6 +111,7 @@ into `SPOTIFY_AUTHORIZED_AT`.
 | Symptom | Cause / fix |
 |---|---|
 | `invalid_grant` in logs, alert email | Token expired (180 days) or revoked → Re-authorize. |
+| `rotated refresh token could not be saved` | Spotify issued a new refresh token while the database was down. The API keeps it in memory, hands out no access token, and saves it on the next refresh. If the API restarts before that, Re-authorize. |
 | 403 / app suddenly stops working | Owner's Premium lapsed, or the user isn't in the app's User Management list. |
 | `INVALID_CLIENT: Invalid redirect URI` | The callback URL isn't registered exactly (scheme, host, port, path). |
 | 429 `QUOTA_EXCEEDED` | Account-level quota; the poller backs off automatically. Raise `POLL_INTERVAL_MS` if it persists. |

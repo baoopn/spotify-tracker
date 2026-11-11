@@ -8,7 +8,7 @@ the backup sidecar (`ghcr.io/baoopn/spotify-tracker-backup`, see
 |---|---|
 | `docker-compose.yml` | Local development: builds the image, publishes ports on 127.0.0.1, debug logs. |
 | `docker-compose.prod.yml` | Any Docker host (VPS): GHCR image, Caddy with automatic HTTPS, nightly local Postgres backups plus encrypted off-site backups, hardened containers, private network. |
-| `docker-compose.coolify.yml` | Coolify: GHCR image, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`, encrypted off-site backups, the same container hardening as prod for api/poller/enricher. |
+| `docker-compose.coolify.yml` | Coolify: images built from Git on the server, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`, encrypted off-site backups, the same container hardening as prod for api/poller/enricher. |
 
 All stateful data lives in the bundled `postgres` and `redis` services and
 their named volumes. No external database is needed.
@@ -60,9 +60,8 @@ use Coolify's rollback to redeploy an earlier deployment. Re-running an older
 
 ## Coolify
 
-1. **GHCR access.** If the package is private, add a registry login for
-   `ghcr.io` on the target server (Coolify → Servers → *your server* → Docker registries)
-   with a read-only PAT (`read:packages`).
+1. **No registry login.** Coolify builds the images from the Git repository
+   on the target server, so it does not pull from GHCR.
 2. **Create the resource.** Project → Environment → *New resource* → *Docker
    Compose* (from the Git repository `baoopn/spotify-tracker`, branch `main`),
    Docker Compose location `/docker-compose.coolify.yml`, destination server of your choice.

@@ -75,16 +75,18 @@ services:
     image: spotify-tracker-app:latest
     command: ["/usr/local/bin/api"]
     # Same hardening as docker-compose.prod.yml (x-app): read-only root fs,
-    # no capabilities, no privilege gain, a memory cap.
+    # no capabilities, no privilege gain, a memory cap (GOMEMLIMIT ~80%).
     read_only: true
+    tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     deploy:
       resources:
         limits:
-          memory: 256m
+          memory: 512m
     environment:
       - SERVICE_FQDN_API_8080
+      - GOMEMLIMIT=400MiB
       - APP_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=json
@@ -154,7 +156,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64m
+          memory: 256m
     environment:
       - APP_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -162,6 +164,7 @@ services:
       - REDIS_URL=redis://:${SERVICE_PASSWORD_REDIS}@redis:6379/0
       - INTERNAL_API_TOKEN=${SERVICE_PASSWORD_64_INTERNALAPI}
       - TRACKER_GRPC_ADDR=api:9000
+      - GOMEMLIMIT=200MiB
       - POLL_INTERVAL_MS=${POLL_INTERVAL_MS:-3000}
     depends_on:
       api:
@@ -182,7 +185,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64m
+          memory: 256m
     environment:
       - APP_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -190,6 +193,7 @@ services:
       - REDIS_URL=redis://:${SERVICE_PASSWORD_REDIS}@redis:6379/0
       - INTERNAL_API_TOKEN=${SERVICE_PASSWORD_64_INTERNALAPI}
       - TRACKER_GRPC_ADDR=api:9000
+      - GOMEMLIMIT=200MiB
       - ENRICH_INTERVAL_MS=${ENRICH_INTERVAL_MS:-60000}
       - SOUNDCHARTS_APP_ID=${SOUNDCHARTS_APP_ID}
       - SOUNDCHARTS_TOKEN=${SOUNDCHARTS_TOKEN}

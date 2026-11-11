@@ -116,12 +116,16 @@ import-directus: ## Import legacy Directus data into the dev database
 
 ## ── Production (any Docker host) ─────────────────────────────────────────────
 
+.PHONY: prod-require-tag
+prod-require-tag:
+	@test -n "$$IMAGE_TAG" || { echo "IMAGE_TAG is not set: run e.g. IMAGE_TAG=sha-xxxxxxx make $(MAKECMDGOALS)" >&2; exit 1; }
+
 .PHONY: prod-up
-prod-up: ## Pull images and start the production stack
+prod-up: prod-require-tag ## Pull images and start the production stack
 	$(PROD) pull && $(PROD) up -d
 
 .PHONY: prod-import
-prod-import: ## Run the Directus importer against production
+prod-import: prod-require-tag ## Run the Directus importer against production
 	$(PROD) --profile tools run --rm importer
 
 .PHONY: e2e

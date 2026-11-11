@@ -86,8 +86,10 @@ services:
   api:
     <<: *app
     command: ["/usr/local/bin/api"]
+    tmpfs: [/tmp]
     environment:
       <<: *app-env
+      GOMEMLIMIT: 200MiB # ~80% of the memory limit below
       DATABASE_URL: postgres://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spotify_tracker}?sslmode=disable
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
       CACHE_TTL: ${CACHE_TTL:-5m}
@@ -148,6 +150,7 @@ services:
     networks: [internal, edge]
     environment:
       <<: *app-env
+      GOMEMLIMIT: 50MiB # ~80% of the memory limit below
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-3000}
     depends_on:
       api: { condition: service_healthy }
@@ -168,6 +171,7 @@ services:
     networks: [internal, edge]
     environment:
       <<: *app-env
+      GOMEMLIMIT: 50MiB # ~80% of the memory limit below
       ENRICH_INTERVAL_MS: ${ENRICH_INTERVAL_MS:-60000}
       ENRICH_BATCH_SIZE: ${ENRICH_BATCH_SIZE:-50}
       ENRICH_CONCURRENCY: ${ENRICH_CONCURRENCY:-5}

@@ -215,6 +215,7 @@ jobs:
           COOLIFY_URL: ${{ vars.COOLIFY_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           DEPLOYMENT: ${{ steps.deploy.outputs.deployment_uuid }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # First builds compile both frontends + Go on the server: allow 20 min.
@@ -230,7 +231,14 @@ jobs:
                 built=$(echo "$resp" | jq -r '.commit // ""')
                 if [[ "$built" =~ ^[0-9a-f]{40}$ ]]; then
                   if [ "$built" != "${{ github.sha }}" ]; then
-                    echo "::error::Coolify built $built, not the tested commit ${{ github.sha }}. Production may run untested code; redeploy the tested commit or check the Coolify resource's branch."
+                    # main may have moved after the head check: then Coolify built
+                    # the newer head, which has its own run (tests + deploy) queued.
+                    head=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
+                    if [ "$built" = "$head" ]; then
+                      echo "::notice::main moved to $head during the deploy and Coolify built it; that commit's own run verifies it."
+                      exit 0
+                    fi
+                    echo "::error::Coolify built $built, not the tested commit ${{ github.sha }} (main is at $head). Production may run untested code; redeploy the tested commit or check the Coolify resource's branch."
                     exit 1
                   fi
                   echo "Coolify built the tested commit."

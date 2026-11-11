@@ -28,6 +28,8 @@ origin). Its backend lives under **`/admin/api`**. All bodies are JSON
 { "error": { "code": "invalid_request", "message": "human readable", "fields": { "port": "must be 1..65535" } } }
 ```
 `fields` is optional (validation errors, HTTP 422 `validation_failed`).
+Upstream failures answer `503`, never `502`: the production proxy replaces
+502 bodies with an HTML error page.
 
 ### Lists
 
@@ -249,7 +251,7 @@ type RecentPlaylist = { playlist: Playlist; plays: number; last_played: string }
 | Method | Path | Query | Response |
 |---|---|---|---|
 | GET | `/admin/api/playlists` | `limit` (1–100), `offset` | `{ data: RecentPlaylist[], total }` — every playlist ever played from, newest first, incl. private/unavailable |
-| POST | `/admin/api/playlists/{id}/refresh` | – | `Playlist` (re-fetched from Spotify) |
+| POST | `/admin/api/playlists/{id}/refresh` | – | `Playlist` (re-fetched from Spotify); `503 spotify_error` when Spotify fails |
 
 Public (no auth): `GET /api/v1/playlists/recent?limit=5` → `{ data: RecentPlaylist[] }`
 — only public playlists (unless `PUBLIC_SHOW_PRIVATE_PLAYLISTS=true`), cached.
@@ -384,7 +386,7 @@ not yet published are stored exactly like the tick stores them (`failed` /
 - If the period now ranks no tracks, nothing changes (`409 no_plays`).
 - On any Spotify or store failure the row stays `created` with its
   `published_at`, `attempts` and `next_attempt_at`; only `last_error` is set
-  (`502`, or `412` for a Spotify permission error).
+  (`503`, or `412` for a Spotify permission error).
 - The stored snapshot is replaced only after Spotify accepted the new items,
   so it always matches the playlist. A success clears `last_error`.
 
@@ -403,7 +405,7 @@ the lock; retry shortly), `409 no_plays` (regenerating a published playlist
 whose period has no plays; message "no plays in this period; playlist left
 unchanged"), `412 spotify_not_authorized` (Spotify not connected or missing
 `playlist-modify-public`; a not-yet-published row is now `waiting_auth` and
-`message` is its `last_error`), `502 spotify_error` (the row is now `failed`,
+`message` is its `last_error`), `503 spotify_error` (the row is now `failed`,
 or a published row kept with `last_error`; `message` includes the
 `last_error`), `503 top_playlists_disabled` for every mutation — run,
 verify, generate, regenerate **and PATCH hidden** — while the feature is disabled (the

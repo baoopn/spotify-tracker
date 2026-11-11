@@ -359,10 +359,10 @@ func TestTopPlaylistGenerateErrors(t *testing.T) {
 		{"kind disabled", domain.TopPlaylistRecord{}, topplaylists.ErrPeriodDisabled, 400, "invalid_period", 0, ""},
 		{"waiting auth", waiting, fmt.Errorf("%w: x: %w", topplaylists.ErrNotAuthorized, spotify.ErrForbidden),
 			412, "spotify_not_authorized", 1, "re-authorize Spotify"},
-		{"spotify failure", failed, errors.New("spotify: 502"), 502, "spotify_error", 1, "replace playlist items failed (502)"},
+		{"spotify failure", failed, errors.New("spotify: 502"), 503, "spotify_error", 1, "replace playlist items failed (502)"},
 		{"internal", domain.TopPlaylistRecord{}, errors.New("db down"), 500, "internal", 0, ""},
 		{"no plays", createdRow(), topplaylists.ErrNoPlays, 409, "no_plays", 1, "playlist left unchanged"},
-		{"published kept", keptRow, errors.New("spotify: 500"), 502, "spotify_error", 1, "replace failed (500)"},
+		{"published kept", keptRow, errors.New("spotify: 500"), 503, "spotify_error", 1, "replace failed (500)"},
 		{"published, not authorized", createdRow(), fmt.Errorf("%w: connect Spotify", topplaylists.ErrNotAuthorized),
 			412, "spotify_not_authorized", 1, "connect Spotify"},
 	}

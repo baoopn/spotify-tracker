@@ -107,6 +107,15 @@ func (h *Handler) nowPlayingJSON(ctx context.Context) ([]byte, error) {
 
 // GET /api/v1/now-playing/stream — Server-Sent Events of now-playing updates.
 func (h *Handler) nowPlayingStream(w http.ResponseWriter, r *http.Request) {
+	// Reserve a slot before touching Redis: each stream holds a subscription.
+	ip, _ := clientIPKey(r)
+	release, status := h.streams.acquire(ip)
+	if status != 0 {
+		refuseStream(w, status)
+		return
+	}
+	defer release()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "internal", "streaming unsupported")
@@ -151,9 +160,14 @@ func (h *Handler) nowPlayingStream(w http.ResponseWriter, r *http.Request) {
 	ch := sub.Channel()
 	keepAlive := time.NewTicker(25 * time.Second)
 	defer keepAlive.Stop()
+	// End the response after a while; EventSource and the baoopn hub reconnect.
+	lifetime := time.NewTimer(h.streamLifetime())
+	defer lifetime.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-lifetime.C:
 			return
 		case msg, ok := <-ch:
 			if !ok || !send("now-playing", []byte(msg.Payload)) {

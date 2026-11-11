@@ -126,7 +126,10 @@ final publish reuses an existing playlist (possibly created live), its
 description is updated too; if that update fails, the row is published anyway
 and left live (backing off) for the finalizer to retry. If saving a new
 playlist ID fails after Spotify created it, the runner keeps the ID in memory
-and the next attempt saves and reuses it instead of creating another.
+and the next attempt saves and reuses it instead of creating another. When
+the create response itself was lost, the retry (`attempts > 0`, no stored ID)
+first looks for an owned playlist with the exact name in `GET /me/playlists`
+and adopts it.
 
 After the generate and live steps each tick prunes, renames and checks, in
 that order (a Spotify rate limit at any step ends the tick):
@@ -156,8 +159,8 @@ that order (a Spotify rate limit at any step ends the tick):
   page). Rows published or restored in the last 15 minutes are skipped (a new
   playlist may not be listed yet). Nothing is changed when the list fails, is
   too long to read in full (over 1000 playlists), is empty while playlists
-  are published, or contains none of two or more published playlists (likely
-  another account). A missing
+  are published, or contains none of the published playlists (likely
+  another account; this holds for a single playlist too). A missing
   playlist (three per check) is followed again (`PUT /me/library`, falling
   back to the deprecated `PUT /playlists/{id}/followers`; the library endpoint
   has no visibility option, so `PUT /playlists/{id} {"public": true}` follows

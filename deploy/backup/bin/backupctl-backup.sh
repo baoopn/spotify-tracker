@@ -57,11 +57,13 @@ cmd_backup() {
 	wait "$tee_pid"
 	tee_rc=$?
 	wait "$toc_pid"
+	# Downstream first: a dead age (or tee) makes the writers before it die of
+	# SIGPIPE, which would otherwise be reported as a pg_dump failure.
+	[ "$age_rc" -eq 0 ] || die "age failed (exit $age_rc): $(head -n 1 "$WORKDIR/age.err")"
+	[ "$tee_rc" -eq 0 ] || die "tee failed (exit $tee_rc): $(head -n 1 "$WORKDIR/tee.err")"
 	if [ "$dump_rc" -ne 0 ]; then
 		die "pg_dump failed (exit $dump_rc): $(tail -n 3 "$WORKDIR/pg_dump.err" | tr '\n' ' ')"
 	fi
-	[ "$age_rc" -eq 0 ] || die "age failed (exit $age_rc): $(head -n 1 "$WORKDIR/age.err")"
-	[ "$tee_rc" -eq 0 ] || die "tee failed (exit $tee_rc): $(head -n 1 "$WORKDIR/tee.err")"
 	read -r toc_rc tables _ <"$WORKDIR/toc.result" || toc_rc=99
 	[ "$toc_rc" = 0 ] ||
 		die "the dump is not a readable archive: $(head -n 1 "$WORKDIR/toc.err")"

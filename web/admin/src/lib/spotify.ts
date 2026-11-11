@@ -1,4 +1,5 @@
 import { api, errorMessage } from './api';
+import { isSpotifyAuthorizeUrl } from './links';
 import { daysUntil } from './time.js';
 import { toasts } from './toast.svelte';
 import type { SpotifyStatus } from './types';
@@ -7,6 +8,11 @@ import type { SpotifyStatus } from './types';
 export async function startSpotifyAuthorize(): Promise<void> {
 	try {
 		const { url } = await api.spotifyAuthorize();
+		// Only ever leave for Spotify's accounts host, whatever the API returned.
+		if (!isSpotifyAuthorizeUrl(url)) {
+			toasts.error('Could not start Spotify authorization', 'Unexpected authorize URL');
+			return;
+		}
 		window.location.href = url;
 	} catch (err) {
 		toasts.error('Could not start Spotify authorization', errorMessage(err));

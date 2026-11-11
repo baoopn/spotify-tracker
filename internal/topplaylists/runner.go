@@ -320,12 +320,28 @@ func (r *Runner) attempt(ctx context.Context, p Period, rec domain.TopPlaylistRe
 // (bounded by createTimeout): a create that reached Spotify is always saved.
 // On a save error the returned record carries the new ID and err is set; the
 // ID is also kept in memory, so the next attempt of this process saves and
-// reuses it instead of creating another playlist.
+// reuses it instead of creating another playlist. After a failed attempt
+// (the create response may have been lost) an owned playlist with the same
+// name is adopted instead of creating a new one.
 func (r *Runner) create(ctx context.Context, rec domain.TopPlaylistRecord, description string) (domain.TopPlaylistRecord, error) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
 	defer cancel()
 	k := keyOf(rec)
 	u, ok := r.unsavedPlaylist(k)
+	if !ok && rec.Attempts > 0 {
+		// An earlier attempt failed: its create may have reached Spotify
+		// with the response lost. Adopt that playlist instead of making a
+		// second public one with the same name.
+		id, link, err := r.Spotify.FindOwnedPlaylist(cctx, rec.Name)
+		if err != nil {
+			return rec, fmt.Errorf("look for an earlier playlist: %w", err)
+		}
+		if id != "" {
+			r.Log.InfoContext(ctx, "adopting spotify playlist from an earlier attempt",
+				slog.String("name", rec.Name), slog.String("spotify_id", id))
+			u, ok = unsavedPlaylist{id: id, url: link}, true
+		}
+	}
 	if !ok {
 		id, link, err := r.Spotify.CreatePlaylist(cctx, rec.Name, description, true)
 		if err != nil {

@@ -55,6 +55,9 @@ type Spotify interface {
 	FollowPlaylist(ctx context.Context, id string) error
 	// OwnedPlaylistIDs lists the playlists in the user's library.
 	OwnedPlaylistIDs(ctx context.Context) (map[string]bool, error)
+	// FindOwnedPlaylist returns an owned playlist named exactly name
+	// ("" when there is none).
+	FindOwnedPlaylist(ctx context.Context, name string) (id, url string, err error)
 	// CurrentUserName is the connected account's display name (or ID).
 	CurrentUserName(ctx context.Context) (string, error)
 }

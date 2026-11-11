@@ -132,8 +132,16 @@ func (f *fakeSpotify) CreatePlaylist(ctx context.Context, name, descr string, pu
 	f.creates = append(f.creates, name)
 	f.descrs = append(f.descrs, descr)
 	id := fmt.Sprintf("pl%d", len(f.creates))
+	if f.ext.named == nil {
+		f.ext.named = map[string]string{}
+	}
+	f.ext.named[name] = id
 	if f.onCreate != nil {
 		f.onCreate()
+	}
+	if f.ext.loseCreates > 0 {
+		f.ext.loseCreates--
+		return "", "", errors.New("connection reset by peer")
 	}
 	return id, "https://open.spotify.com/playlist/" + id, nil
 }

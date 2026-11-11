@@ -13,12 +13,10 @@ import (
 
 // MountSPA serves the built dashboard at /admin with client-side routing
 // fallback and a strict CSP that also allows Clerk's Frontend API (derived
-// from the publishable key) and Cloudflare Turnstile.
+// from the publishable key; Clerk's wildcard hosts only without one) and
+// Cloudflare Turnstile.
 func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
-	clerk := "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com"
-	if host := ClerkFrontendHost(clerkPublishableKey); host != "" {
-		clerk = "https://" + host + " " + clerk
-	}
+	clerk := clerkSources(clerkPublishableKey)
 	site := staticsite.New(dist, staticsite.Options{
 		Prefix: "/admin",
 		SPA:    true,
@@ -37,6 +35,17 @@ func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
 	})
 	r.Get("/admin/*", site.ServeHTTP)
 	r.Head("/admin/*", site.ServeHTTP)
+}
+
+// clerkSources is the CSP source list for Clerk and Turnstile: the Frontend
+// API host from the publishable key, or Clerk's wildcard hosts only when the
+// key carries no usable host.
+func clerkSources(pk string) string {
+	const turnstile = "https://challenges.cloudflare.com"
+	if host := ClerkFrontendHost(pk); host != "" {
+		return "https://" + host + " " + turnstile
+	}
+	return "https://*.clerk.accounts.dev https://*.clerk.com " + turnstile
 }
 
 // ClerkFrontendHost decodes the Frontend API host embedded in a Clerk

@@ -63,6 +63,7 @@ type Authenticator struct {
 	// fetchUser reads a user from Clerk's Backend API (user.Get; tests
 	// replace it).
 	fetchUser func(ctx context.Context, id string) (*clerk.User, error)
+	cache     profileCache // nil: Redis
 }
 
 // NewAuthenticator configures Clerk. authorizedParties are the origins
@@ -113,17 +114,21 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 // authorize looks up the verified token's user and serves next if the user
 // is an admin.
 func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next http.Handler, subject string, tc *TokenClaims) {
-	u, err := a.lookup(r.Context(), subject)
+	claimRole := ""
+	if tc != nil {
+		claimRole = tc.Role
+	}
+	u, err := a.lookup(r.Context(), subject, claimRole)
 	switch {
 	case err == nil:
-		// The session token is fresher than the cached profile (tokens
-		// live ~60s), so prefer its role/email claims when present.
-		if tc != nil && tc.Role != "" {
-			u.Role = tc.Role
+		// Clerk answered: its profile decides. Token claims are used only
+		// when Clerk cannot be reached (below).
+	case errors.Is(err, errBlocked):
+		if a.onForbidden != nil {
+			a.onForbidden(r.Context(), u, clientIP(r))
 		}
-		if tc != nil && u.Email == "" && tc.Email != "" {
-			u.Email = tc.Email
-		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account is banned or locked")
+		return
 	case errors.Is(err, errNoVerifiedEmail):
 		if a.onForbidden != nil {
 			a.onForbidden(r.Context(), u, clientIP(r))
@@ -157,6 +162,9 @@ func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next h
 	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 }
 
+// errBlocked means Clerk has the user but the account is banned or locked.
+var errBlocked = errors.New("user is banned or locked")
+
 // errNoVerifiedEmail means Clerk has the user but no verified email address,
 // and neither a user-ID allow-list nor a role can authorize them.
 var errNoVerifiedEmail = errors.New("user has no verified email address")
@@ -189,12 +197,15 @@ func (a *Authenticator) allowed(u User) bool {
 	return u.Email != "" && slices.Contains(a.allowedEmails, strings.ToLower(u.Email))
 }
 
-// lookup fetches the user's profile from Clerk, cached in Redis for 5 minutes.
-func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
+// lookup fetches the user's profile from Clerk, cached in Redis for 5
+// minutes. A cached profile whose role differs from the token's role claim
+// (claimRole, "" when absent) is stale, e.g. the role was just granted or
+// revoked: it is fetched again. The claim itself never sets the role.
+func (a *Authenticator) lookup(ctx context.Context, id, claimRole string) (User, error) {
 	key := "spotify-tracker:admin:user:" + id
-	if raw, err := a.rdb.Get(ctx, key).Bytes(); err == nil {
+	if raw, err := a.cacheGet(ctx, key); err == nil {
 		var u User
-		if json.Unmarshal(raw, &u) == nil {
+		if json.Unmarshal(raw, &u) == nil && (claimRole == "" || u.Role == claimRole) {
 			return u, nil
 		}
 	}
@@ -207,7 +218,7 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 		return User{}, err
 	}
 	if cu.Banned || cu.Locked {
-		return User{ID: cu.ID}, nil // never allowed: empty email/role
+		return User{ID: cu.ID}, errBlocked // never cached, never allowed
 	}
 	u := User{ID: cu.ID, Role: metadataRole(cu.PublicMetadata)}
 	if cu.ImageURL != nil {
@@ -237,9 +248,30 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 		return u, errNoVerifiedEmail
 	}
 	if raw, err := json.Marshal(u); err == nil {
-		_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()
+		a.cacheSet(ctx, key, raw)
 	}
 	return u, nil
+}
+
+func (a *Authenticator) cacheGet(ctx context.Context, key string) ([]byte, error) {
+	if a.cache != nil {
+		return a.cache.get(key)
+	}
+	return a.rdb.Get(ctx, key).Bytes()
+}
+
+func (a *Authenticator) cacheSet(ctx context.Context, key string, raw []byte) {
+	if a.cache != nil {
+		a.cache.set(key, raw)
+		return
+	}
+	_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()
+}
+
+// profileCache replaces Redis for the profile cache in tests.
+type profileCache interface {
+	get(key string) ([]byte, error)
+	set(key string, raw []byte)
 }
 
 // metadataRole reads "role" from Clerk public_metadata (set server-side only;

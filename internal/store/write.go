@@ -230,7 +230,7 @@ func (q *Queries) SaveFeatures(ctx context.Context, trackID string, found bool, 
 			key = EXCLUDED.key, liveness = EXCLUDED.liveness, loudness = EXCLUDED.loudness,
 			mode = EXCLUDED.mode, speechiness = EXCLUDED.speechiness, tempo = EXCLUDED.tempo,
 			time_signature = EXCLUDED.time_signature, valence = EXCLUDED.valence,
-			genres = EXCLUDED.genres, last_error = NULL, enriched_at = now()`,
+			genres = EXCLUDED.genres, last_error = NULL, postponed_since = NULL, enriched_at = now()`,
 		trackID, status, nullIfEmpty(source),
 		f.Acousticness, f.Danceability, f.Energy, f.Instrumentalness,
 		f.Key, f.Liveness, f.Loudness, f.Mode, f.Speechiness, f.Tempo, f.TimeSignature, f.Valence,
@@ -248,27 +248,72 @@ func (q *Queries) SaveFeatures(ctx context.Context, trackID string, found bool, 
 	return nil
 }
 
+// backoffSQL is Backoff(n) in SQL, for n an SQL expression (in seconds).
+func backoffSQL(n string) string {
+	return "LEAST(60 * power(2, LEAST(GREATEST(" + n + ", 1), 12) - 1), 86400)"
+}
+
 // RecordFailure increments the attempt counter and schedules a retry with
 // exponential backoff (1m, 2m, 4m … capped at 24h). After maxAttempts the
-// track is marked failed. It returns true when attempts are exhausted.
+// track is marked failed. It returns true when attempts are exhausted. Only
+// a pending row changes (one UPDATE), so a result saved meanwhile is never
+// overwritten; then it returns false, nil.
 func (q *Queries) RecordFailure(ctx context.Context, trackID, msg string, maxAttempts int) (bool, error) {
 	var attempts int
 	err := q.db.QueryRow(ctx, `
-		UPDATE track_features SET attempts = attempts + 1, last_error = left($2, 2000)
-		WHERE track_id = $1 RETURNING attempts`, trackID, msg).Scan(&attempts)
+		UPDATE track_features SET attempts = attempts + 1, last_error = left($2, 2000), postponed_since = NULL,
+			status = CASE WHEN attempts + 1 >= $3 THEN 'failed' ELSE status END,
+			next_attempt_at = CASE WHEN attempts + 1 >= $3 THEN next_attempt_at
+				ELSE now() + make_interval(secs => `+backoffSQL("attempts + 1")+`) END
+		WHERE track_id = $1 AND status = 'pending' RETURNING attempts`, trackID, msg, maxAttempts).Scan(&attempts)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, domain.ErrNotFound
+		return false, q.featuresExist(ctx, trackID)
 	}
 	if err != nil {
 		return false, fmt.Errorf("record failure %s: %w", trackID, err)
 	}
-	if attempts >= maxAttempts {
-		_, err = q.db.Exec(ctx, `UPDATE track_features SET status = 'failed' WHERE track_id = $1`, trackID)
-		return true, err
+	return attempts >= maxAttempts, nil
+}
+
+// PostponeMax is how long transient failures may postpone a track without
+// counting attempts.
+const PostponeMax = 24 * time.Hour
+
+// PostponeEnrichment schedules the next try of a pending track after a
+// transient provider failure (rate limit) without counting an attempt: after
+// retryAfter when the provider sent one (capped at 24h), else the normal
+// backoff for the attempts so far. One UPDATE, pending rows only. It returns
+// false when it did not postpone: the track is not pending, or it has been
+// postponed for PostponeMax already (the caller then counts the failure).
+func (q *Queries) PostponeEnrichment(ctx context.Context, trackID, msg string, retryAfter time.Duration) (bool, error) {
+	tag, err := q.db.Exec(ctx, `
+		UPDATE track_features SET last_error = left($2, 2000), postponed_since = COALESCE(postponed_since, now()),
+			next_attempt_at = now() + make_interval(secs => CASE WHEN $3::bigint > 0 THEN LEAST($3::bigint, 86400)
+				ELSE `+backoffSQL("attempts")+` END)
+		WHERE track_id = $1 AND status = 'pending'
+			AND (postponed_since IS NULL OR postponed_since > now() - make_interval(secs => $4::bigint))`,
+		trackID, msg, int64(retryAfter.Seconds()), int64(PostponeMax.Seconds()))
+	if err != nil {
+		return false, fmt.Errorf("postpone enrichment %s: %w", trackID, err)
 	}
-	_, err = q.db.Exec(ctx, `UPDATE track_features SET next_attempt_at = now() + $2::interval WHERE track_id = $1`,
-		trackID, fmt.Sprintf("%d seconds", int64(Backoff(attempts).Seconds())))
-	return false, err
+	if tag.RowsAffected() == 0 {
+		return false, q.featuresExist(ctx, trackID)
+	}
+	return true, nil
+}
+
+// featuresExist is nil when the track has a track_features row, else
+// domain.ErrNotFound.
+func (q *Queries) featuresExist(ctx context.Context, trackID string) error {
+	var ok bool
+	if err := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM track_features WHERE track_id = $1)`,
+		trackID).Scan(&ok); err != nil {
+		return fmt.Errorf("check track features %s: %w", trackID, err)
+	}
+	if !ok {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 // Backoff returns the retry delay after n failed attempts.

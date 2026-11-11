@@ -48,8 +48,22 @@ func (m *Manager) getJSON(ctx context.Context, what, path string, v any) (found 
 		case http.StatusTooManyRequests:
 			return false, rateLimitFrom(&http.Response{Header: resp.Header, Body: io.NopCloser(bytes.NewReader(body))})
 		default:
-			return false, fmt.Errorf("spotify: get %s failed (%d): %s", what, resp.StatusCode, truncate(body))
+			return false, &StatusError{Code: resp.StatusCode,
+				msg: fmt.Sprintf("spotify: get %s failed (%d): %s", what, resp.StatusCode, truncate(body))}
 		}
 	}
 	return false, fmt.Errorf("spotify: unauthorized fetching %s", what)
 }
+
+// StatusError is an unexpected HTTP status from a Web API GET (not 401, 403,
+// 404 or 429, which have their own handling).
+type StatusError struct {
+	Code int
+	msg  string
+}
+
+func (e *StatusError) Error() string { return e.msg }
+
+// Permanent reports a client error (4xx) that retrying the same request
+// will not fix.
+func (e *StatusError) Permanent() bool { return e.Code >= 400 && e.Code < 500 }

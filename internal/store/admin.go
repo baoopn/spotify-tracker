@@ -325,7 +325,7 @@ func (q *Queries) RequeueTrack(ctx context.Context, id string) (string, error) {
 		INSERT INTO track_features (track_id, isrc)
 		SELECT id, isrc FROM tracks WHERE id = $1
 		ON CONFLICT (track_id) DO UPDATE SET
-			status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = now(),
+			status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = now(), postponed_since = NULL,
 			isrc = COALESCE(track_features.isrc, EXCLUDED.isrc)
 		RETURNING isrc`, id).Scan(&isrc)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -340,7 +340,8 @@ func (q *Queries) RequeueTrack(ctx context.Context, id string) (string, error) {
 // RequeueFailed resets every failed enrichment to pending.
 func (q *Queries) RequeueFailed(ctx context.Context) (int64, error) {
 	tag, err := q.db.Exec(ctx, `
-		UPDATE track_features SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = now()
+		UPDATE track_features SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = now(),
+			postponed_since = NULL
 		WHERE status = 'failed'`)
 	if err != nil {
 		return 0, fmt.Errorf("requeue failed: %w", err)

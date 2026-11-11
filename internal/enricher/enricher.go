@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -207,9 +209,7 @@ func (e *Enricher) enrich(ctx context.Context, trackID, isrc string) {
 		if errors.As(err, &re) && re.RetryAfter > 0 {
 			log.Warn("soundcharts asked to retry later", slog.Duration("retry_after", re.RetryAfter))
 		}
-		resp, rerr := e.api.ReportEnrichmentFailure(ctx, &trackerv1.ReportEnrichmentFailureRequest{
-			TrackId: trackID, Error: err.Error(),
-		})
+		resp, rerr := e.api.ReportEnrichmentFailure(ctx, failureRequest(trackID, err))
 		if rerr != nil {
 			log.Error("report failure failed", logging.Err(rerr))
 		}
@@ -242,4 +242,19 @@ func (e *Enricher) submit(ctx context.Context, trackID string, song *soundcharts
 
 func isBusyGroup(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "BUSYGROUP")
+}
+
+// failureRequest reports err for trackID. Only a rate limit (429, or 503
+// with Retry-After) is marked retryable, with its Retry-After, so the API
+// pushes the retry back without using up an attempt. Other 5xx, network and
+// body errors count as attempts: one bad ISRC must not retry forever.
+func failureRequest(trackID string, err error) *trackerv1.ReportEnrichmentFailureRequest {
+	req := &trackerv1.ReportEnrichmentFailureRequest{TrackId: trackID, Error: err.Error()}
+	var re *soundcharts.RetryableError
+	if errors.As(err, &re) && (re.Status == http.StatusTooManyRequests ||
+		(re.Status == http.StatusServiceUnavailable && re.RetryAfter > 0)) {
+		req.Retryable = true
+		req.RetryAfterSeconds = int32(min(re.RetryAfter/time.Second, math.MaxInt32))
+	}
+	return req
 }

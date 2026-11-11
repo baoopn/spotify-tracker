@@ -60,6 +60,11 @@ Lookups are rate limited client-side (`SOUNDCHARTS_RPS`, shared by
 `ENRICH_CONCURRENCY` workers). A 429 pauses all workers for `Retry-After`.
 Failures back off exponentially (1 min → 24 h) up to `ENRICH_MAX_ATTEMPTS`,
 then the track is marked `failed`; it can be re-queued from the dashboard.
+Rate limits (429, or 503 with `Retry-After`) are reported as `retryable` and
+only push `next_attempt_at` back (`Retry-After` when sent, else the backoff
+for the attempts so far) without using up an attempt, for at most 24 hours
+from the first one (`postponed_since`); after that they count again. Other
+5xx, network and body errors always count.
 ISRCs unknown to Soundcharts are marked `unavailable`.
 
 ## Spotify tokens
@@ -126,14 +131,20 @@ final publish reuses an existing playlist (possibly created live), its
 description is updated too; if that update fails, the row is published anyway
 and left live (backing off) for the finalizer to retry. If saving a new
 playlist ID fails after Spotify created it, the runner keeps the ID in memory
-and the next attempt saves and reuses it instead of creating another.
+and the next attempt saves and reuses it instead of creating another. When
+the create response itself was lost (or the process died mid-create), the
+next attempt on a row that already existed without a stored ID first looks
+for an owned playlist with the exact name in `GET /me/playlists` and adopts
+it; a final attempt then sets the final description on it.
 
 After the generate and live steps each tick prunes, renames and checks, in
 that order (a Spotify rate limit at any step ends the tick):
 
 - **Prune.** Only the newest `TOP_PLAYLISTS_KEEP` (default 3; `0` keeps all)
   `created` rows per kind are kept, the live and hidden ones included. Older
-  rows are pruned oldest first, ten per tick: the row becomes `pruned`
+  rows are pruned oldest first, ten per tick, and so are `failed` and
+  `waiting_auth` rows that hold a Spotify playlist and have `TOP_PLAYLISTS_KEEP`
+  newer `created` rows of their kind (they are no longer generated): the row becomes `pruned`
   (`pruned_at`, not live, snapshot deleted) before Spotify is asked to delete
   the playlist, so nothing restores it, and upserts never touch a pruned row.
   The removal (`DELETE /me/library?uris=spotify:playlist:{id}`, falling back
@@ -156,8 +167,9 @@ that order (a Spotify rate limit at any step ends the tick):
   page). Rows published or restored in the last 15 minutes are skipped (a new
   playlist may not be listed yet). Nothing is changed when the list fails, is
   too long to read in full (over 1000 playlists), is empty while playlists
-  are published, or contains none of two or more published playlists (likely
-  another account). A missing
+  are published, or contains none of the published playlists (likely
+  another account; this holds for a single playlist too, so a sole published
+  playlist deleted by hand is not restored). A missing
   playlist (three per check) is followed again (`PUT /me/library`, falling
   back to the deprecated `PUT /playlists/{id}/followers`; the library endpoint
   has no visibility option, so `PUT /playlists/{id} {"public": true}` follows

@@ -30,6 +30,16 @@ func TestClerkFrontendHost(t *testing.T) {
 	}
 }
 
+func TestClerkSources(t *testing.T) {
+	pk := "pk_live_" + base64.StdEncoding.EncodeToString([]byte("clerk.example.com$"))
+	if got := clerkSources(pk); got != "https://clerk.example.com https://challenges.cloudflare.com" {
+		t.Errorf("with a host: %q", got)
+	}
+	if got := clerkSources(""); got != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com" {
+		t.Errorf("fallback: %q", got)
+	}
+}
+
 func TestSPA(t *testing.T) {
 	script := "document.documentElement.dataset.theme='dark'"
 	dist := fstest.MapFS{
@@ -57,6 +67,9 @@ func TestSPA(t *testing.T) {
 	}
 	if !strings.Contains(csp, "https://a.clerk.accounts.dev") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("unexpected CSP: %s", csp)
+	}
+	if strings.Contains(csp, "*.clerk") {
+		t.Errorf("wildcard Clerk hosts with a known Frontend API host: %s", csp)
 	}
 	// The sidebar credit: only baoopn.com for the fetch and media.baoopn.com for the mark.
 	directive := func(name string) string {

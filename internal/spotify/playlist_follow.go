@@ -64,18 +64,27 @@ func (m *Manager) FollowPlaylist(ctx context.Context, id string) error {
 		"/playlists/"+url.PathEscape(id), map[string]any{"public": true}, nil)
 }
 
-// OwnedPlaylistIDs returns the IDs of the playlists in the user's library
+// libraryPlaylist is one entry of GET /me/playlists.
+type libraryPlaylist struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ExternalURLs struct {
+		Spotify string `json:"spotify"`
+	} `json:"external_urls"`
+	Owner struct {
+		ID string `json:"id"`
+	} `json:"owner"`
+}
+
+// libraryPlaylists lists the playlists in the user's library
 // (GET /me/playlists, every page). Any failure is an error, including a
-// library too large to list in ownedMaxPages pages: a partial list would
-// make present playlists look deleted.
-func (m *Manager) OwnedPlaylistIDs(ctx context.Context) (map[string]bool, error) {
-	ids := map[string]bool{}
+// library too large to list in ownedMaxPages pages.
+func (m *Manager) libraryPlaylists(ctx context.Context) ([]libraryPlaylist, error) {
+	var out []libraryPlaylist
 	for page := 0; page < ownedMaxPages; page++ {
 		var resp struct {
-			Items []*struct {
-				ID string `json:"id"`
-			} `json:"items"`
-			Next *string `json:"next"`
+			Items []*libraryPlaylist `json:"items"`
+			Next  *string            `json:"next"`
 		}
 		path := "/me/playlists?limit=" + strconv.Itoa(ownedPageSize) + "&offset=" + strconv.Itoa(page*ownedPageSize)
 		found, err := m.getJSON(ctx, "my playlists", path, &resp)
@@ -87,14 +96,60 @@ func (m *Manager) OwnedPlaylistIDs(ctx context.Context) (map[string]bool, error)
 		}
 		for _, it := range resp.Items {
 			if it != nil && it.ID != "" {
-				ids[it.ID] = true
+				out = append(out, *it)
 			}
 		}
 		if resp.Next == nil || *resp.Next == "" || len(resp.Items) == 0 {
-			return ids, nil
+			return out, nil
 		}
 	}
 	return nil, fmt.Errorf("spotify: list my playlists: more than %d playlists", ownedPageSize*ownedMaxPages)
+}
+
+// OwnedPlaylistIDs returns the IDs of the playlists in the user's library
+// (GET /me/playlists, every page). Any failure is an error, including a
+// library too large to list in ownedMaxPages pages: a partial list would
+// make present playlists look deleted.
+func (m *Manager) OwnedPlaylistIDs(ctx context.Context) (map[string]bool, error) {
+	items, err := m.libraryPlaylists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(items))
+	for _, it := range items {
+		ids[it.ID] = true
+	}
+	return ids, nil
+}
+
+// FindOwnedPlaylist returns the ID and open.spotify.com URL of a playlist in
+// the user's library that the connected account owns and whose name is
+// exactly name, or empty strings when there is none. It lets a retry adopt
+// a playlist whose create response was lost instead of making a second one.
+func (m *Manager) FindOwnedPlaylist(ctx context.Context, name string) (id, link string, err error) {
+	var me Profile
+	found, err := m.getJSON(ctx, "current user", "/me", &me)
+	if err != nil {
+		return "", "", err
+	}
+	if !found || me.ID == "" {
+		return "", "", fmt.Errorf("%w: current user", ErrForbidden)
+	}
+	items, err := m.libraryPlaylists(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	for _, it := range items {
+		if it.Name != name || it.Owner.ID != me.ID {
+			continue
+		}
+		link = it.ExternalURLs.Spotify
+		if link == "" {
+			link = "https://open.spotify.com/playlist/" + url.PathEscape(it.ID)
+		}
+		return it.ID, link, nil
+	}
+	return "", "", nil
 }
 
 // CurrentUserName returns the connected account's display name (GET /me),

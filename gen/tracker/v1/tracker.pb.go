@@ -1165,11 +1165,16 @@ func (*SubmitTrackFeaturesResponse) Descriptor() ([]byte, []int) {
 }
 
 type ReportEnrichmentFailureRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	TrackId string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
+	Error   string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// True for a transient provider failure (rate limit, 5xx, network): the
+	// retry is pushed back without using up an attempt.
+	Retryable bool `protobuf:"varint,3,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	// The provider's Retry-After in seconds (0 when absent: normal backoff).
+	RetryAfterSeconds int32 `protobuf:"varint,4,opt,name=retry_after_seconds,json=retryAfterSeconds,proto3" json:"retry_after_seconds,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ReportEnrichmentFailureRequest) Reset() {
@@ -1214,6 +1219,20 @@ func (x *ReportEnrichmentFailureRequest) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *ReportEnrichmentFailureRequest) GetRetryable() bool {
+	if x != nil {
+		return x.Retryable
+	}
+	return false
+}
+
+func (x *ReportEnrichmentFailureRequest) GetRetryAfterSeconds() int32 {
+	if x != nil {
+		return x.RetryAfterSeconds
+	}
+	return 0
 }
 
 type ReportEnrichmentFailureResponse struct {
@@ -1366,10 +1385,12 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\bfeatures\x18\x03 \x01(\v2\x19.tracker.v1.AudioFeaturesR\bfeatures\x12)\n" +
 	"\x06genres\x18\x04 \x03(\v2\x11.tracker.v1.GenreR\x06genres\x12\x16\n" +
 	"\x06source\x18\x05 \x01(\tR\x06source\"\x1d\n" +
-	"\x1bSubmitTrackFeaturesResponse\"Q\n" +
+	"\x1bSubmitTrackFeaturesResponse\"\x9f\x01\n" +
 	"\x1eReportEnrichmentFailureRequest\x12\x19\n" +
 	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"?\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1c\n" +
+	"\tretryable\x18\x03 \x01(\bR\tretryable\x12.\n" +
+	"\x13retry_after_seconds\x18\x04 \x01(\x05R\x11retryAfterSeconds\"?\n" +
 	"\x1fReportEnrichmentFailureResponse\x12\x1c\n" +
 	"\texhausted\x18\x01 \x01(\bR\texhausted2\xbe\x01\n" +
 	"\rIngestService\x12W\n" +

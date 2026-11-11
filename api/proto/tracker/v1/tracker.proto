@@ -168,6 +168,11 @@ message SubmitTrackFeaturesResponse {}
 message ReportEnrichmentFailureRequest {
   string track_id = 1;
   string error = 2;
+  // True for a transient provider failure (rate limit, 5xx, network): the
+  // retry is pushed back without using up an attempt.
+  bool retryable = 3;
+  // The provider's Retry-After in seconds (0 when absent: normal backoff).
+  int32 retry_after_seconds = 4;
 }
 
 message ReportEnrichmentFailureResponse {

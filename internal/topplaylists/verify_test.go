@@ -224,14 +224,14 @@ func TestVerifyOtherAccountRestoresNothing(t *testing.T) {
 		t.Errorf("no warning: %s", h.logs)
 	}
 
-	// With a single published playlist a missing one is still restored.
+	// A single published playlist is guarded too.
 	one := newHarness(t, Week)
 	one.r.Config.Verify = time.Hour
 	one.addCreated(Week, weekStart, "w1102", 1)
 	one.sp.ext.owned = map[string]bool{"someone-elses": true}
 	one.r.RunOnce(context.Background())
-	if strings.Join(one.sp.ext.follows, ",") != "w1102" {
-		t.Fatalf("follows = %v", one.sp.ext.follows)
+	if len(one.sp.ext.follows) != 0 || len(one.sp.creates) != 0 || one.st.ext.verified != 0 {
+		t.Fatalf("follows=%v creates=%v verified=%d", one.sp.ext.follows, one.sp.creates, one.st.ext.verified)
 	}
 }
 

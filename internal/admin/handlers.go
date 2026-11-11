@@ -767,7 +767,7 @@ func (a *API) refreshPlaylist(w http.ResponseWriter, r *http.Request) {
 	pl, err := a.Tracker.RefreshPlaylist(r.Context(), id)
 	if err != nil {
 		a.Log.WarnContext(r.Context(), "playlist refresh failed", logging.Err(err))
-		writeError(w, http.StatusBadGateway, "spotify_error", err.Error())
+		writeError(w, http.StatusServiceUnavailable, "spotify_error", err.Error())
 		return
 	}
 	a.audit(r, "playlist.refreshed", map[string]any{"playlist_id": id, "available": pl.Available})

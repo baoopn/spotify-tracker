@@ -436,7 +436,7 @@ func (a *API) runGenerate(w http.ResponseWriter, r *http.Request, action string,
 		writeError(w, http.StatusPreconditionFailed, "spotify_not_authorized", msg)
 	case rec.LastError != "" && (rec.Status == domain.TopPlaylistFailed || rec.Status == domain.TopPlaylistCreated):
 		// failed, or a published row whose regeneration failed (kept public)
-		writeError(w, http.StatusBadGateway, "spotify_error", "generation failed: "+rec.LastError)
+		writeError(w, http.StatusServiceUnavailable, "spotify_error", "generation failed: "+rec.LastError)
 	default:
 		a.internal(w, r, err)
 	}

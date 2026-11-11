@@ -142,7 +142,9 @@ func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next h
 		return
 	default:
 		a.log.ErrorContext(r.Context(), "clerk user lookup failed", logging.Err(err))
-		writeError(w, http.StatusBadGateway, "auth_unavailable", "could not verify the user with Clerk")
+		// 503, not 502: the production proxy replaces 502 bodies with an
+		// HTML error page, and the SPA needs this JSON.
+		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "could not verify the user with Clerk")
 		return
 	}
 	if !a.allowed(u) {

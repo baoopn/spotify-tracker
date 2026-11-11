@@ -106,8 +106,8 @@ func TestAdminClaimsFallbackOnlyOnOutage(t *testing.T) {
 		{"503", apiErr(http.StatusServiceUnavailable), http.StatusNoContent, true},
 		{"429", apiErr(http.StatusTooManyRequests), http.StatusNoContent, true},
 		{"404", apiErr(http.StatusNotFound), http.StatusUnauthorized, false},
-		{"400", apiErr(http.StatusBadRequest), http.StatusBadGateway, false},
-		{"403", apiErr(http.StatusForbidden), http.StatusBadGateway, false},
+		{"400", apiErr(http.StatusBadRequest), http.StatusServiceUnavailable, false},
+		{"403", apiErr(http.StatusForbidden), http.StatusServiceUnavailable, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, _ := newTestAuth(t, func(context.Context, string) (*clerk.User, error) { return nil, c.err })
@@ -121,10 +121,14 @@ func TestAdminClaimsFallbackOnlyOnOutage(t *testing.T) {
 		})
 	}
 
-	// Without usable claims an outage is still a 502.
+	// Without usable claims an outage is a JSON 503 auth_unavailable.
 	a, _ := newTestAuth(t, func(context.Context, string) (*clerk.User, error) { return nil, errors.New("timeout") })
-	if rec, _ := serve(a, "user_1", nil); rec.Code != http.StatusBadGateway {
-		t.Errorf("outage without claims: status = %d, want 502", rec.Code)
+	rec, _ := serve(a, "user_1", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("outage without claims: status = %d, want 503", rec.Code)
+	}
+	if code, _ := errorCode(t, rec); code != "auth_unavailable" {
+		t.Errorf("outage without claims: code = %q, want auth_unavailable", code)
 	}
 }
 

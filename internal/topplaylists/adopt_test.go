@@ -59,3 +59,24 @@ func TestRunnerRetryCreatesWhenNothingToAdopt(t *testing.T) {
 		t.Fatalf("retry: row = %+v, creates = %v", w, h.sp.creates)
 	}
 }
+
+// A pending row without an ID (the process died mid-create) adopts the
+// playlist even with no failed attempt, and the final attempt replaces the
+// live description it may carry.
+func TestRunnerAdoptsAfterCrashAndUpdatesDetails(t *testing.T) {
+	h := newHarness(t, Week)
+	h.st.ranked = ranked(2)
+	name := Name(Week, weekStart)
+	h.st.rows[key{"week", weekStart.Unix()}] = domain.TopPlaylistRecord{Period: "week", PeriodStart: weekStart,
+		PeriodEnd: weekStart.AddDate(0, 0, 7), TimeZone: "UTC", Name: name, Status: domain.TopPlaylistPending}
+	h.sp.ext.named = map[string]string{name: "orphan"}
+	h.r.RunOnce(context.Background())
+
+	w := h.week()
+	if w.Status != domain.TopPlaylistCreated || w.SpotifyPlaylistID != "orphan" || len(h.sp.creates) != 0 {
+		t.Fatalf("row = %+v, creates = %v", w, h.sp.creates)
+	}
+	if got := h.sp.details["orphan"]; got != name+"|"+Description(Week, weekStart) {
+		t.Errorf("details of the adopted playlist = %q", got)
+	}
+}

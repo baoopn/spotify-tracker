@@ -179,7 +179,7 @@ func (r *Runner) recreate(ctx context.Context, rec domain.TopPlaylistRecord, des
 	if _, pending := r.unsavedPlaylist(keyOf(rec)); !pending {
 		rec.SpotifyPlaylistID, rec.SpotifyURL = "", ""
 	}
-	out, err := r.create(ctx, rec, description)
+	out, _, err := r.create(ctx, rec, description, rec.Attempts > 0)
 	if err != nil {
 		return out, fmt.Errorf("recreate playlist: %w", err)
 	}

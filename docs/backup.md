@@ -105,7 +105,8 @@ several recipients separated by spaces or commas.
 - **Coolify:** add them in the resource's *Environment Variables* tab and
   redeploy. The `backup` service is part of `docker-compose.coolify.yml`.
 - **VPS:** add them to `.env` and run
-  `docker compose -f docker-compose.prod.yml up -d offsite-backup`. The
+  `IMAGE_TAG=sha-xxxxxxx docker compose -f docker-compose.prod.yml up -d offsite-backup`
+  (the prod compose file needs `IMAGE_TAG` for every command). The
   local `backup` service (daily dumps in `./backups`) keeps running too.
 - **Local dev:** `docker compose --profile backup ...` writes to a Docker
   volume, no bucket needed. See the comments in `docker-compose.yml`.
@@ -120,7 +121,8 @@ unencrypted dump.
 Check it works: run one backup now and list the bucket.
 
 ```bash
-# Coolify: open the backup container's terminal; VPS: prefix with
+# Coolify: open the backup container's terminal; VPS: export IMAGE_TAG
+# (the sha- tag you run) and prefix with
 # docker compose -f docker-compose.prod.yml exec offsite-backup
 backupctl backup
 backupctl list
@@ -275,6 +277,7 @@ above, restore with `--force` (or empty the schema first), and restart.
 ### (b) VPS (docker-compose.prod.yml)
 
 ```bash
+export IMAGE_TAG=sha-xxxxxxx   # the tag you run; every prod compose command needs it
 docker compose -f docker-compose.prod.yml up -d postgres
 docker compose -f docker-compose.prod.yml stop api poller enricher   # if running
 docker compose -f docker-compose.prod.yml run --rm -T offsite-backup \

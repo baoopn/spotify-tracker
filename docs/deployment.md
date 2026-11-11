@@ -8,7 +8,7 @@ the backup sidecar (`ghcr.io/baoopn/spotify-tracker-backup`, see
 |---|---|
 | `docker-compose.yml` | Local development: builds the image, publishes ports on 127.0.0.1, debug logs. |
 | `docker-compose.prod.yml` | Any Docker host (VPS): GHCR image, Caddy with automatic HTTPS, nightly local Postgres backups plus encrypted off-site backups, hardened containers, private network. |
-| `docker-compose.coolify.yml` | Coolify: GHCR image, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`, encrypted off-site backups. |
+| `docker-compose.coolify.yml` | Coolify: images built from Git on the server, Coolify-generated secrets, Traefik routing via `SERVICE_FQDN_API_8080`, encrypted off-site backups, the same container hardening as prod for api/poller/enricher. |
 
 All stateful data lives in the bundled `postgres` and `redis` services and
 their named volumes. No external database is needed.
@@ -41,6 +41,10 @@ deployed** — and (3) a local pre-push hook (`git config core.hooksPath
      job fails if the deploy fails). Coolify builds the images itself from Git
      (branch `main`); the job does not set `IMAGE_TAG`. The deploy runs only if
      `main` still points at the tested commit; otherwise the newer run deploys.
+     A `v*` tag deploys only when it tags `main`'s head (Coolify builds `main`,
+     not the tag); otherwise the deploy is skipped with a notice. After the
+     deploy, the job fails if Coolify reports that it built a different commit
+     than the one CI tested.
 
 Repository settings required:
 
@@ -56,9 +60,8 @@ use Coolify's rollback to redeploy an earlier deployment. Re-running an older
 
 ## Coolify
 
-1. **GHCR access.** If the package is private, add a registry login for
-   `ghcr.io` on the target server (Coolify → Servers → *your server* → Docker registries)
-   with a read-only PAT (`read:packages`).
+1. **No registry login.** Coolify builds the images from the Git repository
+   on the target server, so it does not pull from GHCR.
 2. **Create the resource.** Project → Environment → *New resource* → *Docker
    Compose* (from the Git repository `baoopn/spotify-tracker`, branch `main`),
    Docker Compose location `/docker-compose.coolify.yml`, destination server of your choice.
@@ -97,9 +100,23 @@ cp .env.example .env
 # Set APP_ENV=production, API_DOMAIN, PUBLIC_URL=https://$API_DOMAIN,
 # POSTGRES_PASSWORD, REDIS_PASSWORD, INTERNAL_API_TOKEN, SECRETS_KEY
 # (openssl rand -hex 32 for each), plus Spotify/Soundcharts/Clerk/SMTP values.
+export IMAGE_TAG=sha-xxxxxxx   # required: the sha- tag of a release build
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+`IMAGE_TAG` has no default: the stack refuses to start without it, so a host
+never runs a moving `latest` by accident. Pick a `sha-<short>` tag from GHCR
+(every release run pushes one).
+
+`.env` is only read by Compose to fill in the `${...}` values; no container
+loads it whole. Each service lists the variables it needs (the same split as
+`docker-compose.coolify.yml`): `api` gets the database, Redis, secrets key,
+Spotify, Clerk, SMTP and Top 50 settings; `poller` only Redis, the internal
+token and `POLL_INTERVAL_MS`; `enricher` Redis, the internal token and the
+Soundcharts and `ENRICH_*` settings; the importer adds `DIRECTUS_*`. A setting
+added to `.env` reaches a container only after it is added to that service's
+`environment` in `docker-compose.prod.yml`.
 
 Point the domain's DNS A/AAAA records at the server and open ports 80/443.
 Caddy obtains certificates automatically. Backups are written daily to
@@ -116,7 +133,7 @@ store) once you set `BACKUP_AGE_RECIPIENT` and `BACKUP_S3_*` in `.env`. See
 private, run `docker login ghcr.io` first, or build it on the host.
 
 Upgrade: `IMAGE_TAG=sha-xxxxxxx docker compose -f docker-compose.prod.yml up -d`
-(or `make prod-up` for `latest`).
+(or `IMAGE_TAG=sha-xxxxxxx make prod-up`).
 
 The Top 50 playlist generator (`TOP_PLAYLISTS_PERIODS`) defaults to `none` in
 local dev and to `week,month,year` in the production compose files.

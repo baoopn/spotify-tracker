@@ -196,7 +196,11 @@ cmd_restore() {
 	age_rc=$?
 	stop_identity
 	rm -f "$fifo"
-	[ "$age_rc" -eq 0 ] || decrypt_failed "$name"
+	# A failing pg_restore stops reading, so age then dies of SIGPIPE with an
+	# empty age.err: blame age only when the restore succeeded or age said why.
+	if [ "$age_rc" -ne 0 ] && { [ "$restore_rc" -eq 0 ] || [ -s "$WORKDIR/age.err" ]; }; then
+		decrypt_failed "$name"
+	fi
 	if [ "$restore_rc" -ne 0 ]; then
 		err "$name: pg_restore failed; nothing was changed (single transaction)"
 		tail -n 5 "$WORKDIR/restore.err" >&2

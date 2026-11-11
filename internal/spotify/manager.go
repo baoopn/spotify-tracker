@@ -138,7 +138,7 @@ func (m *Manager) refreshLocked(ctx context.Context, force bool) (string, time.T
 			// token until it is saved.
 			m.unsaved = cur.RefreshToken
 			m.log.ErrorContext(ctx, "save rotated spotify refresh token failed", slog.Any("error", err))
-			return "", time.Time{}, fmt.Errorf("%w: %v", ErrTokenNotSaved, err)
+			return "", time.Time{}, fmt.Errorf("%w: %w", ErrTokenNotSaved, err)
 		}
 		m.log.WarnContext(ctx, "save spotify token state failed", slog.Any("error", err))
 	} else {

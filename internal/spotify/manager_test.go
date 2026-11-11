@@ -106,7 +106,7 @@ func newTestManager(t *testing.T, acc *accountsServer, st *fakeStore, log *logRe
 	t.Cleanup(srv.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	t.Cleanup(func() { _ = rdb.Close() })
-	var h slog.Handler = slog.DiscardHandler
+	h := slog.DiscardHandler
 	if log != nil {
 		h = log
 	}

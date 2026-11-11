@@ -311,3 +311,61 @@ func TestConnectClearsUnsaved(t *testing.T) {
 		t.Errorf("stored refresh token = %q, want c1", got)
 	}
 }
+
+func serverError(string) (int, map[string]any) {
+	return http.StatusInternalServerError, map[string]any{"error": "server_error"}
+}
+
+func TestRefreshErrorCancelledCallerSkipsSave(t *testing.T) {
+	acc := &accountsServer{reply: serverError}
+	st := &fakeStore{s: settings.Spotify{RefreshToken: "r1"}}
+	m := newTestManager(t, acc, st, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := m.AccessToken(ctx, true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if st.saves != 0 {
+		t.Errorf("saves = %d, want 0: a cancelled caller must not be recorded as last_error", st.saves)
+	}
+}
+
+func TestRefreshErrorUnrotatedSavesOnce(t *testing.T) {
+	fastSaveBackoff(t)
+	acc := &accountsServer{reply: serverError}
+	st := &fakeStore{s: settings.Spotify{RefreshToken: "r1"}, failSaves: 10}
+	m := newTestManager(t, acc, st, nil)
+
+	_, _, err := m.AccessToken(context.Background(), true)
+	if err == nil || errors.Is(err, ErrTokenNotSaved) {
+		t.Fatalf("err = %v, want the refresh error", err)
+	}
+	if st.saves != 1 {
+		t.Errorf("saves = %d, want a single attempt", st.saves)
+	}
+	if m.unsaved != "" {
+		t.Errorf("unsaved = %q, want empty", m.unsaved)
+	}
+}
+
+func TestRefreshErrorRotatedSaveRetries(t *testing.T) {
+	fastSaveBackoff(t)
+	acc := &accountsServer{reply: func(string) (int, map[string]any) {
+		b := tokenBody("r2")
+		b["scope"] = "user-read-private" // fails with ErrMissingScope
+		return http.StatusOK, b
+	}}
+	st := &fakeStore{s: settings.Spotify{RefreshToken: "r1"}, failSaves: 10}
+	m := newTestManager(t, acc, st, nil)
+
+	if _, _, err := m.AccessToken(context.Background(), true); !errors.Is(err, ErrMissingScope) {
+		t.Fatalf("err = %v, want ErrMissingScope", err)
+	}
+	if st.saves != saveAttempts {
+		t.Errorf("saves = %d, want %d", st.saves, saveAttempts)
+	}
+	if m.unsaved != "r2" {
+		t.Errorf("unsaved = %q, want r2", m.unsaved)
+	}
+}

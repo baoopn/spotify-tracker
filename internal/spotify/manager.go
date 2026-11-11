@@ -51,6 +51,9 @@ const (
 	// saveTimeout bounds saveState, all attempts included.
 	saveTimeout  = 10 * time.Second
 	saveAttempts = 3
+	// errorSaveTimeout bounds the single save of last_error after a failed
+	// refresh that did not rotate the token.
+	errorSaveTimeout = 2 * time.Second
 )
 
 // saveBackoff is the wait before each retry in saveState.
@@ -120,14 +123,24 @@ func (m *Manager) refreshLocked(ctx context.Context, force bool) (string, time.T
 		if tok.RefreshToken != "" {
 			cur.RefreshToken = tok.RefreshToken
 		}
-		rotated := cur.RefreshToken != stored
-		if saveErr := m.saveState(ctx, "system", cur); saveErr != nil {
-			if rotated {
+		switch {
+		case cur.RefreshToken != stored:
+			// A rotated token must survive: save it with retries.
+			if saveErr := m.saveState(ctx, "system", cur); saveErr != nil {
 				m.unsaved = cur.RefreshToken
+				m.log.ErrorContext(ctx, "save rotated spotify refresh token failed", slog.Any("error", saveErr))
+			} else {
+				m.unsaved = ""
 			}
-			m.log.WarnContext(ctx, "save spotify error state failed", slog.Any("error", saveErr))
-		} else {
-			m.unsaved = ""
+		case ctx.Err() != nil:
+			// The caller went away; that is not a Spotify error worth
+			// recording in last_error.
+		default:
+			// Only last_error changes: one short attempt, so a database
+			// outage does not hold the lock on every failed refresh.
+			if saveErr := m.saveOnce(ctx, "system", cur); saveErr != nil {
+				m.log.WarnContext(ctx, "save spotify error state failed", slog.Any("error", saveErr))
+			}
 		}
 		return "", time.Time{}, err
 	}
@@ -174,6 +187,21 @@ func (m *Manager) alertInvalidGrant(ctx context.Context, err error) {
 	}()
 }
 
+// saveOnce makes a single save attempt with its own short deadline,
+// detached from the caller.
+func (m *Manager) saveOnce(ctx context.Context, actor string, s settings.Spotify) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), errorSaveTimeout)
+	defer cancel()
+	return m.saver()(ctx, actor, s)
+}
+
+func (m *Manager) saver() func(ctx context.Context, actor string, s settings.Spotify) error {
+	if m.save != nil {
+		return m.save
+	}
+	return m.settings.SaveSpotify
+}
+
 func (m *Manager) loadState(ctx context.Context) (settings.Spotify, error) {
 	if m.load != nil {
 		return m.load(ctx)
@@ -186,10 +214,7 @@ func (m *Manager) loadState(ctx context.Context) (settings.Spotify, error) {
 func (m *Manager) saveState(ctx context.Context, actor string, s settings.Spotify) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout)
 	defer cancel()
-	save := m.save
-	if save == nil {
-		save = m.settings.SaveSpotify
-	}
+	save := m.saver()
 	var err error
 	for i := range saveAttempts {
 		if err = save(ctx, actor, s); err == nil {

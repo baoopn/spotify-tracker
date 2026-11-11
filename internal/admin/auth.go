@@ -60,6 +60,9 @@ type Authenticator struct {
 	rdb           *redis.Client
 	log           *slog.Logger
 	onForbidden   func(ctx context.Context, u User, ip string)
+	// fetchUser reads a user from Clerk's Backend API (user.Get; tests
+	// replace it).
+	fetchUser func(ctx context.Context, id string) (*clerk.User, error)
 }
 
 // NewAuthenticator configures Clerk. authorizedParties are the origins
@@ -103,36 +106,75 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		tc, _ := claims.Custom.(*TokenClaims)
-		u, err := a.lookup(r.Context(), claims.Subject)
-		switch {
-		case err == nil:
-			// The session token is fresher than the cached profile (tokens
-			// live ~60s), so prefer its role/email claims when present.
-			if tc != nil && tc.Role != "" {
-				u.Role = tc.Role
-			}
-			if tc != nil && u.Email == "" && tc.Email != "" {
-				u.Email = tc.Email
-			}
-		case tc != nil && (tc.Role != "" || tc.Email != ""):
-			// Clerk's Backend API is unreachable, but the verified token
-			// carries enough to authorize; profile details stay empty.
-			a.log.WarnContext(r.Context(), "clerk user lookup failed; authorizing from token claims", logging.Err(err))
-			u = User{ID: claims.Subject, Email: tc.Email, Role: tc.Role}
-		default:
-			a.log.ErrorContext(r.Context(), "clerk user lookup failed", logging.Err(err))
-			writeError(w, http.StatusBadGateway, "auth_unavailable", "could not verify the user with Clerk")
-			return
-		}
-		if !a.allowed(u) {
-			if a.onForbidden != nil {
-				a.onForbidden(r.Context(), u, clientIP(r))
-			}
-			writeError(w, http.StatusForbidden, "forbidden", "this account is not an admin")
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+		a.authorize(w, r, next, claims.Subject, tc)
 	}))
+}
+
+// authorize looks up the verified token's user and serves next if the user
+// is an admin.
+func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next http.Handler, subject string, tc *TokenClaims) {
+	u, err := a.lookup(r.Context(), subject)
+	switch {
+	case err == nil:
+		// The session token is fresher than the cached profile (tokens
+		// live ~60s), so prefer its role/email claims when present.
+		if tc != nil && tc.Role != "" {
+			u.Role = tc.Role
+		}
+		if tc != nil && u.Email == "" && tc.Email != "" {
+			u.Email = tc.Email
+		}
+	case errors.Is(err, errNoVerifiedEmail):
+		if a.onForbidden != nil {
+			a.onForbidden(r.Context(), u, clientIP(r))
+		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account has no verified email")
+		return
+	case clerkUnavailable(err) && tc != nil && (tc.Role != "" || tc.Email != ""):
+		// Clerk's Backend API is unreachable, but the verified token
+		// carries enough to authorize; profile details stay empty.
+		a.log.WarnContext(r.Context(), "clerk user lookup failed; authorizing from token claims", logging.Err(err))
+		u = User{ID: subject, Email: tc.Email, Role: tc.Role}
+	case clerkStatus(err) == http.StatusNotFound:
+		// The token is valid but Clerk no longer has the user (deleted).
+		a.log.WarnContext(r.Context(), "clerk user not found", logging.Err(err))
+		writeError(w, http.StatusUnauthorized, "unauthorized", "sign in required")
+		return
+	default:
+		a.log.ErrorContext(r.Context(), "clerk user lookup failed", logging.Err(err))
+		writeError(w, http.StatusBadGateway, "auth_unavailable", "could not verify the user with Clerk")
+		return
+	}
+	if !a.allowed(u) {
+		if a.onForbidden != nil {
+			a.onForbidden(r.Context(), u, clientIP(r))
+		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account is not an admin")
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+}
+
+// errNoVerifiedEmail means Clerk has the user but no verified email address,
+// and neither a user-ID allow-list nor a role can authorize them.
+var errNoVerifiedEmail = errors.New("user has no verified email address")
+
+// clerkStatus is the HTTP status of a Clerk API error, or 0 for any other
+// error (network, timeout, decoding).
+func clerkStatus(err error) int {
+	var apiErr *clerk.APIErrorResponse
+	if errors.As(err, &apiErr) {
+		return apiErr.HTTPStatusCode
+	}
+	return 0
+}
+
+// clerkUnavailable reports whether err means Clerk could not answer (network
+// error, 5xx or 429) rather than a definite answer about the user. Only then
+// may the token claims stand in for the profile.
+func clerkUnavailable(err error) bool {
+	st := clerkStatus(err)
+	return st == 0 || st >= 500 || st == http.StatusTooManyRequests
 }
 
 func (a *Authenticator) allowed(u User) bool {
@@ -154,7 +196,11 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 			return u, nil
 		}
 	}
-	cu, err := user.Get(ctx, id)
+	fetch := a.fetchUser
+	if fetch == nil {
+		fetch = user.Get
+	}
+	cu, err := fetch(ctx, id)
 	if err != nil {
 		return User{}, err
 	}
@@ -186,7 +232,7 @@ func (a *Authenticator) lookup(ctx context.Context, id string) (User, error) {
 		}
 	}
 	if u.Email == "" && len(a.allowedUserIDs) == 0 && u.Role == "" {
-		return u, errors.New("user has no verified email address")
+		return u, errNoVerifiedEmail
 	}
 	if raw, err := json.Marshal(u); err == nil {
 		_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()

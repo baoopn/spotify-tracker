@@ -67,15 +67,23 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    command: >
-      redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-devredis}
-      --maxmemory 128mb --maxmemory-policy volatile-lru
+    # The password goes into a 0600 config file, never into argv (visible in
+    # ps on the host). The image entrypoint still drops to the redis user.
+    command:
+      - sh
+      - -c
+      - >-
+        umask 077 &&
+        printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf &&
+        chown redis:redis /tmp/redis.conf &&
+        exec docker-entrypoint.sh redis-server /tmp/redis.conf
+        --appendonly yes --maxmemory 128mb --maxmemory-policy volatile-lru
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-devredis}\" --no-auth-warning ping | grep PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD:-devredis}\" redis-cli ping | grep PONG"]
       interval: 5s
       timeout: 5s
       retries: 10

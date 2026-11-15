@@ -69,11 +69,15 @@ services:
     image: redis:7.4-alpine
     # The password goes into a 0600 config file, never into argv (visible in
     # ps on the host). The image entrypoint still drops to the redis user.
+    # On a restart the old file is still there, owned by redis, and
+    # fs.protected_regular stops root overwriting it in /tmp, so it is removed
+    # first. Removing it needs CAP_FOWNER: keep that if you add cap_drop.
     command:
       - sh
       - -c
       - >-
         umask 077 &&
+        rm -f /tmp/redis.conf &&
         printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf &&
         chown redis:redis /tmp/redis.conf &&
         exec docker-entrypoint.sh redis-server /tmp/redis.conf

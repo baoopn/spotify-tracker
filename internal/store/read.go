@@ -15,23 +15,27 @@ import (
 
 const trackColumns = `
 	t.id, t.name, COALESCE(t.uri, ''), COALESCE(t.isrc, ''), t.duration_ms, t.explicit,
-	COALESCE(t.external_url, ''), COALESCE(t.album_id, ''),
-	al.id, al.name, al.release_date, al.cover_image_url, al.uri, al.external_url`
+	COALESCE(t.external_url, ''), COALESCE(t.album_id, ''), t.track_number, t.disc_number,
+	al.id, al.name, al.release_date, al.cover_image_url, al.uri, al.external_url,
+	al.album_type, al.total_tracks, al.release_date_precision`
 
 // scanTrack scans trackColumns into a TrackView (artists not hydrated).
 func scanTrack(dest *domain.TrackView, extra ...any) []any {
 	return append([]any{
 		&dest.ID, &dest.Name, &dest.URI, &dest.ISRC, &dest.DurationMS, &dest.Explicit,
-		&dest.ExternalURL, &dest.AlbumID,
+		&dest.ExternalURL, &dest.AlbumID, &dest.TrackNumber, &dest.DiscNumber,
 	}, extra...)
 }
 
 type albumScan struct {
 	id, name, releaseDate, cover, uri, externalURL *string
+	albumType, precision                           *string
+	totalTracks                                    *int32
 }
 
 func (a *albumScan) targets() []any {
-	return []any{&a.id, &a.name, &a.releaseDate, &a.cover, &a.uri, &a.externalURL}
+	return []any{&a.id, &a.name, &a.releaseDate, &a.cover, &a.uri, &a.externalURL,
+		&a.albumType, &a.totalTracks, &a.precision}
 }
 
 func (a *albumScan) album() *domain.Album {
@@ -41,6 +45,7 @@ func (a *albumScan) album() *domain.Album {
 	return &domain.Album{
 		ID: *a.id, Name: deref(a.name), ReleaseDate: deref(a.releaseDate),
 		CoverImageURL: deref(a.cover), URI: deref(a.uri), ExternalURL: deref(a.externalURL),
+		AlbumType: deref(a.albumType), TotalTracks: a.totalTracks, ReleaseDatePrecision: deref(a.precision),
 	}
 }
 
@@ -99,8 +104,9 @@ func (q *Queries) NowPlaying(ctx context.Context) (domain.NowPlaying, error) {
 		SELECT cp.is_playing, cp.progress_ms, cp.fetched_at, cp.track_id,
 			COALESCE(t.id, ''), COALESCE(t.name, ''), COALESCE(t.uri, ''), COALESCE(t.isrc, ''),
 			COALESCE(t.duration_ms, 0), COALESCE(t.explicit, false), COALESCE(t.external_url, ''),
-			COALESCE(t.album_id, ''),
-			al.id, al.name, al.release_date, al.cover_image_url, al.uri, al.external_url
+			COALESCE(t.album_id, ''), t.track_number, t.disc_number,
+			al.id, al.name, al.release_date, al.cover_image_url, al.uri, al.external_url,
+			al.album_type, al.total_tracks, al.release_date_precision
 		FROM current_playback cp
 		LEFT JOIN tracks t ON t.id = cp.track_id
 		LEFT JOIN albums al ON al.id = t.album_id
@@ -409,6 +415,10 @@ func (q *Queries) TrackDetail(ctx context.Context, id string) (domain.TrackDetai
 	if err := q.hydrate(ctx, &d.TrackView); err != nil {
 		return d, err
 	}
+	if err := q.detailExtras(ctx, &d.TrackView); err != nil {
+		return d, err
+	}
+	hideAdminOnly(&d.TrackView)
 
 	var tf domain.TrackFeatures
 	var genres []byte

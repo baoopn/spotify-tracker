@@ -289,6 +289,9 @@ func (q *Queries) AdminTrack(ctx context.Context, id string) (TrackAdminDetail, 
 	if err := q.hydrate(ctx, &d.TrackView); err != nil {
 		return d, err
 	}
+	if err := q.detailExtras(ctx, &d.TrackView); err != nil {
+		return d, err
+	}
 
 	var e Enrichment
 	var source, lastErr *string

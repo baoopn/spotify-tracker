@@ -18,6 +18,14 @@ type Artist struct {
 	URI         string `json:"uri,omitempty"`
 	ExternalURL string `json:"external_url,omitempty"`
 	ImageURL    string `json:"image_url,omitempty"`
+	// Genres is Spotify's genre list, filled only by track-detail endpoints.
+	Genres []string `json:"genres,omitempty"`
+}
+
+// Copyright is an album copyright notice.
+type Copyright struct {
+	Text string `json:"text"`
+	Type string `json:"type"` // "C" copyright, "P" sound recording
 }
 
 // Album is a Spotify album.
@@ -28,6 +36,55 @@ type Album struct {
 	CoverImageURL string `json:"cover_image_url,omitempty"`
 	URI           string `json:"uri,omitempty"`
 	ExternalURL   string `json:"external_url,omitempty"`
+
+	AlbumType            string `json:"album_type,omitempty"` // album | single | compilation
+	TotalTracks          *int32 `json:"total_tracks,omitempty"`
+	ReleaseDatePrecision string `json:"release_date_precision,omitempty"` // year | month | day
+
+	// Filled only by track-detail endpoints (from GET /albums/{id}).
+	UPC              string      `json:"upc,omitempty"`
+	Copyrights       []Copyright `json:"copyrights,omitempty"`
+	DetailsFetchedAt *time.Time  `json:"details_fetched_at,omitempty"`
+}
+
+// AlbumDetails is the parsed GET /albums/{id} response.
+type AlbumDetails struct {
+	AlbumType, ReleaseDatePrecision, UPC string
+	TotalTracks                          *int32
+	Copyrights                           []Copyright        // non-nil (possibly empty)
+	Tracks                               []AlbumTrackNumber // first page of tracks.items
+}
+
+// AlbumTrackNumber is a track's position from an album's track list.
+type AlbumTrackNumber struct {
+	TrackID                 string
+	TrackNumber, DiscNumber *int32
+}
+
+// PositiveInt32 returns &v, or nil when v <= 0 (unknown).
+func PositiveInt32(v int32) *int32 {
+	if v <= 0 {
+		return nil
+	}
+	return &v
+}
+
+// NormalizeAlbumType returns album, single or compilation, else "".
+func NormalizeAlbumType(s string) string {
+	switch s = strings.ToLower(strings.TrimSpace(s)); s {
+	case "album", "single", "compilation":
+		return s
+	}
+	return ""
+}
+
+// NormalizeReleaseDatePrecision returns year, month or day, else "".
+func NormalizeReleaseDatePrecision(s string) string {
+	switch s = strings.ToLower(strings.TrimSpace(s)); s {
+	case "year", "month", "day":
+		return s
+	}
+	return ""
 }
 
 // Track is a Spotify track.
@@ -40,6 +97,8 @@ type Track struct {
 	Explicit    bool   `json:"explicit"`
 	ExternalURL string `json:"external_url,omitempty"`
 	AlbumID     string `json:"-"`
+	TrackNumber *int32 `json:"track_number,omitempty"`
+	DiscNumber  *int32 `json:"disc_number,omitempty"`
 }
 
 // TrackView is a track hydrated with its album and artists.

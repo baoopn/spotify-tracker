@@ -55,6 +55,8 @@ type currentlyPlayingResponse struct {
 		URI         string `json:"uri"`
 		DurationMS  int32  `json:"duration_ms"`
 		Explicit    bool   `json:"explicit"`
+		TrackNumber int32  `json:"track_number"`
+		DiscNumber  int32  `json:"disc_number"`
 		ExternalIDs struct {
 			ISRC string `json:"isrc"`
 		} `json:"external_ids"`
@@ -65,6 +67,9 @@ type currentlyPlayingResponse struct {
 			ReleaseDate  string       `json:"release_date"`
 			URI          string       `json:"uri"`
 			ExternalURLs externalURLs `json:"external_urls"`
+			AlbumType    string       `json:"album_type"`
+			TotalTracks  int32        `json:"total_tracks"`
+			Precision    string       `json:"release_date_precision"`
 			Images       []struct {
 				URL string `json:"url"`
 			} `json:"images"`
@@ -139,11 +144,15 @@ func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Play
 		Track: domain.Track{
 			ID: it.ID, Name: it.Name, URI: it.URI, ISRC: it.ExternalIDs.ISRC,
 			DurationMS: it.DurationMS, Explicit: it.Explicit, ExternalURL: it.ExternalURLs.Spotify,
-			AlbumID: it.Album.ID,
+			AlbumID:     it.Album.ID,
+			TrackNumber: domain.PositiveInt32(it.TrackNumber), DiscNumber: domain.PositiveInt32(it.DiscNumber),
 		},
 		Album: domain.Album{
 			ID: it.Album.ID, Name: it.Album.Name, ReleaseDate: it.Album.ReleaseDate,
 			URI: it.Album.URI, ExternalURL: it.Album.ExternalURLs.Spotify,
+			AlbumType:            domain.NormalizeAlbumType(it.Album.AlbumType),
+			TotalTracks:          domain.PositiveInt32(it.Album.TotalTracks),
+			ReleaseDatePrecision: domain.NormalizeReleaseDatePrecision(it.Album.Precision),
 		},
 		IsPlaying:  cp.IsPlaying,
 		ProgressMS: cp.ProgressMS,

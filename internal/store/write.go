@@ -32,16 +32,21 @@ func (q *Queries) UpsertArtist(ctx context.Context, a domain.Artist) error {
 // UpsertAlbum inserts or updates an album.
 func (q *Queries) UpsertAlbum(ctx context.Context, a domain.Album) error {
 	_, err := q.db.Exec(ctx, `
-		INSERT INTO albums (id, name, release_date, cover_image_url, uri, external_url)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO albums (id, name, release_date, cover_image_url, uri, external_url,
+			album_type, total_tracks, release_date_precision)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			release_date = COALESCE(EXCLUDED.release_date, albums.release_date),
 			cover_image_url = COALESCE(EXCLUDED.cover_image_url, albums.cover_image_url),
 			uri = COALESCE(EXCLUDED.uri, albums.uri),
-			external_url = COALESCE(EXCLUDED.external_url, albums.external_url)`,
+			external_url = COALESCE(EXCLUDED.external_url, albums.external_url),
+			album_type = COALESCE(EXCLUDED.album_type, albums.album_type),
+			total_tracks = COALESCE(EXCLUDED.total_tracks, albums.total_tracks),
+			release_date_precision = COALESCE(EXCLUDED.release_date_precision, albums.release_date_precision)`,
 		a.ID, a.Name, nullIfEmpty(a.ReleaseDate), nullIfEmpty(a.CoverImageURL),
-		nullIfEmpty(a.URI), nullIfEmpty(a.ExternalURL))
+		nullIfEmpty(a.URI), nullIfEmpty(a.ExternalURL),
+		nullIfEmpty(a.AlbumType), a.TotalTracks, nullIfEmpty(a.ReleaseDatePrecision))
 	if err != nil {
 		return fmt.Errorf("upsert album %s: %w", a.ID, err)
 	}
@@ -52,8 +57,9 @@ func (q *Queries) UpsertAlbum(ctx context.Context, a domain.Album) error {
 // Referenced artists and album must already exist.
 func (q *Queries) UpsertTrack(ctx context.Context, t domain.Track, artistIDs []string) error {
 	_, err := q.db.Exec(ctx, `
-		INSERT INTO tracks (id, name, uri, isrc, duration_ms, explicit, external_url, album_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO tracks (id, name, uri, isrc, duration_ms, explicit, external_url, album_id,
+			track_number, disc_number)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			uri = COALESCE(EXCLUDED.uri, tracks.uri),
@@ -61,9 +67,11 @@ func (q *Queries) UpsertTrack(ctx context.Context, t domain.Track, artistIDs []s
 			duration_ms = EXCLUDED.duration_ms,
 			explicit = EXCLUDED.explicit,
 			external_url = COALESCE(EXCLUDED.external_url, tracks.external_url),
-			album_id = COALESCE(EXCLUDED.album_id, tracks.album_id)`,
+			album_id = COALESCE(EXCLUDED.album_id, tracks.album_id),
+			track_number = COALESCE(EXCLUDED.track_number, tracks.track_number),
+			disc_number = COALESCE(EXCLUDED.disc_number, tracks.disc_number)`,
 		t.ID, t.Name, nullIfEmpty(t.URI), nullIfEmpty(t.ISRC), t.DurationMS, t.Explicit,
-		nullIfEmpty(t.ExternalURL), nullIfEmpty(t.AlbumID))
+		nullIfEmpty(t.ExternalURL), nullIfEmpty(t.AlbumID), t.TrackNumber, t.DiscNumber)
 	if err != nil {
 		return fmt.Errorf("upsert track %s: %w", t.ID, err)
 	}

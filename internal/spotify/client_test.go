@@ -20,10 +20,11 @@ const playingBody = `{
   "context": {"type": "playlist", "uri": "spotify:playlist:p1", "external_urls": {"spotify": "https://open.spotify.com/playlist/p1"}},
   "item": {
     "id": "trk1", "name": "Song", "uri": "spotify:track:trk1", "duration_ms": 200000,
-    "explicit": true,
+    "explicit": true, "track_number": 3, "disc_number": 1,
     "external_ids": {"isrc": "USRC17607839"},
     "external_urls": {"spotify": "https://open.spotify.com/track/trk1"},
     "album": {"id": "alb1", "name": "Album", "release_date": "2020-01-01",
+      "album_type": "Album", "total_tracks": 12, "release_date_precision": "day",
       "images": [{"url": "https://i.scdn.co/image/big"}, {"url": "https://i.scdn.co/image/small"}]},
     "artists": [{"id": "art1", "name": "Artist One"}, {"id": "art2", "name": "Artist Two"}]
   }
@@ -76,6 +77,32 @@ func TestCurrentlyPlayingMapsTrack(t *testing.T) {
 	}
 	if !pb.PlayedAt.Equal(time.UnixMilli(1762300000000)) {
 		t.Errorf("played_at = %v", pb.PlayedAt)
+	}
+	if pb.Track.TrackNumber == nil || *pb.Track.TrackNumber != 3 || pb.Track.DiscNumber == nil || *pb.Track.DiscNumber != 1 {
+		t.Errorf("track numbers mapped wrong: %v %v", pb.Track.TrackNumber, pb.Track.DiscNumber)
+	}
+	if pb.Album.AlbumType != "album" || pb.Album.TotalTracks == nil || *pb.Album.TotalTracks != 12 ||
+		pb.Album.ReleaseDatePrecision != "day" {
+		t.Errorf("album details mapped wrong: %+v", pb.Album)
+	}
+}
+
+// Zero numbers mean unknown, and an unknown album type or precision is dropped.
+func TestCurrentlyPlayingUnknownMetadata(t *testing.T) {
+	p, _ := playerServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"is_playing":true,"currently_playing_type":"track","item":{"id":"t",
+			"track_number":0,"disc_number":0,
+			"album":{"id":"a","album_type":"appears_on","total_tracks":0,"release_date_precision":"hour"}}}`))
+	})
+	pb, err := p.CurrentlyPlaying(context.Background())
+	if err != nil || pb == nil {
+		t.Fatalf("got %v, %v", pb, err)
+	}
+	if pb.Track.TrackNumber != nil || pb.Track.DiscNumber != nil || pb.Album.TotalTracks != nil {
+		t.Errorf("zero values not nil: %+v %+v", pb.Track, pb.Album)
+	}
+	if pb.Album.AlbumType != "" || pb.Album.ReleaseDatePrecision != "" {
+		t.Errorf("unknown values kept: %+v", pb.Album)
 	}
 }
 

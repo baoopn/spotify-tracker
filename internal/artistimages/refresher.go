@@ -1,5 +1,6 @@
-// Package artistimages fills in artist profile images in the background:
-// new artists (from playback or imports) and a slow re-check of old ones.
+// Package artistimages fills in artist profile images and genres in the
+// background: new artists (from playback or imports) and a slow re-check of
+// old ones.
 package artistimages
 
 import (
@@ -14,17 +15,20 @@ import (
 
 // Store is the persistence the refresher needs (implemented by *store.Queries).
 type Store interface {
-	ArtistsNeedingImage(ctx context.Context, staleBefore time.Time, limit int) ([]string, error)
-	SetArtistImage(ctx context.Context, id, url string) error
+	ArtistsNeedingProfile(ctx context.Context, staleBefore time.Time, limit int) ([]string, error)
+	SetArtistProfile(ctx context.Context, id, imageURL string, genres []string) error
 }
 
-// Fetcher looks up an artist's image (implemented by *spotify.Manager).
+// Fetcher looks up an artist's profile (implemented by *spotify.Manager).
 type Fetcher interface {
-	ArtistImage(ctx context.Context, id string) (string, error)
+	ArtistProfile(ctx context.Context, id string) (spotify.ArtistProfile, error)
 }
 
-// Refresher periodically looks up images for artists that have none yet or
-// whose lookup is older than MaxAge. Requests are spaced out so a large
+// maxTransient is how many transient failures in a row end a batch.
+const maxTransient = 3
+
+// Refresher periodically looks up images and genres for artists that were
+// never looked up or whose lookup is older than MaxAge. Requests are spaced out so a large
 // backfill stays well inside Spotify's per-account quota.
 type Refresher struct {
 	Store    Store
@@ -39,7 +43,7 @@ type Refresher struct {
 }
 
 // New returns a Refresher with production defaults: up to 30 lookups a
-// minute, images re-checked every 30 days.
+// minute, profiles re-checked every 30 days.
 func New(st Store, f Fetcher, log *slog.Logger) *Refresher {
 	return &Refresher{Store: st, Fetcher: f, Log: log, Interval: time.Minute,
 		Spacing: 2 * time.Second, Batch: 25, MaxAge: 30 * 24 * time.Hour}
@@ -61,49 +65,62 @@ func (r *Refresher) Run(ctx context.Context) error {
 // RunOnce processes one batch. It returns how long to pause before the next
 // batch when Spotify rate-limited the refresher, otherwise 0.
 func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
-	ids, err := r.Store.ArtistsNeedingImage(ctx, time.Now().Add(-r.MaxAge), r.Batch)
+	ids, err := r.Store.ArtistsNeedingProfile(ctx, time.Now().Add(-r.MaxAge), r.Batch)
 	if err != nil {
-		r.Log.WarnContext(ctx, "list artists needing images failed", logging.Err(err))
+		r.Log.WarnContext(ctx, "list artists needing profile failed", logging.Err(err))
 		return 0
 	}
-	stored := 0
+	stored, transient := 0, 0
 	for i, id := range ids {
 		if i > 0 && !r.wait(ctx, r.Spacing) {
 			return 0
 		}
-		img, err := r.Fetcher.ArtistImage(ctx, id)
+		p, err := r.Fetcher.ArtistProfile(ctx, id)
 		var rl *spotify.RateLimitError
 		var se *spotify.StatusError
 		switch {
 		case errors.As(err, &rl):
-			r.Log.WarnContext(ctx, "artist images rate limited", slog.Duration("retry_after", rl.RetryAfter))
+			r.Log.WarnContext(ctx, "artist profile rate limited", slog.Duration("retry_after", rl.RetryAfter))
 			return rl.RetryAfter
 		case errors.Is(err, spotify.ErrNotConnected) || errors.Is(err, spotify.ErrInvalidGrant):
 			// Waiting for (re-)authorization; alerts cover this already.
-			r.Log.DebugContext(ctx, "artist images paused: spotify not authorized", logging.Err(err))
+			r.Log.DebugContext(ctx, "artist profile paused: spotify not authorized", logging.Err(err))
 			return 0
 		case errors.As(err, &se) && se.Permanent():
 			// Spotify refuses this artist for good (e.g. 400 for a bad ID):
-			// record the lookup without an image so it does not block the
-			// rest of the queue; it is re-checked after MaxAge.
-			r.Log.WarnContext(ctx, "artist image lookup refused; recorded without image",
+			// record the lookup without data so it does not block the rest
+			// of the queue; it is re-checked after MaxAge.
+			r.Log.WarnContext(ctx, "artist profile lookup refused; recorded without data",
 				slog.String("artist_id", id), logging.Err(err))
-			img = ""
+			p = spotify.ArtistProfile{}
 		case err != nil:
-			// Transient failure (5xx, network); try again next batch.
-			r.Log.WarnContext(ctx, "fetch artist image failed", slog.String("artist_id", id), logging.Err(err))
-			return 0
-		}
-		if err := r.Store.SetArtistImage(ctx, id, img); err != nil {
-			r.Log.WarnContext(ctx, "store artist image failed", slog.String("artist_id", id), logging.Err(err))
+			// Transient failure (5xx, network): skip this artist (it is
+			// retried next batch) unless too many fail in a row.
+			r.Log.WarnContext(ctx, "fetch artist profile failed", slog.String("artist_id", id), logging.Err(err))
+			if transient++; transient >= maxTransient {
+				return 0
+			}
 			continue
 		}
-		if img != "" {
+		transient = 0
+		// A refused lookup stores nil genres, which keeps any stored ones.
+		var genres []string
+		if p.Found {
+			genres = p.Genres
+			if genres == nil {
+				genres = []string{}
+			}
+		}
+		if err := r.Store.SetArtistProfile(ctx, id, p.ImageURL, genres); err != nil {
+			r.Log.WarnContext(ctx, "store artist profile failed", slog.String("artist_id", id), logging.Err(err))
+			continue
+		}
+		if p.ImageURL != "" {
 			stored++
 		}
 	}
 	if len(ids) > 0 {
-		r.Log.InfoContext(ctx, "artist images refreshed", slog.Int("looked_up", len(ids)), slog.Int("with_image", stored))
+		r.Log.InfoContext(ctx, "artist profiles refreshed", slog.Int("looked_up", len(ids)), slog.Int("with_image", stored))
 	}
 	return 0
 }

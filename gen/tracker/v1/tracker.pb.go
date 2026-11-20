@@ -195,8 +195,14 @@ type Album struct {
 	CoverImageUrl string                 `protobuf:"bytes,4,opt,name=cover_image_url,json=coverImageUrl,proto3" json:"cover_image_url,omitempty"`
 	Uri           string                 `protobuf:"bytes,5,opt,name=uri,proto3" json:"uri,omitempty"`
 	ExternalUrl   string                 `protobuf:"bytes,6,opt,name=external_url,json=externalUrl,proto3" json:"external_url,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// "album", "single" or "compilation"; empty when unknown.
+	AlbumType string `protobuf:"bytes,7,opt,name=album_type,json=albumType,proto3" json:"album_type,omitempty"`
+	// Unset when unknown.
+	TotalTracks *int32 `protobuf:"varint,8,opt,name=total_tracks,json=totalTracks,proto3,oneof" json:"total_tracks,omitempty"`
+	// "year", "month" or "day"; empty when unknown.
+	ReleaseDatePrecision string `protobuf:"bytes,9,opt,name=release_date_precision,json=releaseDatePrecision,proto3" json:"release_date_precision,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Album) Reset() {
@@ -271,15 +277,39 @@ func (x *Album) GetExternalUrl() string {
 	return ""
 }
 
+func (x *Album) GetAlbumType() string {
+	if x != nil {
+		return x.AlbumType
+	}
+	return ""
+}
+
+func (x *Album) GetTotalTracks() int32 {
+	if x != nil && x.TotalTracks != nil {
+		return *x.TotalTracks
+	}
+	return 0
+}
+
+func (x *Album) GetReleaseDatePrecision() string {
+	if x != nil {
+		return x.ReleaseDatePrecision
+	}
+	return ""
+}
+
 type Track struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Uri           string                 `protobuf:"bytes,3,opt,name=uri,proto3" json:"uri,omitempty"`
-	Isrc          string                 `protobuf:"bytes,4,opt,name=isrc,proto3" json:"isrc,omitempty"`
-	DurationMs    int32                  `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	Explicit      bool                   `protobuf:"varint,6,opt,name=explicit,proto3" json:"explicit,omitempty"`
-	ExternalUrl   string                 `protobuf:"bytes,7,opt,name=external_url,json=externalUrl,proto3" json:"external_url,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Uri         string                 `protobuf:"bytes,3,opt,name=uri,proto3" json:"uri,omitempty"`
+	Isrc        string                 `protobuf:"bytes,4,opt,name=isrc,proto3" json:"isrc,omitempty"`
+	DurationMs  int32                  `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	Explicit    bool                   `protobuf:"varint,6,opt,name=explicit,proto3" json:"explicit,omitempty"`
+	ExternalUrl string                 `protobuf:"bytes,7,opt,name=external_url,json=externalUrl,proto3" json:"external_url,omitempty"`
+	// Position on the album; unset when unknown.
+	TrackNumber   *int32 `protobuf:"varint,8,opt,name=track_number,json=trackNumber,proto3,oneof" json:"track_number,omitempty"`
+	DiscNumber    *int32 `protobuf:"varint,9,opt,name=disc_number,json=discNumber,proto3,oneof" json:"disc_number,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -361,6 +391,20 @@ func (x *Track) GetExternalUrl() string {
 		return x.ExternalUrl
 	}
 	return ""
+}
+
+func (x *Track) GetTrackNumber() int32 {
+	if x != nil && x.TrackNumber != nil {
+		return *x.TrackNumber
+	}
+	return 0
+}
+
+func (x *Track) GetDiscNumber() int32 {
+	if x != nil && x.DiscNumber != nil {
+		return *x.DiscNumber
+	}
+	return 0
 }
 
 type Playback struct {
@@ -1296,14 +1340,19 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
 	"\x03uri\x18\x03 \x01(\tR\x03uri\x12!\n" +
-	"\fexternal_url\x18\x04 \x01(\tR\vexternalUrl\"\xab\x01\n" +
+	"\fexternal_url\x18\x04 \x01(\tR\vexternalUrl\"\xb9\x02\n" +
 	"\x05Album\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
 	"\frelease_date\x18\x03 \x01(\tR\vreleaseDate\x12&\n" +
 	"\x0fcover_image_url\x18\x04 \x01(\tR\rcoverImageUrl\x12\x10\n" +
 	"\x03uri\x18\x05 \x01(\tR\x03uri\x12!\n" +
-	"\fexternal_url\x18\x06 \x01(\tR\vexternalUrl\"\xb1\x01\n" +
+	"\fexternal_url\x18\x06 \x01(\tR\vexternalUrl\x12\x1d\n" +
+	"\n" +
+	"album_type\x18\a \x01(\tR\talbumType\x12&\n" +
+	"\ftotal_tracks\x18\b \x01(\x05H\x00R\vtotalTracks\x88\x01\x01\x124\n" +
+	"\x16release_date_precision\x18\t \x01(\tR\x14releaseDatePrecisionB\x0f\n" +
+	"\r_total_tracks\"\xa0\x02\n" +
 	"\x05Track\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
@@ -1312,7 +1361,12 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\vduration_ms\x18\x05 \x01(\x05R\n" +
 	"durationMs\x12\x1a\n" +
 	"\bexplicit\x18\x06 \x01(\bR\bexplicit\x12!\n" +
-	"\fexternal_url\x18\a \x01(\tR\vexternalUrl\"\x8a\x03\n" +
+	"\fexternal_url\x18\a \x01(\tR\vexternalUrl\x12&\n" +
+	"\ftrack_number\x18\b \x01(\x05H\x00R\vtrackNumber\x88\x01\x01\x12$\n" +
+	"\vdisc_number\x18\t \x01(\x05H\x01R\n" +
+	"discNumber\x88\x01\x01B\x0f\n" +
+	"\r_track_numberB\x0e\n" +
+	"\f_disc_number\"\x8a\x03\n" +
 	"\bPlayback\x12'\n" +
 	"\x05track\x18\x01 \x01(\v2\x11.tracker.v1.TrackR\x05track\x12'\n" +
 	"\x05album\x18\x02 \x01(\v2\x11.tracker.v1.AlbumR\x05album\x12,\n" +
@@ -1479,6 +1533,8 @@ func file_tracker_v1_tracker_proto_init() {
 	if File_tracker_v1_tracker_proto != nil {
 		return
 	}
+	file_tracker_v1_tracker_proto_msgTypes[3].OneofWrappers = []any{}
+	file_tracker_v1_tracker_proto_msgTypes[4].OneofWrappers = []any{}
 	file_tracker_v1_tracker_proto_msgTypes[5].OneofWrappers = []any{}
 	file_tracker_v1_tracker_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}

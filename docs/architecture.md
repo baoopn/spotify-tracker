@@ -34,11 +34,20 @@ artists ─┐                 ┌─ albums
                                     ├── track_features      1:1, enrichment status + backoff
                                     └── current_playback    singleton row
 settings (encrypted secrets) · admin_audit · api_request_stats (hourly aggregates)
+tracks.track_number / disc_number · albums.album_type / total_tracks / release_date_precision
+albums.upc / copyrights / details_fetched_at · artists.genres / genres_fetched_at
 top_playlists ── top_playlist_tracks   (one generated playlist per completed week/month/year)
 ```
 
 Migrations are plain SQL in `migrations/` (goose, embedded in the binary,
 applied under a Postgres advisory lock).
+
+The Spotify metadata columns are all nullable. The poller fills track and
+disc numbers, album type, total tracks and release date precision from
+`currently-playing`; an empty value never overwrites a stored one. The
+background jobs below fill the rest. `artists.genres` is NULL when unknown and
+`'{}'` when Spotify lists none. `albums.copyrights` is NULL until the album is
+looked up.
 
 ## Playback → history rules
 
@@ -80,14 +89,45 @@ ISRCs unknown to Soundcharts are marked `unavailable`.
   configured recipients 14/7/3/1 days before expiry, on expiry, and when
   Spotify answers `invalid_grant` (de-duplicated through Redis).
 
-## Artist images
+## Artist images and genres
 
-The API fills `artists.image_url` in the background (`internal/artistimages`)
-from `GET /artists/{id}`. Every minute it looks up to 25 artists that have
-never been checked (most recently played first), 2 s apart, then re-checks
-each one every 30 days. A 429 pauses it for `Retry-After`. A refused lookup or
-an artist with no image keeps any image stored earlier. Clients fall back to
-the artist's initial when there is no image.
+The API fills `artists.image_url` and `artists.genres` in the background
+(`internal/artistimages`) from `GET /artists/{id}`. Every minute it looks up
+to 25 artists, 2 s apart, and re-checks each one every 30 days. Artists that
+were never checked come first, then artists whose genres were never looked up
+(`genres_fetched_at` is NULL), so every artist stored before genres existed is
+looked up once more. Within each group, and among stale artists, the most
+recently played come first, then the oldest lookup. A 429 pauses it for
+`Retry-After`. A 5xx or network error skips that artist until the next batch;
+three such errors in a row end the batch. A refused lookup or an artist with
+no image keeps any image stored earlier, and a refused lookup keeps the stored
+genres. Genres are
+trimmed and de-duplicated, at most 20 per artist. Clients fall back to the
+artist's initial when there is no image. Genres are shown only on track
+detail endpoints.
+
+## Album details
+
+`internal/albumdetails` fills in album details from `GET /albums/{id}`:
+`album_type`, `total_tracks`, `release_date_precision`, the UPC
+(`external_ids.upc`), the copyrights (at most 10, each at most 500
+characters) and the track and disc numbers of the album's tracks. Every
+minute it looks up to 15 albums, 2 s apart: albums never checked first (most
+recently played first), then the oldest lookups. Each album is re-checked
+every 180 days. Album fields and track numbers are written in one statement,
+and a missing value never overwrites a stored one. Only the first page of the
+track list is read (up to 50 tracks); tracks past it get their numbers from
+the poller. Relinked tracks are matched through `linked_from`.
+
+A 403, 404 or other 4xx only records the lookup time (`details_fetched_at`)
+and leaves `copyrights` NULL, so the album is tried again after 7 days. A 403
+is logged at warn and a 404 at debug, so a refusal of every album stands out
+in the logs. A 429 pauses the job for `Retry-After`. A 5xx, a network or
+decode error, or a 401 that persists after one token refresh counts as
+transient: the album is retried in about an hour (its lookup time is set to
+`now - 180 days + 1 hour`) and the batch goes on with the next album; three
+transient errors in a row end the batch. Nothing is looked up while Spotify
+is not connected.
 
 ## Top 50 playlists
 

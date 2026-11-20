@@ -8,17 +8,22 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/domain"
 )
 
-// PlaybackFromProto converts a wire playback to the domain type.
+// PlaybackFromProto converts a wire playback to the domain type. Unknown
+// album types and precisions become "", and numbers <= 0 become nil.
 func PlaybackFromProto(p *trackerv1.Playback) domain.Playback {
 	t, al := p.GetTrack(), p.GetAlbum()
 	out := domain.Playback{
 		Track: domain.Track{
 			ID: t.GetId(), Name: t.GetName(), URI: t.GetUri(), ISRC: t.GetIsrc(),
 			DurationMS: t.GetDurationMs(), Explicit: t.GetExplicit(), ExternalURL: t.GetExternalUrl(),
+			TrackNumber: domain.PositiveInt32(t.GetTrackNumber()), DiscNumber: domain.PositiveInt32(t.GetDiscNumber()),
 		},
 		Album: domain.Album{
 			ID: al.GetId(), Name: al.GetName(), ReleaseDate: al.GetReleaseDate(),
 			CoverImageURL: al.GetCoverImageUrl(), URI: al.GetUri(), ExternalURL: al.GetExternalUrl(),
+			AlbumType:            domain.NormalizeAlbumType(al.GetAlbumType()),
+			TotalTracks:          domain.PositiveInt32(al.GetTotalTracks()),
+			ReleaseDatePrecision: domain.NormalizeReleaseDatePrecision(al.GetReleaseDatePrecision()),
 		},
 		IsPlaying: p.GetIsPlaying(),
 	}
@@ -52,10 +57,13 @@ func PlaybackToProto(p domain.Playback) *trackerv1.Playback {
 		Track: &trackerv1.Track{
 			Id: p.Track.ID, Name: p.Track.Name, Uri: p.Track.URI, Isrc: p.Track.ISRC,
 			DurationMs: p.Track.DurationMS, Explicit: p.Track.Explicit, ExternalUrl: p.Track.ExternalURL,
+			TrackNumber: copyInt32(p.Track.TrackNumber), DiscNumber: copyInt32(p.Track.DiscNumber),
 		},
 		Album: &trackerv1.Album{
 			Id: p.Album.ID, Name: p.Album.Name, ReleaseDate: p.Album.ReleaseDate,
 			CoverImageUrl: p.Album.CoverImageURL, Uri: p.Album.URI, ExternalUrl: p.Album.ExternalURL,
+			AlbumType: p.Album.AlbumType, TotalTracks: copyInt32(p.Album.TotalTracks),
+			ReleaseDatePrecision: p.Album.ReleaseDatePrecision,
 		},
 		IsPlaying: p.IsPlaying,
 		PlayedAt:  timestamppb.New(p.PlayedAt),
@@ -73,6 +81,13 @@ func PlaybackToProto(p domain.Playback) *trackerv1.Playback {
 		out.Context = &trackerv1.PlaybackContext{Type: p.Context.Type, Uri: p.Context.URI, ExternalUrl: p.Context.ExternalURL}
 	}
 	return out
+}
+
+func copyInt32(v *int32) *int32 {
+	if v == nil {
+		return nil
+	}
+	return proto.Int32(*v)
 }
 
 // FeaturesFromProto converts wire audio features to the domain type.

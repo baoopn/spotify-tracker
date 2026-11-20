@@ -96,6 +96,27 @@ export function titleCase(s: string): string {
 
 const KEYS = ['C', 'C♯/D♭', 'D', 'D♯/E♭', 'E', 'F', 'F♯/G♭', 'G', 'G♯/A♭', 'A', 'A♯/B♭', 'B'];
 
+/** "3 / 12" or "3"; '' when the track number is missing (show total_tracks on its own). */
+export function trackPosition(
+	n: number | null | undefined,
+	total: number | null | undefined
+): string {
+	if (n == null) return '';
+	return total != null ? `${n} / ${total}` : String(n);
+}
+
+/**
+ * Copyright line prefixed with © (C) or ℗ (P), unless the text already starts
+ * with that symbol or its "(C)" / "(P)" spelling, which is replaced.
+ */
+export function copyrightLine(c: { text: string; type: string }): string {
+	const text = c.text.trim();
+	const symbol = c.type === 'C' ? '©' : c.type === 'P' ? '℗' : '';
+	if (!symbol || text.startsWith(symbol)) return text;
+	const spelled = c.type === 'C' ? /^\(c\)\s*/i : /^\(p\)\s*/i;
+	return `${symbol} ${text.replace(spelled, '')}`;
+}
+
 export function musicalKey(key: number | null, mode: number | null): string {
 	if (key == null || key < 0 || key > 11) return '–';
 	return `${KEYS[key]} ${mode === 1 ? 'major' : mode === 0 ? 'minor' : ''}`.trim();

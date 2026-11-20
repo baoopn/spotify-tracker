@@ -69,7 +69,7 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/now-playing` | Current playback (track, album, artists, progress). |
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |
-| `GET /api/v1/tracks/{id}` | Track with audio features, genres and play count. |
+| `GET /api/v1/tracks/{id}` | Track with audio features, genres and play count, plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
 | `GET /api/v1/stats/summary?range=` | Totals: plays, unique tracks/artists, listening time. |
 | `GET /api/v1/stats/top-tracks?range=&limit=` | Most played tracks. |
 | `GET /api/v1/stats/top-artists?range=&limit=` | Most played artists. |

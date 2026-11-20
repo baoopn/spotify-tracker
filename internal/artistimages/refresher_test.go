@@ -5,36 +5,48 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/spotify"
 )
 
-type fakeStore struct {
-	ids []string
-	set map[string]string
+type stored struct {
+	url    string
+	genres []string
 }
 
-func (f *fakeStore) ArtistsNeedingImage(context.Context, time.Time, int) ([]string, error) {
+type fakeStore struct {
+	ids []string
+	set map[string]stored
+}
+
+func (f *fakeStore) ArtistsNeedingProfile(context.Context, time.Time, int) ([]string, error) {
 	return f.ids, nil
 }
 
-func (f *fakeStore) SetArtistImage(_ context.Context, id, url string) error {
-	f.set[id] = url
+func (f *fakeStore) SetArtistProfile(_ context.Context, id, url string, genres []string) error {
+	f.set[id] = stored{url, genres}
 	return nil
 }
 
 type fakeFetcher map[string]error
 
-func (f fakeFetcher) ArtistImage(_ context.Context, id string) (string, error) {
+func (f fakeFetcher) ArtistProfile(_ context.Context, id string) (spotify.ArtistProfile, error) {
 	if err := f[id]; err != nil {
-		return "", err
+		return spotify.ArtistProfile{}, err
 	}
-	if id == "noimg" {
-		return "", nil
+	switch id {
+	case "noimg":
+		return spotify.ArtistProfile{Found: true, Genres: []string{}}, nil
+	case "nilgenres":
+		return spotify.ArtistProfile{Found: true}, nil
+	case "missing":
+		return spotify.ArtistProfile{}, nil
 	}
-	return "https://i.scdn.co/image/" + id, nil
+	return spotify.ArtistProfile{Found: true, ImageURL: "https://i.scdn.co/image/" + id,
+		Genres: []string{"pop", id}}, nil
 }
 
 func newTest(st *fakeStore, f Fetcher) *Refresher {
@@ -43,21 +55,27 @@ func newTest(st *fakeStore, f Fetcher) *Refresher {
 	return r
 }
 
-func TestRunOnceStoresImagesAndLookups(t *testing.T) {
-	st := &fakeStore{ids: []string{"a1", "noimg", "a2"}, set: map[string]string{}}
+func TestRunOnceStoresProfiles(t *testing.T) {
+	st := &fakeStore{ids: []string{"a1", "noimg", "nilgenres", "missing"}, set: map[string]stored{}}
 	if pause := newTest(st, fakeFetcher{}).RunOnce(context.Background()); pause != 0 {
 		t.Fatalf("pause = %v", pause)
 	}
-	want := map[string]string{"a1": "https://i.scdn.co/image/a1", "noimg": "", "a2": "https://i.scdn.co/image/a2"}
-	for id, url := range want {
-		if got, ok := st.set[id]; !ok || got != url {
-			t.Errorf("%s: got %q (recorded %v), want %q", id, got, ok, url)
+	want := map[string]stored{
+		"a1":        {"https://i.scdn.co/image/a1", []string{"pop", "a1"}},
+		"noimg":     {"", []string{}},
+		"nilgenres": {"", []string{}},
+		"missing":   {"", nil},
+	}
+	for id, w := range want {
+		got, ok := st.set[id]
+		if !ok || got.url != w.url || !reflect.DeepEqual(got.genres, w.genres) || (got.genres == nil) != (w.genres == nil) {
+			t.Errorf("%s: got %+v (recorded %v, nil genres %v), want %+v", id, got, ok, got.genres == nil, w)
 		}
 	}
 }
 
 func TestRunOnceBacksOffOnRateLimit(t *testing.T) {
-	st := &fakeStore{ids: []string{"a1", "limited", "a2"}, set: map[string]string{}}
+	st := &fakeStore{ids: []string{"a1", "limited", "a2"}, set: map[string]stored{}}
 	f := fakeFetcher{"limited": &spotify.RateLimitError{RetryAfter: 90 * time.Second}}
 	if pause := newTest(st, f).RunOnce(context.Background()); pause != 90*time.Second {
 		t.Fatalf("pause = %v, want 90s", pause)
@@ -71,31 +89,48 @@ func TestRunOnceBacksOffOnRateLimit(t *testing.T) {
 }
 
 func TestRunOnceStopsOnAuthError(t *testing.T) {
-	st := &fakeStore{ids: []string{"a1", "a2"}, set: map[string]string{}}
-	f := fakeFetcher{"a1": errors.New("spotify: not authorized")}
-	newTest(st, f).RunOnce(context.Background())
-	if len(st.set) != 0 {
-		t.Errorf("recorded lookups after an auth error: %v", st.set)
+	for _, err := range []error{spotify.ErrNotConnected, spotify.ErrInvalidGrant} {
+		st := &fakeStore{ids: []string{"a1", "a2"}, set: map[string]stored{}}
+		newTest(st, fakeFetcher{"a1": err}).RunOnce(context.Background())
+		if len(st.set) != 0 {
+			t.Errorf("%v: recorded lookups: %v", err, st.set)
+		}
 	}
 }
 
-// A permanent 4xx for one artist is recorded without an image and the batch
-// goes on; a 5xx still stops the batch for a retry.
+// A permanent 4xx for one artist is recorded without data and the batch goes
+// on; a 5xx is not recorded (retried next batch) and the batch goes on too.
 func TestRunOnceSkipsPermanentClientError(t *testing.T) {
-	st := &fakeStore{ids: []string{"bad", "a1"}, set: map[string]string{}}
+	st := &fakeStore{ids: []string{"bad", "a1"}, set: map[string]stored{}}
 	f := fakeFetcher{"bad": &spotify.StatusError{Code: 400}}
 	newTest(st, f).RunOnce(context.Background())
-	if got, ok := st.set["bad"]; !ok || got != "" {
-		t.Errorf("bad: got %q (recorded %v), want recorded empty", got, ok)
+	if got, ok := st.set["bad"]; !ok || got.url != "" || got.genres != nil {
+		t.Errorf("bad: got %+v (recorded %v), want recorded with nil genres", got, ok)
 	}
-	if got := st.set["a1"]; got != "https://i.scdn.co/image/a1" {
-		t.Errorf("a1 not fetched after a 400: %q", got)
+	if got := st.set["a1"]; got.url != "https://i.scdn.co/image/a1" {
+		t.Errorf("a1 not fetched after a 400: %+v", got)
 	}
 
-	st = &fakeStore{ids: []string{"down", "a1"}, set: map[string]string{}}
+	st = &fakeStore{ids: []string{"down", "a1"}, set: map[string]stored{}}
 	f = fakeFetcher{"down": &spotify.StatusError{Code: 503}}
 	newTest(st, f).RunOnce(context.Background())
-	if len(st.set) != 0 {
-		t.Errorf("recorded lookups after a 5xx: %v", st.set)
+	if _, ok := st.set["down"]; ok {
+		t.Error("recorded a lookup that failed with a 5xx")
+	}
+	if _, ok := st.set["a1"]; !ok {
+		t.Error("a1 not fetched after a 5xx")
+	}
+}
+
+// Three transient failures in a row end the batch.
+func TestRunOnceStopsAfterRepeatedTransientErrors(t *testing.T) {
+	down := errors.New("network down")
+	st := &fakeStore{ids: []string{"d1", "d2", "a1", "d3", "d4", "d5", "a2"}, set: map[string]stored{}}
+	newTest(st, fakeFetcher{"d1": down, "d2": down, "d3": down, "d4": down, "d5": down}).RunOnce(context.Background())
+	if _, ok := st.set["a1"]; !ok {
+		t.Error("a1 not fetched: success did not reset the failure count")
+	}
+	if _, ok := st.set["a2"]; ok {
+		t.Error("kept fetching after three failures in a row")
 	}
 }

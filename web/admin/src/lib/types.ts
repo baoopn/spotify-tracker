@@ -9,7 +9,11 @@ export type Artist = {
 	uri?: string;
 	external_url?: string;
 	image_url?: string;
+	/** Spotify artist genres; detail endpoints only, absent when unknown or none. */
+	genres?: string[];
 };
+
+export type Copyright = { text: string; type: string };
 
 export type Album = {
 	id: string;
@@ -18,6 +22,15 @@ export type Album = {
 	cover_image_url?: string;
 	uri?: string;
 	external_url?: string;
+	album_type?: 'album' | 'single' | 'compilation';
+	total_tracks?: number;
+	release_date_precision?: 'year' | 'month' | 'day';
+	/** Detail endpoints only. */
+	upc?: string;
+	/** Detail endpoints only. `type` is "C" (copyright) or "P" (sound recording). */
+	copyrights?: Copyright[];
+	/** Detail endpoints only (RFC 3339). */
+	details_fetched_at?: string;
 };
 
 export type TrackView = {
@@ -30,6 +43,8 @@ export type TrackView = {
 	external_url?: string;
 	album?: Album;
 	artists: Artist[];
+	track_number?: number;
+	disc_number?: number;
 };
 
 export type NowPlaying = {

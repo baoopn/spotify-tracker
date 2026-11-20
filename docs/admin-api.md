@@ -42,16 +42,31 @@ Upstream failures answer `503`, never `502`: the production proxy replaces
 
 ```ts
 type Artist = { id: string; name: string; uri?: string; external_url?: string;
-                image_url?: string }  // profile image (i.scdn.co), filled in the background
-type Album  = { id: string; name: string; release_date?: string; cover_image_url?: string; uri?: string; external_url?: string }
+                image_url?: string    // profile image (i.scdn.co), filled in the background
+                genres?: string[] }   // detail only; absent when Spotify lists none or not looked up yet
+type Album  = { id: string; name: string; release_date?: string; cover_image_url?: string; uri?: string; external_url?: string
+                album_type?: "album" | "single" | "compilation"; total_tracks?: number
+                release_date_precision?: "year" | "month" | "day"
+                upc?: string; copyrights?: Copyright[]  // detail only
+                details_fetched_at?: string }           // admin detail only: last GET /albums/{id}
+type Copyright = { text: string; type: "C" | "P" | string }  // C copyright, P sound recording
 type TrackView = { id: string; name: string; uri?: string; isrc?: string; duration_ms: number; explicit: boolean;
-                   external_url?: string; album?: Album; artists: Artist[] }
+                   external_url?: string; track_number?: number; disc_number?: number
+                   album?: Album; artists: Artist[] }
 type NowPlaying = { is_playing: boolean; progress_ms: number | null; fetched_at: string; track: TrackView | null }
 type EnrichmentStatus = "pending" | "enriched" | "unavailable" | "failed"
 type AudioFeatures = { acousticness, danceability, energy, instrumentalness, liveness, loudness,
                        speechiness, tempo, valence: number | null; key, mode, time_signature: number | null }
 type Genre = { root: string; sub: string[] }
 ```
+
+Every metadata field is optional, and each one may be missing on its own.
+The fields marked "detail only" (`genres`, `upc`, `copyrights`) are filled
+only by the track detail endpoints (`GET /admin/api/tracks/{id}`,
+`GET /api/v1/tracks/{id}` and the MCP tools `track_details` and
+`admin_track`). Lists leave them out. `details_fetched_at` is admin only:
+`GET /admin/api/tracks/{id}` and `admin_track` return it, the public
+endpoint and `track_details` do not.
 
 ---
 

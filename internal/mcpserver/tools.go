@@ -62,7 +62,8 @@ var publicTools = []toolDef{
 		desc:   "Recently played tracks, newest first. Use next_cursor from the result as cursor to get older plays.",
 		params: []param{limitParam(20, 100), cursorParam()}},
 	{name: "track_details", title: "Track details", path: "/tracks/{id}",
-		desc:   "Details of one track: album, artists, play stats and audio features (when enriched).",
+		desc: "Details of one track: track and disc number, album (type, size, release date precision, " +
+			"UPC, copyrights), artists with Spotify genres, play stats and audio features (when enriched).",
 		params: []param{idParam("Spotify track ID (the 22-character base-62 ID, not a URI or URL).")}},
 	{name: "listening_summary", title: "Listening summary", path: "/stats/summary",
 		desc:   "Totals for a time window: plays, listening time, unique tracks and artists, first and last play.",
@@ -108,7 +109,8 @@ var adminTools = []toolDef{
 			limitParam(25, 100), offsetParam(),
 		}},
 	{name: "admin_track", title: "Track (admin)", path: "/tracks/{id}",
-		desc:   "One track with its album, artists, audio features, enrichment status and play stats.",
+		desc: "One track with its track and disc number, album (type, size, release date precision, UPC, " +
+			"copyrights), artists with Spotify genres, audio features, enrichment status and play stats.",
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",

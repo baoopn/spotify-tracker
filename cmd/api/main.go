@@ -28,6 +28,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/baoopn/spotify-tracker/internal/admin"
+	"github.com/baoopn/spotify-tracker/internal/albumdetails"
 	"github.com/baoopn/spotify-tracker/internal/alerts"
 	"github.com/baoopn/spotify-tracker/internal/analytics"
 	"github.com/baoopn/spotify-tracker/internal/artistimages"
@@ -100,6 +101,7 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
 	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
+	g.Go(func() error { return c.albums.Run(gctx) })
 	g.Go(func() error { return c.brand.Run(gctx) })
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
@@ -120,6 +122,7 @@ type components struct {
 	alerts    *alerts.Checker
 	analytics *analytics.Recorder
 	images    *artistimages.Refresher
+	albums    *albumdetails.Refresher
 	// brand is never nil; it is disabled when BRAND_API_URL is empty.
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
@@ -192,6 +195,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		alerts:       checker,
 		analytics:    recorder,
 		images:       artistimages.New(st, mgr, log),
+		albums:       albumdetails.New(st, mgr, log),
 		topPlaylists: topRunner,
 		brand:        brandCache,
 	}, nil

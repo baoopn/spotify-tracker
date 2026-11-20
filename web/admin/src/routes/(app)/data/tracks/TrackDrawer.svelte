@@ -11,11 +11,14 @@
 	import { api, errorMessage } from '#lib/api.js';
 	import {
 		artistNames,
+		copyrightLine,
 		dateTime,
 		duration,
 		formatReleaseDate,
 		musicalKey,
-		num
+		num,
+		titleCase,
+		trackPosition
 	} from '#lib/format.js';
 	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { qk, queries } from '#lib/queries.js';
@@ -29,6 +32,20 @@
 
 	const t = $derived(detail.data && detail.data.id === trackId ? detail.data : undefined);
 	const e = $derived(t?.enrichment ?? null);
+
+	// Release rows; each one shows only when its data is present.
+	const position = $derived(trackPosition(t?.track_number, t?.album?.total_tracks));
+	const copyrights = $derived(t?.album?.copyrights?.filter((c) => c.text.trim()) ?? []);
+	const hasRelease = $derived(
+		!!position ||
+			t?.album?.total_tracks != null ||
+			t?.disc_number != null ||
+			!!t?.album?.release_date ||
+			!!t?.album?.upc ||
+			copyrights.length > 0
+	);
+	const artistGenres = $derived(t?.artists.filter((a) => a.genres?.length) ?? []);
+	const multiArtist = $derived((t?.artists.length ?? 0) > 1);
 
 	const enrich = createMutation(() => ({
 		mutationFn: (id: string) => api.enrichTrack(id),
@@ -86,6 +103,7 @@
 					<div class="mt-2 flex flex-wrap gap-2">
 						<EnrichmentBadge status={e?.status ?? 'pending'} />
 						{#if t.explicit}<span class="chip">Explicit</span>{/if}
+						{#if t.album?.album_type}<span class="chip">{titleCase(t.album.album_type)}</span>{/if}
 					</div>
 					{#if t.external_url}
 						<OutLink
@@ -115,6 +133,43 @@
 					<dd class="font-semibold text-fg"><RelTime value={t.created_at} /></dd>
 				</div>
 			</dl>
+
+			<section aria-labelledby="rel-h">
+				<h3 id="rel-h" class="mb-2 text-sm font-semibold text-fg">Release</h3>
+				{#if hasRelease}
+					<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+						{#if position}
+							<dt class="text-muted">Track</dt>
+							<dd class="text-fg">{position}</dd>
+						{:else if t.album?.total_tracks != null}
+							<dt class="text-muted">Tracks on release</dt>
+							<dd class="text-fg">{t.album.total_tracks}</dd>
+						{/if}
+						{#if t.disc_number != null}
+							<dt class="text-muted">Disc</dt>
+							<dd class="text-fg">{t.disc_number}</dd>
+						{/if}
+						{#if t.album?.release_date}
+							<dt class="text-muted">Released</dt>
+							<dd class="text-fg">{formatReleaseDate(t.album.release_date)}</dd>
+						{/if}
+						{#if t.album?.upc}
+							<dt class="text-muted">UPC</dt>
+							<dd class="font-mono text-fg">{t.album.upc}</dd>
+						{/if}
+						{#if copyrights.length}
+							<dt class="text-muted">Copyrights</dt>
+							<dd class="min-w-0">
+								{#each copyrights as c, i (i)}
+									<p class="text-xs break-words text-muted">{copyrightLine(c)}</p>
+								{/each}
+							</dd>
+						{/if}
+					</dl>
+				{:else}
+					<p class="text-sm text-muted">No release details yet.</p>
+				{/if}
+			</section>
 
 			<section aria-labelledby="feat-h">
 				<h3 id="feat-h" class="mb-3 text-sm font-semibold text-fg">Audio features</h3>
@@ -152,6 +207,19 @@
 					</ul>
 				{:else}
 					<p class="text-sm text-muted">No genres yet.</p>
+				{/if}
+				{#if artistGenres.length}
+					<h4 class="mt-4 mb-2 text-xs font-semibold text-muted">Spotify artist genres</h4>
+					<ul class="flex flex-col gap-2">
+						{#each artistGenres as a (a.id)}
+							<li class="flex flex-wrap items-center gap-1.5">
+								{#if multiArtist}<span class="text-xs text-muted">{a.name}:</span>{/if}
+								{#each a.genres ?? [] as g (g)}
+									<span class="chip">{g}</span>
+								{/each}
+							</li>
+						{/each}
+					</ul>
 				{/if}
 			</section>
 

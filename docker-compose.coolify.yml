@@ -18,6 +18,8 @@
 #     in the dashboard afterwards)
 #   BACKUP_AGE_RECIPIENT, BACKUP_S3_* (encrypted off-site backups, see
 #     docs/backup.md; the backup service idles until they are set)
+#   MCP_ADMIN_TOKEN (optional, openssl rand -hex 32; a bootstrap token for the
+#     read-only admin tools of /mcp; normally generate one in Settings -> MCP)
 # Register <api domain>/admin/api/spotify/callback as a Redirect URI in the
 # Spotify Developer Dashboard.
 # Set the API domain on the "api" service (e.g. https://spotify-api.example.com);
@@ -108,6 +110,11 @@ services:
       - TOP_PLAYLISTS_KEEP=${TOP_PLAYLISTS_KEEP:-3}
       - TOP_PLAYLISTS_VERIFY=${TOP_PLAYLISTS_VERIFY:-1h}
       - TOP_PLAYLISTS_OWNER=${TOP_PLAYLISTS_OWNER:-}
+      # Remote MCP endpoint at /mcp. Admin tokens are managed in the dashboard
+      # (Settings -> MCP); MCP_ADMIN_TOKEN (>= 32 chars) is an optional extra one.
+      - MCP_ENABLED=${MCP_ENABLED:-true}
+      - MCP_ADMIN_TOKEN=${MCP_ADMIN_TOKEN:-}
+      - MCP_RATE_LIMIT_PER_MINUTE=${MCP_RATE_LIMIT_PER_MINUTE:-60}
       - PUBLIC_URL=${SERVICE_URL_API}
       - SECRETS_KEY=${SECRETS_KEY}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}

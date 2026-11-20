@@ -87,3 +87,44 @@ func TestTopPlaylistsRouteAndFrameSrc(t *testing.T) {
 		t.Errorf("GET /api/v1/playlists/top = %d %s", rec.Code, rec.Body)
 	}
 }
+
+// TestMCPMount checks /mcp is mounted only with Options.MCP, and that the
+// in-process v1 handler leaves out the SSE stream and POST /events.
+func TestMCPMount(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	rec := httptest.NewRecorder()
+	NewRouter(nil, nil, log, Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("POST /mcp without MCP = %d, want 404", rec.Code)
+	}
+
+	var inner http.Handler
+	h := NewRouter(nil, nil, log, Options{
+		Events: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+		MCP: func(v1 http.Handler) http.Handler {
+			inner = v1
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+		},
+	})
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("POST /mcp = %d, want the MCP handler", rec.Code)
+	}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/now-playing/stream"},
+		{http.MethodPost, "/api/v1/events"},
+		{http.MethodGet, "/mcp"},
+	} {
+		rec = httptest.NewRecorder()
+		inner.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("inner %s %s = %d, want 404/405", tc.method, tc.path, rec.Code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	inner.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/timezone?tz=UTC", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("inner GET /api/v1/timezone = %d, want 200", rec.Code)
+	}
+}

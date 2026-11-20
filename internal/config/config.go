@@ -73,6 +73,7 @@ type API struct {
 	Brand
 	Admin
 	TopPlaylists
+	MCP
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -170,6 +171,21 @@ type TopPlaylists struct {
 	// characters). Empty uses the connected Spotify account's display name.
 	Owner string `env:"TOP_PLAYLISTS_OWNER"`
 }
+
+// MCP configures the remote MCP endpoint (/mcp) served by cmd/api.
+type MCP struct {
+	// Enabled mounts /mcp; false answers 404 there.
+	Enabled bool `env:"MCP_ENABLED" envDefault:"true"`
+	// AdminToken, when set (at least 32 characters), is a bootstrap admin
+	// token: clients sending "Authorization: Bearer <token>" get the
+	// read-only admin tools, like with the token generated in the dashboard.
+	AdminToken string `env:"MCP_ADMIN_TOKEN,unset"`
+	// RateLimitPerMinute limits /mcp requests per client IP (0 = off).
+	RateLimitPerMinute int `env:"MCP_RATE_LIMIT_PER_MINUTE" envDefault:"60"`
+}
+
+// minMCPAdminTokenLen is the shortest accepted MCP_ADMIN_TOKEN.
+const minMCPAdminTokenLen = 32
 
 // Admin configures the admin dashboard (Clerk authentication).
 type Admin struct {
@@ -294,6 +310,12 @@ func (a *API) validate() error {
 	}
 	if a.EnrichMaxAttempts <= 0 {
 		return fmt.Errorf("ENRICH_MAX_ATTEMPTS must be > 0")
+	}
+	if a.MCP.AdminToken != "" && len(a.MCP.AdminToken) < minMCPAdminTokenLen {
+		return fmt.Errorf("MCP_ADMIN_TOKEN must be at least %d characters", minMCPAdminTokenLen)
+	}
+	if a.MCP.RateLimitPerMinute < 0 {
+		return fmt.Errorf("MCP_RATE_LIMIT_PER_MINUTE must be >= 0")
 	}
 	// An empty BRAND_API_URL disables the brand API, so the default applies
 	// only when the variable is not set at all.

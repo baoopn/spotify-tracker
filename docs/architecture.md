@@ -191,6 +191,76 @@ token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
 is written to `admin_audit`.
 
+## MCP server
+
+`cmd/api` also serves a remote [MCP](https://modelcontextprotocol.io) server at
+`/mcp` (`internal/mcpserver`, official Go SDK), so AI clients such as Claude can
+read the listening data. It uses the Streamable HTTP transport in **stateless**
+mode with plain JSON responses: no server-side sessions and no SSE streams, so
+it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
+(GET and DELETE answer 405). `MCP_ENABLED=false` removes the route (404).
+
+- **Auth.** No `Authorization` header (or `Bearer` with an empty token) gets the
+  public tools. A valid admin token adds the admin tools. Two tokens are valid:
+  the **dashboard token** (generated under Settings → MCP; only its hex SHA-256
+  is stored in the `mcp` setting, and the hashes are compared in constant
+  time) and the optional **env token** `MCP_ADMIN_TOKEN` (bootstrap/fallback,
+  at least 32 characters, constant-time compare). Any other token is rejected
+  with 401 and `WWW-Authenticate: Bearer`; a wrong token is never downgraded to
+  anonymous. Failed attempts are logged at warn (no token).
+- **Dashboard token flow.** `POST /admin/api/mcp/token` creates (or rotates)
+  a token `stm_` + 32 random bytes (base64url) and returns it once; the page
+  shows it once with copy buttons and ready-made `claude mcp add` / `.mcp.json`
+  snippets. Rotating or revoking (`DELETE /admin/api/mcp/token`) makes the old
+  token fail with 401. The **Admin tools** toggle (`PUT /admin/api/mcp`) turns
+  the admin tools off: a valid token then gets the public tools, a wrong one is
+  still 401 (one exception for the env token, see below). `mcpserver` reads
+  the setting through a 30 s cache that the admin API drops on every save, so
+  changes apply at once on this replica and within 30 s on others. Concurrent
+  requests share one load, and after a failed load the cache waits 5 s before
+  it asks Postgres again. If a reload fails after the TTL ran out, the last
+  loaded value is used. If there is no usable value (cold start with Postgres
+  down, or a failed reload right after a save or revoke, so a revoked token
+  never keeps working), the settings count as unavailable: the dashboard token
+  and any other non-env token get 503, and the env token still works with the
+  built-in defaults, which means **admin tools on even if the dashboard toggle
+  is off**. Leave `MCP_ADMIN_TOKEN` empty if the toggle must hold during a
+  database outage. The token's last use is written at most once per 5
+  minutes, in the background.
+  The settings and token routes are not in `admin.ReadOnlyHandler`, so an MCP
+  client can never mint its own token.
+- **Limits.** Own per-IP rate limit (`MCP_RATE_LIMIT_PER_MINUTE`, default 60),
+  1 MiB request body, 30 s timeout. `/mcp` is not behind the `/api/v1`
+  middleware, so MCP calls are not counted in the API analytics. The global
+  CORS middleware still runs on `/mcp`, but it allows only `GET`, `HEAD` and
+  `OPTIONS` with the `Accept` and `Content-Type` headers. A browser's
+  preflight for `POST /mcp` (or for an `Authorization` header) is therefore
+  refused, so MCP clients that run in a browser cannot use the endpoint.
+  Desktop, CLI and server-side clients don't use CORS and are not affected.
+- **Dispatch.** Each tool builds a `GET` request and runs it in-process through
+  the existing handlers, so there is no second copy of the queries. Public
+  tools go through `httpapi.Handler.V1Handler` (the `/api/v1` routes at the same
+  paths, sharing the Redis cache, without rate limit, analytics, SSE stream or
+  `POST /events`); admin tools through `admin.ReadOnlyHandler` (GET routes only,
+  no Clerk middleware; never mounted publicly). Arguments are declared in each
+  tool's input schema (enums, bounds, defaults) and still validated by the API.
+  A 2xx answer is returned as JSON text plus structured content; a 4xx as a
+  tool error with the API's message; anything else as "internal error". Path
+  arguments are escaped as one segment, so they can't leave the route.
+- **Public tools** (`readOnlyHint`, `openWorldHint: false`): `now_playing`,
+  `recent_plays` (limit, cursor), `track_details` (id), `listening_summary`
+  (range), `top_tracks` / `top_artists` / `top_genres` (range, limit),
+  `audio_profile` (range), `recent_playlists` (limit), `top_playlists` (limit).
+- **Admin tools** (read-only): `admin_overview`, `admin_spotify_status`,
+  `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
+  limit, offset), `admin_track` (id), `admin_artists` (q, sort, order, limit,
+  offset), `admin_playlists` (limit, offset), `admin_top_playlists` (period,
+  limit, offset), `admin_top_playlist` (period, start), `admin_backups`,
+  `admin_api_analytics` / `admin_page_analytics` (range, tz). Write routes, the
+  SMTP settings, the MCP settings, `/auth/me`, `/audit` and `/config` are not
+  exposed. `mcpserver.PublicTools()` / `AdminTools()` list the names and
+  descriptions for the dashboard.
+
 ## Brand assets
 
 Logos, icons, favicons, og:image and the email logo come from the baoopn brand

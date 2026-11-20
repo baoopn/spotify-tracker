@@ -36,6 +36,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
 	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/mcpserver"
 	"github.com/baoopn/spotify-tracker/internal/notify"
 	"github.com/baoopn/spotify-tracker/internal/platform/app"
 	"github.com/baoopn/spotify-tracker/internal/platform/ops"
@@ -170,7 +171,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Analytics: recorder, Redis: rdb, Log: log.With(slog.String("component", "admin")),
 		Version: app.Version, ClerkPublishableKey: cfg.Admin.ClerkPublishableKey,
 		RedirectURI: cfg.Spotify.RedirectURI, TokenLifetimeDays: cfg.Spotify.TokenLifetimeDays,
-		Checks: checks,
+		Checks: checks, MCP: mcpInfo(cfg),
 	}}
 
 	topCfg := topPlaylistsConfig(cfg, log)
@@ -335,13 +336,46 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)
 			},
-			Site: staticsite.New(publicui.FS(), publicSiteOptions()),
+			Site:                  staticsite.New(publicui.FS(), publicSiteOptions()),
+			MCP:                   newMCP(cfg, adminAPI, log),
+			MCPRateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No WriteTimeout: /api/v1/now-playing/stream is a long-lived SSE response;
 		// regular routes are bounded by a per-route timeout middleware.
+	}
+}
+
+// newMCP returns the /mcp handler builder, or nil when MCP_ENABLED=false.
+// The admin tools are always built: a request gets them with the env token
+// (MCP_ADMIN_TOKEN) or the dashboard token, while the dashboard toggle is on.
+// It hooks the settings cache into adminAPI, so dashboard edits apply at once.
+func newMCP(cfg config.API, adminAPI *admin.API, log *slog.Logger) func(http.Handler) http.Handler {
+	if !cfg.MCP.Enabled {
+		log.Info("mcp endpoint disabled (MCP_ENABLED=false)")
+		return nil
+	}
+	mlog := log.With(slog.String("component", "mcp"))
+	cache := mcpserver.NewSettingsCache(adminAPI.Settings, mcpserver.DefaultSettingsTTL, mlog)
+	adminAPI.OnMCPChange = cache.Invalidate
+	log.Info("mcp endpoint enabled", slog.Bool("env_admin_token", cfg.MCP.AdminToken != ""))
+	return func(v1 http.Handler) http.Handler {
+		return mcpserver.New(mcpserver.Options{
+			Public: v1, Admin: admin.ReadOnlyHandler(adminAPI), AdminToken: cfg.MCP.AdminToken,
+			Settings: cache, Version: app.Version, Log: mlog,
+		})
+	}
+}
+
+// mcpInfo describes the /mcp endpoint for the dashboard.
+func mcpInfo(cfg config.API) admin.MCPInfo {
+	return admin.MCPInfo{
+		Enabled:            cfg.MCP.Enabled,
+		EndpointURL:        strings.TrimRight(cfg.PublicURL, "/") + "/mcp",
+		EnvTokenConfigured: cfg.MCP.AdminToken != "",
+		RateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
 	}
 }
 

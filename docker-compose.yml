@@ -118,6 +118,11 @@ services:
       TOP_PLAYLISTS_KEEP: ${TOP_PLAYLISTS_KEEP:-3}
       TOP_PLAYLISTS_VERIFY: ${TOP_PLAYLISTS_VERIFY:-1h}
       TOP_PLAYLISTS_OWNER: ${TOP_PLAYLISTS_OWNER:-}
+      # Remote MCP endpoint at /mcp. Admin tokens are managed in the dashboard
+      # (Settings -> MCP); MCP_ADMIN_TOKEN (>= 32 chars) is an optional extra one.
+      MCP_ENABLED: ${MCP_ENABLED:-true}
+      MCP_ADMIN_TOKEN: ${MCP_ADMIN_TOKEN:-}
+      MCP_RATE_LIMIT_PER_MINUTE: ${MCP_RATE_LIMIT_PER_MINUTE:-60}
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
       - "127.0.0.1:9000:9000"

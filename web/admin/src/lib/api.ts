@@ -44,6 +44,7 @@ import type {
 	V1Item,
 	V1List
 } from './types';
+import type { McpSettings, McpSettingsUpdate, McpTokenCreated } from './mcp';
 
 export const ADMIN_API = '/admin/api';
 export const PUBLIC_API = '/api/v1';
@@ -228,6 +229,14 @@ export const api = {
 			method: 'PUT',
 			body
 		}),
+
+	// mcp (remote MCP endpoint settings and admin token)
+	mcpSettings: ({ signal }: Signal = {}) => request<McpSettings>(`${ADMIN_API}/mcp`, { signal }),
+	saveMcpSettings: (body: McpSettingsUpdate) =>
+		request<McpSettings>(`${ADMIN_API}/mcp`, { method: 'PUT', body }),
+	/** Generates or rotates the token; the response is the only place it appears. */
+	generateMcpToken: () => request<McpTokenCreated>(`${ADMIN_API}/mcp/token`, { method: 'POST' }),
+	revokeMcpToken: () => request<McpSettings>(`${ADMIN_API}/mcp/token`, { method: 'DELETE' }),
 
 	// data
 	history: (q: { limit?: number; cursor?: string | null; q?: string }, { signal }: Signal = {}) =>

@@ -169,3 +169,45 @@ func TestLoadAPIBrand(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAPIMCP(t *testing.T) {
+	set := func() {
+		t.Setenv("DATABASE_URL", "postgres://u:p@localhost/db")
+		t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+		t.Setenv("SECRETS_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		t.Setenv("INTERNAL_API_TOKEN", "0123456789abcdef")
+	}
+	set()
+	cfg, err := Load[API]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled || cfg.MCP.AdminToken != "" || cfg.MCP.RateLimitPerMinute != 60 {
+		t.Errorf("defaults = %+v", cfg.MCP)
+	}
+
+	set()
+	t.Setenv("MCP_ADMIN_TOKEN", "too-short")
+	if _, err := Load[API](); err == nil {
+		t.Error("expected an error for a short MCP_ADMIN_TOKEN")
+	}
+
+	set()
+	t.Setenv("MCP_ADMIN_TOKEN", "0123456789abcdef0123456789abcdef")
+	t.Setenv("MCP_ENABLED", "false")
+	t.Setenv("MCP_RATE_LIMIT_PER_MINUTE", "10")
+	if cfg, err = Load[API](); err != nil || cfg.MCP.Enabled || cfg.MCP.RateLimitPerMinute != 10 ||
+		cfg.MCP.AdminToken != "0123456789abcdef0123456789abcdef" {
+		t.Errorf("custom: enabled=%v rate=%d token_set=%v err=%v",
+			cfg.MCP.Enabled, cfg.MCP.RateLimitPerMinute, cfg.MCP.AdminToken != "", err)
+	}
+	if _, ok := os.LookupEnv("MCP_ADMIN_TOKEN"); ok {
+		t.Error("MCP_ADMIN_TOKEN should be removed from the environment after load")
+	}
+
+	set()
+	t.Setenv("MCP_RATE_LIMIT_PER_MINUTE", "-1")
+	if _, err := Load[API](); err == nil {
+		t.Error("expected an error for a negative MCP_RATE_LIMIT_PER_MINUTE")
+	}
+}

@@ -19,6 +19,13 @@
         "CLAUDE_FLOW_MEMORY_BACKEND": "hybrid"
       },
       "autoStart": false
+    },
+    "spotify-tracker": {
+      "type": "http",
+      "url": "https://listening.baoopn.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SPOTIFY_TRACKER_MCP_TOKEN:-}"
+      }
     }
   }
 }

@@ -54,6 +54,12 @@ type Deps struct {
 	TopPlaylists TopPlaylistsAdmin
 	// TopPlaylistsConfig is the parsed TOP_PLAYLISTS_* configuration.
 	TopPlaylistsConfig topplaylists.Config
+
+	// MCP describes the /mcp endpoint for the MCP settings page.
+	MCP MCPInfo
+	// OnMCPChange runs after the MCP settings are saved (it drops the MCP
+	// server's settings cache); nil does nothing.
+	OnMCPChange func()
 }
 
 // API serves /admin/api.
@@ -64,6 +70,7 @@ type API struct {
 	tops           topPlaylistStore
 	backups        backupStore
 	backupSettings backupSettingsStore
+	mcpSettings    mcpSettingsStore
 	spotifyAuth    func(context.Context) (settings.Spotify, error)
 	auditor        auditor
 	invalidate     func(context.Context)

@@ -41,6 +41,13 @@ type Options struct {
 	// Site serves the public frontend at "/" and every non-API path that
 	// no other route matched (assets, 404 page).
 	Site http.Handler
+	// MCP, when set, builds the handler mounted at /mcp. It receives the
+	// read-only /api/v1 routes (same handler and cache, but without the
+	// rate limit, analytics, SSE stream and POST /events) for in-process
+	// dispatch; see V1Handler.
+	MCP func(v1 http.Handler) http.Handler
+	// MCPRateLimitPerMinute limits /mcp requests per client IP (0 = off).
+	MCPRateLimitPerMinute int
 }
 
 // Handler serves the public API.
@@ -110,22 +117,24 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(10 * time.Second))
-			r.Get("/now-playing", h.nowPlaying)
-			r.Get("/history", h.history)
-			r.Get("/tracks/{id}", h.cached(h.trackDetail))
-			r.Get("/stats/summary", h.cached(h.summary, "range"))
-			r.Get("/stats/top-tracks", h.cached(h.topTracks, "range", "limit"))
-			r.Get("/stats/top-artists", h.cached(h.topArtists, "range", "limit"))
-			r.Get("/stats/genres", h.cached(h.genres, "range", "limit"))
-			r.Get("/stats/audio-profile", h.cached(h.audioProfile, "range"))
-			r.Get("/playlists/recent", h.cached(h.recentPlaylists, "limit"))
-			r.Get("/playlists/top", h.cached(h.topPlaylists, "limit"))
-			r.Get("/timezone", h.timezone)
+			h.v1Routes(r)
 			if opts.Events != nil {
 				r.Post("/events", opts.Events)
 			}
 		})
 	})
+
+	// The MCP endpoint has its own rate limit and is not behind V1Middleware,
+	// so MCP calls are not counted in the public API analytics.
+	if opts.MCP != nil {
+		r.Group(func(r chi.Router) {
+			if opts.MCPRateLimitPerMinute > 0 {
+				r.Use(httprate.LimitBy(opts.MCPRateLimitPerMinute, time.Minute, clientIPKey))
+			}
+			r.Use(middleware.Timeout(30 * time.Second))
+			r.Handle("/mcp", opts.MCP(h.V1Handler()))
+		})
+	}
 
 	if opts.Mount != nil {
 		opts.Mount(r)
@@ -141,11 +150,44 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		p := req.URL.Path
-		isAPI := p == "/api" || strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/admin/api/")
+		isAPI := p == "/api" || p == "/mcp" || strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/admin/api/")
 		if opts.Site != nil && !isAPI && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
 			opts.Site.ServeHTTP(w, req)
 			return
 		}
+		writeError(w, http.StatusNotFound, "not_found", "resource not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+	})
+	return r
+}
+
+// v1Routes registers the read-only, request/response /api/v1 routes on r
+// (relative to /api/v1). The SSE stream and POST /events are not included.
+func (h *Handler) v1Routes(r chi.Router) {
+	r.Get("/now-playing", h.nowPlaying)
+	r.Get("/history", h.history)
+	r.Get("/tracks/{id}", h.cached(h.trackDetail))
+	r.Get("/stats/summary", h.cached(h.summary, "range"))
+	r.Get("/stats/top-tracks", h.cached(h.topTracks, "range", "limit"))
+	r.Get("/stats/top-artists", h.cached(h.topArtists, "range", "limit"))
+	r.Get("/stats/genres", h.cached(h.genres, "range", "limit"))
+	r.Get("/stats/audio-profile", h.cached(h.audioProfile, "range"))
+	r.Get("/playlists/recent", h.cached(h.recentPlaylists, "limit"))
+	r.Get("/playlists/top", h.cached(h.topPlaylists, "limit"))
+	r.Get("/timezone", h.timezone)
+}
+
+// V1Handler serves the v1Routes under /api/v1 for in-process callers (the
+// MCP server). Request paths match the public API, so the Redis cache is
+// shared; there is no rate limit, analytics, CORS or access log. Never mount
+// it on a public router.
+func (h *Handler) V1Handler() http.Handler {
+	r := chi.NewRouter()
+	r.Use(recoverer(h.log))
+	r.Route("/api/v1", h.v1Routes)
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "resource not found")
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {

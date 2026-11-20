@@ -60,6 +60,7 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			r.Post("/playlists/{id}/refresh", a.refreshPlaylist)
 			a.mountTopPlaylists(r)
 			a.mountBackups(r)
+			a.mountMCP(r)
 
 			r.Get("/analytics", a.analytics)
 			r.Get("/analytics/pages", a.pageAnalytics)
@@ -69,4 +70,42 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			writeError(w, http.StatusNotFound, "not_found", "resource not found")
 		})
 	})
+}
+
+// mcpUser is the actor injected by ReadOnlyHandler.
+var mcpUser = User{ID: "mcp", Email: "mcp", Name: "MCP"}
+
+// ReadOnlyHandler serves a read-only subset of the admin GET routes, at the
+// same paths relative to /admin/api (e.g. /overview), with no Clerk
+// authentication, rate limit or timeout. It is for in-process use by the MCP
+// server only, which authenticates callers itself: never mount it on a
+// public router. Write routes, /settings/email (SMTP settings), /auth/me,
+// /audit, /config and the /mcp settings (token minting) are left out on
+// purpose.
+func ReadOnlyHandler(a *API) http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, mcpUser)))
+		})
+	})
+	r.Get("/overview", a.overview)
+	r.Get("/spotify", a.getSpotify)
+	r.Get("/history", a.history)
+	r.Get("/tracks", a.tracks)
+	r.Get("/tracks/{id}", a.track)
+	r.Get("/artists", a.artists)
+	r.Get("/playlists", a.playlists)
+	r.Get("/top-playlists", a.listTopPlaylists)
+	r.Get("/top-playlists/{period}/{start}", a.topPlaylist)
+	r.Get("/backups", a.getBackups)
+	r.Get("/analytics", a.analytics)
+	r.Get("/analytics/pages", a.pageAnalytics)
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "resource not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+	})
+	return r
 }

@@ -3,6 +3,7 @@
 	import SiteCredit from './SiteCredit.svelte';
 	import ListeningIcon, { type ListeningIconName } from '../ListeningIcon.svelte';
 	import {
+		Bot,
 		ChartLine,
 		CircleUser,
 		DatabaseBackup,
@@ -63,6 +64,7 @@
 					icon: DatabaseBackup,
 					exact: false
 				},
+				{ href: resolve('settings/mcp'), label: 'MCP', icon: Bot, exact: false },
 				{ href: resolve('settings/appearance'), label: 'Appearance', icon: Palette, exact: false },
 				{ href: resolve('audit'), label: 'Audit log', icon: ScrollText, exact: false }
 			]

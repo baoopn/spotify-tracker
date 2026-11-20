@@ -130,6 +130,42 @@ type EmailSettings = {
 | PUT | `/admin/api/settings/email` | `{ host, port, username, from, alert_to: string[], expiry_alert_days: number[], password?: string }` — omit `password` to keep, `""` to clear | `EmailSettings`; `422` with `fields` |
 | POST | `/admin/api/settings/email/test` | `{ "to"?: string }` (defaults to alert_to) | `{ "ok": true }` or `{ "ok": false, "error": "…" }` |
 
+## MCP settings
+
+Settings → MCP in the dashboard: the remote MCP endpoint (`/mcp`, see
+[architecture.md](architecture.md#mcp-server)) and its admin access token.
+Only the token's SHA-256 is stored; the token itself is in the `POST` response
+only. None of these routes are reachable through MCP.
+
+```ts
+type McpTool = { name: string; description: string }
+type McpSettings = {
+  enabled: boolean                 // MCP_ENABLED
+  endpoint_url: string             // PUBLIC_URL + "/mcp"
+  admin_tools_enabled: boolean     // default true
+  token: { configured: true; prefix: string  // first 8 chars, e.g. "stm_AbCd"
+           created_at: string | null; last_used_at: string | null } | null
+  env_token_configured: boolean    // MCP_ADMIN_TOKEN is set (also valid)
+  rate_limit_per_minute: number    // MCP_RATE_LIMIT_PER_MINUTE, 0 = off
+  public_tools: McpTool[]
+  admin_tools: McpTool[]
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/mcp` | – | `McpSettings` |
+| PUT | `/admin/api/mcp` | `{ "admin_tools_enabled": boolean }` (required) | `McpSettings`; `422` when missing |
+| POST | `/admin/api/mcp/token` | – | `{ "token": "stm_…", "prefix": "stm_AbCd", "created_at": "…" }`. Replaces any existing token (rotate). |
+| DELETE | `/admin/api/mcp/token` | – | `McpSettings` (`token: null`); revoking when there is none is a no-op |
+
+`last_used_at` is updated at most once per 5 minutes. When admin tools are
+off, a valid token gets the public tools only (a wrong token is still 401).
+
+Audit actions: `mcp.settings_updated` (`admin_tools_enabled`),
+`mcp.token_generated` (`prefix`, `rotated`), `mcp.token_revoked` (`prefix`).
+The token is never logged or audited.
+
 ## Data
 
 | Method | Path | Query | Response |

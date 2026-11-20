@@ -108,6 +108,39 @@ are sent with `Cache-Control: no-cache`, and tracks still being analysed with
 `no-store`. CORS is limited to `CORS_ALLOWED_ORIGINS`
 and `/api/v1` is rate limited per client IP.
 
+## Use from Claude
+
+The API serves a remote MCP server at `/mcp` with read-only tools for now
+playing, history, track details, stats and playlists (see
+[docs/architecture.md](docs/architecture.md#mcp-server)). Add it to Claude Code:
+
+```sh
+claude mcp add --transport http spotify-tracker https://listening.baoopn.com/mcp
+```
+
+or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "spotify-tracker": {
+      "type": "http",
+      "url": "https://listening.baoopn.com/mcp",
+      "headers": { "Authorization": "Bearer ${SPOTIFY_TRACKER_MCP_TOKEN:-}" }
+    }
+  }
+}
+```
+
+Without a token you get the public tools. For the read-only admin tools,
+generate a token in the admin dashboard under **Settings → MCP** (it is shown
+once; the page also has the filled-in commands), then pass it as
+`--header "Authorization: Bearer <token>"` to `claude mcp add`, or set it for
+`.mcp.json` (PowerShell: `setx SPOTIFY_TRACKER_MCP_TOKEN "<token>"`). Rotate or
+revoke it on the same page. The server's `MCP_ADMIN_TOKEN`, if set, also works.
+claude.ai and Claude desktop custom connectors send no custom headers, so they
+get the public tools only.
+
 ## Documentation
 
 - [Architecture & design decisions](docs/architecture.md)

@@ -60,6 +60,7 @@ export const qk = {
 	spotify: ['spotify', 'status'] as const,
 	emailSettings: ['settings', 'email'] as const,
 	backups: ['backups'] as const,
+	mcp: ['settings', 'mcp'] as const,
 	analytics: (range: AnalyticsRange, tz: string | null) => ['analytics', range, tz] as const,
 	pageAnalytics: (range: AnalyticsRange, tz: string | null) =>
 		['analytics', 'pages', range, tz] as const,
@@ -118,6 +119,13 @@ export const queries = {
 		queryOptions({
 			queryKey: qk.emailSettings,
 			queryFn: ({ signal }) => api.emailSettings({ signal })
+		}),
+
+	/** Refetched on mount/focus to show the token's last use; not polled. */
+	mcp: () =>
+		queryOptions({
+			queryKey: qk.mcp,
+			queryFn: ({ signal }) => api.mcpSettings({ signal })
 		}),
 
 	/**

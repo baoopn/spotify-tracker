@@ -185,10 +185,13 @@ public page the full lyrics of the song playing now, and of no other song:
   plays, playback is paused, the snapshot is older than 60 s (poller down),
   the estimated position is past the track's end, or no lyrics were found.
 - **Status.** The body has `status`: `found`, `instrumental`, or `pending`
-  (no lookup yet, or a failed lookup that is retried; no text). The page shows
-  "Looking for lyrics…" and asks again every 10 s while lyrics or their
-  translation are pending, and stops once both are settled. The lyrics fetcher
-  is woken for the song playing now, so pending clears quickly.
+  (no text). Pending always ends: it means no lookup yet while the lyrics
+  fetcher runs (`LYRICS_ENABLED`), or a failed lookup retried within two
+  minutes; otherwise the answer is null. The page shows "Looking for
+  lyrics…" and asks again every 10 s while lyrics or their translation are
+  pending, every 30 s while the answer is null, and stops once both are
+  settled. The lyrics fetcher is woken for the song playing now, so pending
+  clears quickly.
 - **Full lyrics.** `store.NowLyrics` reads the track's found or instrumental
   lyrics. Synced LRC text is parsed by `internal/lrc` (several time tags per
   line, `[offset:]`, metadata and untimed lines dropped) and sent as
@@ -206,7 +209,12 @@ public page the full lyrics of the song playing now, and of no other song:
   parsed LRC is dropped), for plain lyrics `plain` holds the text. A null
   language means the song is in that language. `translation` is null when the
   feature is off, for instrumental or pending lyrics, and when there will be
-  no translation (skipped, refused, given up). Credit: "Translated by Claude".
+  no translation (skipped, refused, given up). The translation is `pending`
+  only while it will be worked on soon: leased now, or queued, stale or a
+  retry due within two minutes while no cap is reached. A retry further
+  away, or one held back by a reached cap, shows no translation, so the
+  "Translating…" tag and the 10 s poll cannot run for a whole song. Credit:
+  "Translated by Claude".
 - **Credit and caching.** Every answer carries `credit` ("Lyrics from
   LRCLIB", <https://lrclib.net>). `Cache-Control: no-store`, so Cloudflare
   never caches it. The current track's answer is kept in memory for 1 min
@@ -232,21 +240,28 @@ now-playing lyrics and in the admin.
   replica saw). An admin can re-queue any track. Old songs that have not
   played since the feature shipped are never queued on their own.
 - **Order.** The song playing now first, then re-queued songs (newest request
-  first), then by last play. When LRCLIB finds lyrics, the fetcher nudges the
-  translator, so a new song gets lyrics and then a translation within about a
-  minute.
+  first), then by last play. The song playing now counts as queued only once
+  its row exists (it may have no lyrics yet); when LRCLIB finds its lyrics,
+  the fetcher tells the translator, which queues it then (also with
+  `TRANSLATE_RECENT_WINDOW=0`), so a new song gets lyrics and then a
+  translation within about a minute.
 - **Leases.** The worker claims one song at a time with
   `UPDATE ... FOR UPDATE SKIP LOCKED` and a lease (`claimed_by`,
   `claimed_until`, `TRANSLATE_LEASE`, 10 min). Results are written only while
   the claim is held and the lyrics still match the hash they were read with
   (`source_hash`); a crashed worker's lease expires and the song is claimed
-  again. So API replicas never translate the same song twice.
+  again. So API replicas never translate the same song twice. A re-queue
+  never clears a live lease: the song is queued again when the current
+  worker finishes.
 - **Calls and caps.** One Claude call at a time per process, at least
-  `TRANSLATE_SPACING` (15 s) apart. Before each call one call is counted in
-  `translation_usage` (per UTC day) if `TRANSLATE_DAILY_CAP` and
-  `TRANSLATE_MONTHLY_CAP` allow it; at a cap the worker pauses until the next
-  UTC day (at most 6 h) and checks again. The SDK does not retry; the worker
-  does, so every call counts once.
+  `TRANSLATE_SPACING` (15 s) apart (no wait after a song that needed no
+  call). Before each call one call is counted in `translation_usage` (per UTC
+  day) if `TRANSLATE_DAILY_CAP` and `TRANSLATE_MONTHLY_CAP` allow it; the
+  check and the increment run in one transaction under
+  `pg_advisory_xact_lock`, so replicas cannot both take the last call. At a
+  cap the worker pauses until the next UTC day (at most 6 h) and checks
+  again. The SDK does not retry; the worker does, so every call counts once.
+  Billed tokens are recorded for every answer, also unusable ones.
 - **Request.** Model `TRANSLATE_MODEL` (`claude-opus-5-5`), effort
   `TRANSLATE_EFFORT` (low), thinking left at its default, structured JSON
   output (`{ source_language, en, vi }`), the fixed system prompt first with a
@@ -254,9 +269,12 @@ now-playing lyrics and in the admin.
   Synced lyrics go as numbered non-empty lines and come back as one line per
   input line; the worker puts empty lines back, so `en_lines` / `vi_lines`
   line up with `internal/lrc.Parse`. Plain lyrics go as one text. A language
-  the song is already in is stored as null. Songs over 400 lines or
-  15 000 characters are `skipped` without a call.
-- **Outcomes.** `done`; `refused` (terminal); `skipped`; `error` retried with
+  the song is already in is stored as null. `<lyrics>` tags in the title,
+  artist or text are neutralized, so song text cannot leave its block. Songs
+  over 250 lines or 6 000 characters are `skipped` without a call (both
+  translations must fit one answer).
+- **Outcomes.** `done`; `refused` (terminal); `skipped` (also an answer cut
+  off at `max_tokens`: "too long", not retried); `error` retried with
   backoff from 30 min (doubling, at most 7 days) and given up after
   `TRANSLATE_MAX_ATTEMPTS` (5) failures in a row (`next_attempt_at` null).
   A rate limit pauses for its Retry-After; a bad key or a spent credit pauses

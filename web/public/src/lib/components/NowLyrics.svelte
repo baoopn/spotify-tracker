@@ -154,7 +154,7 @@
 			<div class="skeleton h-64 rounded-lg" aria-hidden="true"></div>
 			<p class="sr-only">Loading lyrics</p>
 		{:else if failed}
-			<p class="flex h-64 items-center gap-2 text-sm text-ink-soft" role="alert">
+			<p class="flex h-64 items-center justify-center gap-2 text-sm text-ink-soft" role="alert">
 				Couldn&rsquo;t load lyrics.
 				<button type="button" class="link font-semibold text-ink" onclick={() => query.refetch()}
 					>Retry</button
@@ -185,7 +185,7 @@
 		{/if}
 
 		{#if found}
-			{@render credits('mt-2')}
+			{@render credits('mt-3')}
 		{/if}
 	</section>
 {/if}
@@ -197,8 +197,7 @@
 			target="_blank"
 			rel="noopener noreferrer"
 			class="link font-semibold text-ink">{found?.credit.text}</a
-		>{#if trText && tr}
-			· {tr.credit.text}{/if}
+		>{#if trText && tr}&#32;·&#32;{tr.credit.text}{/if}
 	</p>
 {/snippet}
 

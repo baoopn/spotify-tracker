@@ -317,6 +317,8 @@ export type TrackLyrics = {
 	last_error: string;
 	fetched_at: string | null;
 	next_attempt_at: string | null;
+	/** A lookup is due soon (pending with the fetcher on, or a retry within minutes). */
+	waiting: boolean;
 	/** The Claude translation; null unless status is "found". */
 	translation: TrackTranslation | null;
 };
@@ -332,6 +334,8 @@ export type TrackTranslation = {
 	status: TranslationStatus;
 	/** The lyrics changed since; a new translation is on its way. */
 	stale: boolean;
+	/** It will be worked on soon (leased, queued, or a retry within minutes; no cap reached). */
+	waiting: boolean;
 	kind: 'synced' | 'plain' | null;
 	source_language: string | null;
 	en: string | null;

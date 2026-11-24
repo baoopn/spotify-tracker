@@ -313,13 +313,13 @@ export const queries = {
 		})
 };
 
-/** The lookup or the translation of these lyrics is still on its way. */
+/**
+ * The lookup or the translation of these lyrics will be worked on soon (the
+ * server decides: leased, queued, or a retry within minutes, and no cap
+ * reached), so polling always ends.
+ */
 export function lyricsWaiting(l: TrackLyrics): boolean {
-	if (l.status === 'pending' || (l.status === 'error' && l.next_attempt_at)) return true;
-	const t = l.translation;
-	return (
-		!!t && (t.status === 'pending' || t.stale || (t.status === 'error' && !!t.next_attempt_at))
-	);
+	return l.waiting || !!l.translation?.waiting;
 }
 
 /** Mirrors the server's lyrics search check: 2–200 characters (code points)

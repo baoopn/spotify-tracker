@@ -39,7 +39,7 @@
 				type="button"
 				lang={o.lang}
 				aria-pressed={value === o.id}
-				aria-label={compact ? o.full : undefined}
+				aria-label={compact && o.label !== o.full ? `${o.label}, ${o.full}` : undefined}
 				class={[
 					'rounded-md px-2 py-1 font-semibold transition-colors',
 					value === o.id ? 'bg-ink text-paper' : 'text-ink-soft hover:text-ink'

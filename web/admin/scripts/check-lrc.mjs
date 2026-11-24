@@ -105,6 +105,7 @@ const tr = (over) => ({
 	en: 'one\n\nthree',
 	vi: null,
 	model: 'm',
+	waiting: false,
 	attempts: 0,
 	last_error: '',
 	translated_at: null,
@@ -135,9 +136,10 @@ check('translation: plain interleave and notes', () => {
 		{ text: 'b', tr: 'y' }
 	]);
 	assert.equal(interleave('a\nb', 'x'), null);
-	assert.equal(translationNote(tr({ status: 'pending' })), null);
+	assert.equal(translationNote(tr({ status: 'pending', waiting: true })), null);
+	assert.match(translationNote(tr({ status: 'pending' })), /cap/);
 	assert.match(translationNote(tr({ status: 'refused' })), /declined/);
-	assert.match(translationNote(tr({ status: 'error', next_attempt_at: 'x' })), /tried again/);
+	assert.match(translationNote(tr({ status: 'error', next_attempt_at: 'x' })), /tried again later/);
 	assert.match(translationNote(tr({ status: 'error' })), /given up/);
 });
 

@@ -42,8 +42,9 @@ export function interleave(
 
 /** One line on why there is no translation to show, or null. */
 export function translationNote(t: TrackTranslation | null | undefined): string | null {
-	if (!t) return null;
-	if (t.stale || t.status === 'pending') return null;
+	if (!t || t.waiting) return null;
+	if (t.status === 'pending' || t.stale)
+		return 'Queued; waiting for the daily or monthly cap, or a play.';
 	switch (t.status) {
 		case 'skipped':
 			return 'Not translated: nothing to translate, or too long.';
@@ -51,7 +52,7 @@ export function translationNote(t: TrackTranslation | null | undefined): string 
 			return 'Claude declined to translate these lyrics.';
 		case 'error':
 			return t.next_attempt_at
-				? 'Translation failed. It will be tried again.'
+				? 'Translation failed. It will be tried again later.'
 				: 'Translation failed too often and was given up.';
 	}
 	return null;

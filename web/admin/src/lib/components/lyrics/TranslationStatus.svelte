@@ -30,7 +30,7 @@
 	}));
 
 	const t = $derived(translation);
-	const waiting = $derived(!!t && (t.status === 'pending' || t.stale));
+	const waiting = $derived(!!t && t.waiting);
 	const note = $derived(translationNote(t));
 </script>
 

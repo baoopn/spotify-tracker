@@ -16,19 +16,15 @@ function load(): LyricsLang {
 }
 
 class LyricsLangState {
-	#value = $state<LyricsLang>('orig');
-	#loaded = false;
+	// Read once at start (browser only), never inside a reactive read: writing
+	// state from a getter would fail when first read inside a $derived.
+	#value = $state<LyricsLang>(typeof window === 'undefined' ? 'orig' : load());
 
 	get value(): LyricsLang {
-		if (!this.#loaded && typeof window !== 'undefined') {
-			this.#loaded = true;
-			this.#value = load();
-		}
 		return this.#value;
 	}
 
 	set value(v: LyricsLang) {
-		this.#loaded = true;
 		this.#value = v;
 		try {
 			localStorage.setItem(KEY, v);

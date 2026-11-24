@@ -113,8 +113,7 @@
 			Lyrics from <OutLink
 				href="https://lrclib.net"
 				class="font-medium text-primary hover:underline">LRCLIB</OutLink
-			>{#if trText}
-				· Translated by Claude{/if}
+			>{#if trText}&#32;· Translated by Claude{/if}
 		</p>
 	{/if}
 </section>

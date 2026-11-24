@@ -168,8 +168,7 @@
 				href="https://lrclib.net"
 				class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
 				>LRCLIB</OutLink
-			>{#if trText}
-				· Translated by Claude{/if}
+			>{#if trText}&#32;· Translated by Claude{/if}
 		</p>
 	{/if}
 </section>

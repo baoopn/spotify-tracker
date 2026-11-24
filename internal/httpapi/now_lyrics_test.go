@@ -17,8 +17,8 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/store"
 )
 
-// fakeSynced serves synced text from text, or a whole record from rec.
-type fakeSynced struct {
+// fakeLyrics serves synced text from text, or a whole record from rec.
+type fakeLyrics struct {
 	mu    sync.Mutex
 	text  map[string]string
 	rec   map[string]store.NowLyrics
@@ -27,7 +27,7 @@ type fakeSynced struct {
 	delay time.Duration // holds each read open, to overlap concurrent misses
 }
 
-func (f *fakeSynced) NowLyrics(_ context.Context, id string) (store.NowLyrics, error) {
+func (f *fakeLyrics) NowLyrics(_ context.Context, id string) (store.NowLyrics, error) {
 	f.mu.Lock()
 	f.calls++
 	text := f.text[id]
@@ -46,7 +46,7 @@ func (f *fakeSynced) NowLyrics(_ context.Context, id string) (store.NowLyrics, e
 	return store.NowLyrics{Status: domain.LyricsFound, Synced: text}, nil
 }
 
-func (f *fakeSynced) callCount() int {
+func (f *fakeLyrics) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
@@ -72,7 +72,7 @@ func snapshot(playing bool, progress *int64, fetched time.Time, trackID string, 
 
 func ms(v int64) *int64 { return &v }
 
-func lyricsHandler(st *fakeSynced, snap []byte) *Handler {
+func lyricsHandler(st *fakeLyrics, snap []byte) *Handler {
 	return &Handler{
 		log:      slog.New(slog.DiscardHandler),
 		lyrics:   st,
@@ -107,7 +107,7 @@ func manyLines(n int, step int64) string {
 }
 
 func TestNowLyricsNull(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(20, 5000), "empty": "[ar:x]\nno time tags"}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(20, 5000), "empty": "[ar:x]\nno time tags"}}
 	fresh := lyricsNow.Add(-2 * time.Second)
 	cases := map[string][]byte{
 		"null snapshot":  []byte("null"),
@@ -116,7 +116,7 @@ func TestNowLyricsNull(t *testing.T) {
 		"no progress":    snapshot(true, nil, fresh, "t1", 200_000),
 		"stale":          snapshot(true, ms(10_000), lyricsNow.Add(-2*time.Minute), "t1", 200_000),
 		"past duration":  snapshot(true, ms(199_500), fresh, "t1", 200_000),
-		"no synced":      snapshot(true, ms(10_000), fresh, "other", 200_000),
+		"no lyrics":      snapshot(true, ms(10_000), fresh, "other", 200_000),
 		"no timed lines": snapshot(true, ms(10_000), fresh, "empty", 200_000),
 	}
 	for name, snap := range cases {
@@ -133,7 +133,7 @@ func TestNowLyricsNull(t *testing.T) {
 }
 
 func TestNowLyricsFull(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(200, 3000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(200, 3000)}}
 	for _, progress := range []int64{0, 300_000, 598_000} {
 		t.Run(fmt.Sprint(progress), func(t *testing.T) {
 			snap := snapshot(true, ms(progress), lyricsNow.Add(-2*time.Second), "t1", 900_000)
@@ -162,8 +162,9 @@ func TestNowLyricsFull(t *testing.T) {
 
 // Without synced lines the plain text is served; instrumental tracks say so.
 func TestNowLyricsPlainAndInstrumental(t *testing.T) {
-	st := &fakeSynced{rec: map[string]store.NowLyrics{
-		"plain": {Status: domain.LyricsFound, Synced: "[ar:x]\nno tags", Plain: "one\ntwo"},
+	st := &fakeLyrics{rec: map[string]store.NowLyrics{
+		"plain": {Status: domain.LyricsFound, Synced: "[ar:x]\nno tags", Plain: "  one\ntwo\n "},
+		"blank": {Status: domain.LyricsFound, Plain: " \n\t "},
 		"inst":  {Status: domain.LyricsInstrumental},
 		"long":  {Status: domain.LyricsFound, Plain: strings.Repeat("ế", nowLyricsMaxPlain+50)},
 	}}
@@ -181,11 +182,43 @@ func TestNowLyricsPlainAndInstrumental(t *testing.T) {
 	if body == nil || body.Plain == nil || len([]rune(*body.Plain)) != nowLyricsMaxPlain {
 		t.Errorf("long plain not cut")
 	}
+	if _, body = getLyrics(t, lyricsHandler(st, snap("blank")), "/api/v1/now-playing/lyrics"); body != nil {
+		t.Errorf("blank plain: %+v", body)
+	}
+}
+
+// At most nowLyricsMaxLines lines, and at most nowLyricsMaxTotal runes in all.
+func TestNowLyricsCaps(t *testing.T) {
+	var big strings.Builder
+	for i := range 1000 {
+		fmt.Fprintf(&big, "[%02d:%02d.00] %s\n", i/60, i%60, strings.Repeat("a", 150))
+	}
+	st := &fakeLyrics{text: map[string]string{
+		"many": manyLines(nowLyricsMaxLines+500, 100),
+		"big":  big.String(),
+	}}
+	snap := func(id string) []byte { return snapshot(true, ms(6000), lyricsNow, id, 9_000_000) }
+
+	_, body := getLyrics(t, lyricsHandler(st, snap("many")), "/api/v1/now-playing/lyrics")
+	if body == nil || len(body.Lines) != nowLyricsMaxLines {
+		t.Fatalf("many: %+v", body)
+	}
+	_, body = getLyrics(t, lyricsHandler(st, snap("big")), "/api/v1/now-playing/lyrics")
+	if body == nil || len(body.Lines) != nowLyricsMaxTotal/150 {
+		t.Fatalf("big: %v", body)
+	}
+	total := 0
+	for _, l := range body.Lines {
+		total += len([]rune(l.Text))
+	}
+	if total > nowLyricsMaxTotal {
+		t.Errorf("total %d runes", total)
+	}
 }
 
 // Query parameters cannot pick another track.
 func TestNowLyricsIgnoresQuery(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000), "x": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000), "x": manyLines(10, 5000)}}
 	snap := snapshot(true, ms(6000), lyricsNow, "t1", 200_000)
 	for _, target := range []string{"/api/v1/now-playing/lyrics?track=x", "/api/v1/now-playing/lyrics?id=x&track_id=x"} {
 		_, body := getLyrics(t, lyricsHandler(st, snap), target)
@@ -196,7 +229,7 @@ func TestNowLyricsIgnoresQuery(t *testing.T) {
 }
 
 func TestNowLyricsMemo(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	getLyrics(t, h, "/api/v1/now-playing/lyrics")
 	getLyrics(t, h, "/api/v1/now-playing/lyrics")
@@ -214,7 +247,7 @@ func TestNowLyricsMemo(t *testing.T) {
 }
 
 func TestNowLyricsStoreError(t *testing.T) {
-	st := &fakeSynced{err: errors.New("db down")}
+	st := &fakeLyrics{err: errors.New("db down")}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	rec := httptest.NewRecorder()
 	h.nowPlayingLyrics(rec, httptest.NewRequest(http.MethodGet, "/api/v1/now-playing/lyrics", nil))
@@ -225,7 +258,7 @@ func TestNowLyricsStoreError(t *testing.T) {
 
 // Concurrent requests on a cache miss share one store read.
 func TestNowLyricsCoalescesMisses(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}, delay: 50 * time.Millisecond}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}, delay: 50 * time.Millisecond}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	var wg sync.WaitGroup
 	for range 20 {
@@ -245,7 +278,7 @@ func TestNowLyricsCoalescesMisses(t *testing.T) {
 
 // A track without synced lyrics is asked again after 10 s, not a minute.
 func TestNowLyricsEmptyTTL(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{}}
+	st := &fakeLyrics{text: map[string]string{}}
 	now := lyricsNow
 	h := lyricsHandler(st, nil)
 	h.now = func() time.Time { return now }
@@ -264,7 +297,7 @@ func TestNowLyricsEmptyTTL(t *testing.T) {
 }
 
 func TestNowLyricsCutsLongLines(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": "[00:01.00] " + strings.Repeat("ế", 1000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": "[00:01.00] " + strings.Repeat("ế", 1000)}}
 	_, body := getLyrics(t, lyricsHandler(st, snapshot(true, ms(2000), lyricsNow, "t1", 200_000)), "/api/v1/now-playing/lyrics")
 	if body == nil || len(body.Lines) != 1 || len([]rune(body.Lines[0].Text)) != nowLyricsMaxRunes {
 		t.Fatalf("got %+v", body)
@@ -273,7 +306,7 @@ func TestNowLyricsCutsLongLines(t *testing.T) {
 
 // A snapshot stamped in the future (clock skew) still serves the lyrics.
 func TestNowLyricsFutureFetchedAt(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}}
 	_, body := getLyrics(t, lyricsHandler(st, snapshot(true, ms(6000), lyricsNow.Add(30*time.Second), "t1", 200_000)), "/api/v1/now-playing/lyrics")
 	if body == nil || len(body.Lines) != 10 {
 		t.Errorf("got %+v", body)

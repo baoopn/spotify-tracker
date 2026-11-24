@@ -189,15 +189,17 @@ public page the full lyrics of the song playing now, and of no other song:
   lyrics. Synced LRC text is parsed by `internal/lrc` (several time tags per
   line, `[offset:]`, metadata and untimed lines dropped) and sent as
   `lines: [{ start_ms, text }]` with `synced: true` (at most 2000 lines of at
-  most 200 runes each). Without synced lines the plain text is sent as
-  `plain` (at most 20 000 runes). Instrumental tracks get
+  most 200 runes each, and 100 000 runes in all; later lines are dropped).
+  Without synced lines the trimmed plain text is sent as `plain` (at most
+  20 000 runes). Instrumental tracks get
   `instrumental: true` and no text. The page highlights the current line
   from its own position estimate.
 - **Credit and caching.** Every answer carries `credit` ("Lyrics from
   LRCLIB", <https://lrclib.net>). `Cache-Control: no-store`, so Cloudflare
   never caches it. The current track's answer is kept in memory for 1 min
   (10 s when there are no lyrics yet), and concurrent misses share one store
-  read, so the database is read at most about once a minute per replica.
+  read. So each replica reads the database about once a minute while one
+  track plays (every 10 s while it has no lyrics), plus once per track change.
 - **Not in MCP.** The route is registered next to `v1Routes`, not in it, so
   `V1Handler` (and with it the MCP server) cannot reach it.
 

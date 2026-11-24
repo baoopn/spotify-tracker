@@ -87,6 +87,8 @@
 			<h3 id={headingId} class="label text-ink">Lyrics</h3>
 			{#if lines.length}
 				<span class="chip label">Synced</span>
+			{:else if plain}
+				<span class="chip label">Plain</span>
 			{:else if instrumental}
 				<span class="chip label">Instrumental</span>
 			{/if}
@@ -125,7 +127,10 @@
 		{:else if lines.length}
 			<LyricsList {lines} {keys} {active} class="h-64" />
 		{:else if plain}
-			{@render plainText(plain, 'h-64 py-2 text-base leading-relaxed')}
+			<!-- A new box per song, so the next song starts at the top. -->
+			{#key trackId}
+				{@render plainText(plain, 'h-64 py-2 text-base leading-relaxed')}
+			{/key}
 		{/if}
 
 		<p class="mt-2 text-xs text-ink-soft">
@@ -198,10 +203,12 @@
 			{#if lines.length}
 				<LyricsList {lines} {keys} {active} size="lg" class="min-h-0 flex-1 px-5 sm:px-8" />
 			{:else if plain}
-				{@render plainText(
-					plain,
-					'min-h-0 flex-1 overscroll-contain px-5 py-6 text-xl leading-relaxed sm:px-8 sm:text-2xl'
-				)}
+				{#key trackId}
+					{@render plainText(
+						plain,
+						'min-h-0 flex-1 overscroll-contain px-5 py-6 text-xl leading-relaxed sm:px-8 sm:text-2xl'
+					)}
+				{/key}
 			{/if}
 			<p class="border-t border-rule px-5 py-3 text-xs text-ink-soft">
 				<a

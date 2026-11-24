@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,7 @@ const (
 	nowLyricsMaxLines    = 2000
 	nowLyricsMaxRunes    = 200              // per synced line
 	nowLyricsMaxPlain    = 20_000           // runes of plain text
+	nowLyricsMaxTotal    = 100_000          // runes over all synced lines; later lines are dropped
 	nowLyricsMaxAge      = 60 * time.Second // an older snapshot counts as not playing (poller down)
 	nowLyricsMemoTTL     = time.Minute      // found lyrics
 	nowLyricsEmptyTTL    = 10 * time.Second // no lyrics yet (the lookup may still run)
@@ -183,23 +185,23 @@ func buildLyricsBody(trackID string, l store.NowLyrics) *nowLyricsBody {
 	if lines := lrc.Parse(l.Synced); len(lines) > 0 {
 		lines = lines[:min(len(lines), nowLyricsMaxLines)]
 		out.Synced = true
-		out.Lines = make([]lyricsLine, len(lines))
-		for i, ln := range lines {
-			out.Lines[i] = lyricsLine{StartMS: ln.StartMS, Text: cutRunes(ln.Text, nowLyricsMaxRunes)}
+		out.Lines = make([]lyricsLine, 0, len(lines))
+		total := 0
+		for _, ln := range lines {
+			text := lrc.CutRunes(ln.Text, nowLyricsMaxRunes)
+			total += utf8.RuneCountInString(text)
+			if total > nowLyricsMaxTotal {
+				break
+			}
+			out.Lines = append(out.Lines, lyricsLine{StartMS: ln.StartMS, Text: text})
 		}
 		return out
 	}
-	if l.Plain == "" {
+	trimmed := strings.TrimSpace(l.Plain)
+	if trimmed == "" {
 		return nil
 	}
-	plain := cutRunes(l.Plain, nowLyricsMaxPlain)
+	plain := lrc.CutRunes(trimmed, nowLyricsMaxPlain)
 	out.Plain = &plain
 	return out
-}
-
-func cutRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n])
 }

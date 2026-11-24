@@ -19,7 +19,7 @@ import (
 
 // Store is the persistence the refresher needs (implemented by *store.Queries).
 type Store interface {
-	TracksNeedingLyrics(ctx context.Context, limit int, priority string) ([]domain.LyricsCandidate, error)
+	TracksNeedingLyrics(ctx context.Context, limit int, priority []string) ([]domain.LyricsCandidate, error)
 	SetLyrics(ctx context.Context, trackID string, l domain.Lyrics) error
 	DeferLyrics(ctx context.Context, trackID, status string, next time.Time, lastErr string) error
 }
@@ -57,8 +57,9 @@ type Refresher struct {
 
 	wake       chan struct{}
 	mu         sync.Mutex
-	priority   string // the song playing now: looked up first
-	badBatches int    // batches in a row that ended on maxTransient errors
+	priority   string   // the song playing now: looked up first
+	upcoming   []string // the next songs of the queue: looked up right after
+	badBatches int      // batches in a row that ended on maxTransient errors
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) bool
 }
@@ -92,6 +93,41 @@ func (r *Refresher) Wake(trackID string) {
 	}
 }
 
+// WakeUpcoming tells the refresher which songs are queued to play next (from
+// the Spotify queue): they are looked up right after the song playing now,
+// and the next batch starts now. Never blocks.
+func (r *Refresher) WakeUpcoming(trackIDs []string) {
+	if len(trackIDs) == 0 {
+		return
+	}
+	r.mu.Lock()
+	r.upcoming = append([]string(nil), trackIDs...)
+	r.mu.Unlock()
+	if r.wake == nil {
+		return
+	}
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+// priorityList is the song playing now, then the upcoming songs.
+func (r *Refresher) priorityList() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, 1+len(r.upcoming))
+	if r.priority != "" {
+		out = append(out, r.priority)
+	}
+	for _, id := range r.upcoming {
+		if id != r.priority {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // Run processes batches until ctx is done.
 func (r *Refresher) Run(ctx context.Context) error {
 	for {
@@ -110,10 +146,7 @@ func (r *Refresher) Run(ctx context.Context) error {
 // ended on maxTransient errors in a row (Interval doubled per such batch in a
 // row, at most MaxPause), otherwise 0.
 func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
-	r.mu.Lock()
-	prio := r.priority
-	r.mu.Unlock()
-	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch, prio)
+	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch, r.priorityList())
 	if err != nil {
 		if ctx.Err() == nil {
 			r.Log.WarnContext(ctx, "list tracks needing lyrics failed", logging.Err(err))

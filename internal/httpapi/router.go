@@ -57,6 +57,9 @@ type Options struct {
 	// LyricsLookup reports that the lyrics fetcher runs (LYRICS_ENABLED): only
 	// then is a song with no lyrics yet "pending" rather than null.
 	LyricsLookup bool
+	// LyricsWarmer, when set, is connected to this router so queue
+	// prefetch can warm the now-playing lyrics cache for upcoming tracks.
+	LyricsWarmer *LyricsWarmer
 }
 
 // Handler serves the public API.
@@ -91,6 +94,9 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 	if st != nil {
 		h.top = st
 		h.lyrics = st
+	}
+	if opts.LyricsWarmer != nil {
+		opts.LyricsWarmer.attach(h)
 	}
 
 	r := chi.NewRouter()

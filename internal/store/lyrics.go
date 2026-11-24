@@ -73,7 +73,10 @@ const searchTimeout = 5 * time.Second
 // track (the song playing now, "" = none) first, then tracks with no lyrics
 // row, then not-found and failed lookups whose retry is due; most recently
 // played first.
-func (q *Queries) TracksNeedingLyrics(ctx context.Context, limit int, priority string) ([]domain.LyricsCandidate, error) {
+func (q *Queries) TracksNeedingLyrics(ctx context.Context, limit int, priority []string) ([]domain.LyricsCandidate, error) {
+	if priority == nil {
+		priority = []string{}
+	}
 	rows, err := q.db.Query(ctx, `
 		SELECT t.id, t.name, a.name, COALESCE(al.name, ''), t.duration_ms, COALESCE(l.status, ''), COALESCE(l.attempts, 0)
 		FROM tracks t
@@ -85,7 +88,7 @@ func (q *Queries) TracksNeedingLyrics(ctx context.Context, limit int, priority s
 			WHERE h.track_id = t.id) p ON true
 		WHERE t.name <> '' AND (l.track_id IS NULL
 			OR (l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()))
-		ORDER BY (t.id = $2) DESC, (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST, t.id
+		ORDER BY COALESCE(array_position($2::text[], t.id), 2147483647), (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST, t.id
 		LIMIT $1`, limit, priority)
 	if err != nil {
 		return nil, fmt.Errorf("tracks needing lyrics: %w", err)

@@ -87,19 +87,19 @@ func TestPGTranslationQueue(t *testing.T) {
 	}
 
 	// Claim: priority first, then by last play; a live lease is skipped.
-	got, err := st.ClaimTranslations(ctx, "w1", "now", 10*time.Minute, 5)
+	got, err := st.ClaimTranslations(ctx, "w1", []string{"now"}, 10*time.Minute, 5)
 	if err != nil || len(got) != 2 || got[0].TrackID != "now" || got[1].TrackID != "recent" {
 		t.Fatalf("claim = %+v, %v", got, err)
 	}
 	if got[0].Name != "Song now" || got[0].Artist != "Artist" || !strings.Contains(got[0].Synced, "một") || got[0].SourceHash == "" {
 		t.Errorf("candidate = %+v", got[0])
 	}
-	if again, _ := st.ClaimTranslations(ctx, "w2", "", 10*time.Minute, 5); len(again) != 0 {
+	if again, _ := st.ClaimTranslations(ctx, "w2", nil, 10*time.Minute, 5); len(again) != 0 {
 		t.Fatalf("live leases claimed again: %+v", again)
 	}
 	// An expired lease is claimed again.
 	exec(t, pool, `UPDATE lyrics_translations SET claimed_until = now() - interval '1 second' WHERE track_id = 'recent'`)
-	if again, _ := st.ClaimTranslations(ctx, "w2", "", 10*time.Minute, 5); len(again) != 1 || again[0].TrackID != "recent" {
+	if again, _ := st.ClaimTranslations(ctx, "w2", nil, 10*time.Minute, 5); len(again) != 1 || again[0].TrackID != "recent" {
 		t.Fatalf("expired lease = %+v", again)
 	}
 
@@ -121,7 +121,7 @@ func TestPGTranslationQueue(t *testing.T) {
 		t.Errorf("re-queued during the lease: status %q, want pending", status)
 	}
 	// Claimed again (requested first), stored done this time.
-	c2, _ := st.ClaimTranslations(ctx, "w1", "", 10*time.Minute, 1)
+	c2, _ := st.ClaimTranslations(ctx, "w1", nil, 10*time.Minute, 1)
 	if len(c2) != 1 || c2[0].TrackID != "now" {
 		t.Fatalf("re-queued claim = %+v", c2)
 	}
@@ -138,7 +138,7 @@ func TestPGTranslationQueue(t *testing.T) {
 	if ok, _ := st.RequeueTranslation(ctx, "given"); !ok {
 		t.Fatal("requeue given-up")
 	}
-	gc, _ := st.ClaimTranslations(ctx, "w1", "", 10*time.Minute, 1)
+	gc, _ := st.ClaimTranslations(ctx, "w1", nil, 10*time.Minute, 1)
 	if len(gc) != 1 || gc[0].TrackID != "given" {
 		t.Fatalf("re-queued first = %+v", gc)
 	}
@@ -148,7 +148,7 @@ func TestPGTranslationQueue(t *testing.T) {
 	if err := st.ReleaseTranslation(ctx, "w1", "given"); err != nil {
 		t.Fatal(err)
 	}
-	gc, _ = st.ClaimTranslations(ctx, "w2", "", 10*time.Minute, 1)
+	gc, _ = st.ClaimTranslations(ctx, "w2", nil, 10*time.Minute, 1)
 	if len(gc) != 1 || gc[0].TrackID != "given" {
 		t.Fatalf("after release: %+v, want the re-queued song first again", gc)
 	}

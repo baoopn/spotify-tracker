@@ -18,7 +18,7 @@ import (
 type Store interface {
 	EnqueueTranslation(ctx context.Context, trackID string) (bool, error)
 	EnqueueRecentTranslations(ctx context.Context, window time.Duration) (int64, error)
-	ClaimTranslations(ctx context.Context, owner, priority string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error)
+	ClaimTranslations(ctx context.Context, owner string, priority []string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error)
 	SetTranslation(ctx context.Context, owner, trackID, sourceHash string, r domain.Translation) (bool, error)
 	DeferTranslation(ctx context.Context, owner, trackID, sourceHash, status string, next *time.Time, lastErr string) error
 	ReleaseTranslation(ctx context.Context, owner, trackID string) error
@@ -39,8 +39,10 @@ const (
 )
 
 // Worker translates queued songs one at a time. Songs are queued only when
-// they play (Wake with the song playing now, or a play within RecentWindow)
-// or when an admin re-queues them; the library is never backfilled. Each
+// they play (Wake with the song playing now, or a play within RecentWindow),
+// when they are next in the Spotify queue (EnqueueUpcoming, so the
+// translation is ready when they start), or when an admin re-queues them;
+// the library is never backfilled. Each
 // song is claimed with a lease, so replicas never translate the same song.
 type Worker struct {
 	Store      Store
@@ -63,8 +65,10 @@ type Worker struct {
 
 	wake       chan struct{}
 	mu         sync.Mutex
-	priority   string // the song playing now: claimed first
-	enqueued   string // the last priority song queued
+	priority   string          // the song playing now: claimed first
+	enqueued   string          // the last priority song queued
+	upcoming   []string        // the next songs of the Spotify queue, claimed after the priority song
+	upQueued   map[string]bool // upcoming songs that have a translation row
 	badBatches int
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration, wake <-chan struct{}) bool
@@ -102,6 +106,29 @@ func (w *Worker) LyricsFound(trackID string) {
 	if trackID == w.priority {
 		w.enqueued = ""
 	}
+	delete(w.upQueued, trackID)
+	w.mu.Unlock()
+	w.Nudge()
+}
+
+// EnqueueUpcoming tells the worker which songs are next in the user's Spotify
+// queue: they are queued (when they have lyrics) and translated right after
+// the song playing now. This is the one exception to "queued when played":
+// a song that is then skipped still costs a call, within the caps. Never
+// blocks.
+func (w *Worker) EnqueueUpcoming(trackIDs []string) {
+	if len(trackIDs) == 0 {
+		return
+	}
+	w.mu.Lock()
+	w.upcoming = append([]string(nil), trackIDs...)
+	keep := map[string]bool{}
+	for _, id := range w.upcoming {
+		if w.upQueued[id] {
+			keep[id] = true
+		}
+	}
+	w.upQueued = keep
 	w.mu.Unlock()
 	w.Nudge()
 }
@@ -183,29 +210,59 @@ func (w *Worker) RunOnce(ctx context.Context) time.Duration {
 	return 0
 }
 
-// enqueuePriority queues the song playing now once and returns its id.
-func (w *Worker) enqueuePriority(ctx context.Context) string {
+// enqueuePriority queues the song playing now and the upcoming songs (each
+// once it has a row) and returns the claim order: the song playing now, then
+// the upcoming songs.
+func (w *Worker) enqueuePriority(ctx context.Context) []string {
 	w.mu.Lock()
 	prio, done := w.priority, w.priority == w.enqueued
-	w.mu.Unlock()
-	if prio == "" || done {
-		return prio
+	upcoming := append([]string(nil), w.upcoming...)
+	var todo []string
+	for _, id := range upcoming {
+		if id != prio && !w.upQueued[id] {
+			todo = append(todo, id)
+		}
 	}
-	queued, err := w.Store.EnqueueTranslation(ctx, prio)
+	w.mu.Unlock()
+	order := make([]string, 0, 1+len(upcoming))
+	if prio != "" {
+		order = append(order, prio)
+		if !done && w.enqueue(ctx, prio) {
+			w.mu.Lock()
+			if w.priority == prio {
+				w.enqueued = prio
+			}
+			w.mu.Unlock()
+		}
+	}
+	for _, id := range todo {
+		if w.enqueue(ctx, id) { // no row yet (no lyrics): try again next batch or on LyricsFound
+			w.mu.Lock()
+			if w.upQueued == nil {
+				w.upQueued = map[string]bool{}
+			}
+			w.upQueued[id] = true
+			w.mu.Unlock()
+		}
+	}
+	for _, id := range upcoming {
+		if id != prio {
+			order = append(order, id)
+		}
+	}
+	return order
+}
+
+// enqueue queues one song; it reports whether the song has a row now.
+func (w *Worker) enqueue(ctx context.Context, trackID string) bool {
+	queued, err := w.Store.EnqueueTranslation(ctx, trackID)
 	if err != nil {
 		if ctx.Err() == nil {
-			w.Log.WarnContext(ctx, "enqueue translation failed", slog.String("track_id", prio), logging.Err(err))
+			w.Log.WarnContext(ctx, "enqueue translation failed", slog.String("track_id", trackID), logging.Err(err))
 		}
-		return prio
+		return false
 	}
-	if queued { // no row yet (no lyrics): try again next batch or on LyricsFound
-		w.mu.Lock()
-		if w.priority == prio {
-			w.enqueued = prio
-		}
-		w.mu.Unlock()
-	}
-	return prio
+	return queued
 }
 
 type outcome int

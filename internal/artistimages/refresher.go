@@ -40,23 +40,37 @@ type Refresher struct {
 	MaxAge   time.Duration
 
 	sleep func(ctx context.Context, d time.Duration) bool
+	wake  chan struct{}
 }
 
 // New returns a Refresher with production defaults: up to 30 lookups a
 // minute, profiles re-checked every 30 days.
 func New(st Store, f Fetcher, log *slog.Logger) *Refresher {
 	return &Refresher{Store: st, Fetcher: f, Log: log, Interval: time.Minute,
-		Spacing: 2 * time.Second, Batch: 25, MaxAge: 30 * 24 * time.Hour}
+		Spacing: 2 * time.Second, Batch: 25, MaxAge: 30 * 24 * time.Hour, wake: make(chan struct{}, 1)}
+}
+
+// Wake starts the next batch now (queue prefetch: an upcoming track may
+// bring a new album or artist). A rate-limit pause is not cut short. Never
+// blocks.
+func (r *Refresher) Wake() {
+	if r.wake == nil {
+		return
+	}
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Run processes batches until ctx is done.
 func (r *Refresher) Run(ctx context.Context) error {
 	for {
-		wait := r.Interval
+		wait, wake := r.Interval, r.wake
 		if pause := r.RunOnce(ctx); pause > wait {
-			wait = pause
+			wait, wake = pause, nil // a rate-limit pause is not cut short
 		}
-		if !r.wait(ctx, wait) {
+		if !r.waitWake(ctx, wait, wake) {
 			return nil
 		}
 	}
@@ -123,6 +137,23 @@ func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
 		r.Log.InfoContext(ctx, "artist profiles refreshed", slog.Int("looked_up", len(ids)), slog.Int("with_image", stored))
 	}
 	return 0
+}
+
+// waitWake is wait that a signal on wake (nil = none) ends early.
+func (r *Refresher) waitWake(ctx context.Context, d time.Duration, wake <-chan struct{}) bool {
+	if r.sleep != nil {
+		return r.sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	case <-wake:
+		return true
+	}
 }
 
 func (r *Refresher) wait(ctx context.Context, d time.Duration) bool {

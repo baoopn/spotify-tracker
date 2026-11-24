@@ -93,7 +93,7 @@ var publicTools = []toolDef{
 var adminTools = []toolDef{
 	{name: "admin_overview", title: "Admin overview", path: "/overview",
 		desc: "Service health (api, poller, enricher, postgres, redis), now playing, all-time and 7-day summaries, " +
-			"enrichment queue counts and Spotify connection status."},
+			"enrichment queue counts, Spotify connection status, and up_next: the next tracks of the Spotify queue (private, null when none)."},
 	{name: "admin_spotify_status", title: "Spotify connection", path: "/spotify",
 		desc: "Spotify connection status: connected account, scopes, authorization date, refresh-token expiry, last error. " +
 			"Contains no tokens."},

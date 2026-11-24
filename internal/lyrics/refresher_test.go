@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,10 +24,10 @@ type fakeStore struct {
 	setErr   error
 	set      map[string]domain.Lyrics
 	deferred []deferred
-	priority string // last priority asked for
+	priority []string // last priority asked for
 }
 
-func (f *fakeStore) TracksNeedingLyrics(_ context.Context, limit int, priority string) ([]domain.LyricsCandidate, error) {
+func (f *fakeStore) TracksNeedingLyrics(_ context.Context, limit int, priority []string) ([]domain.LyricsCandidate, error) {
 	f.priority = priority
 	if f.listErr != nil {
 		return nil, f.listErr
@@ -313,7 +314,7 @@ func TestRefresherWake(t *testing.T) {
 		t.Fatalf("wake signals = %d, want 1", len(r.wake))
 	}
 	r.RunOnce(context.Background())
-	if st.priority != "now" {
+	if !slices.Equal(st.priority, []string{"now"}) {
 		t.Errorf("priority = %q", st.priority)
 	}
 	if len(found) != 1 || found[0] != "now" {
@@ -325,7 +326,28 @@ func TestRefresherWake(t *testing.T) {
 		t.Error("same song woke the refresher again")
 	}
 	r.Wake("")
-	if len(r.wake) != 0 || st.priority != "now" {
+	if len(r.wake) != 0 || !slices.Equal(st.priority, []string{"now"}) {
 		t.Error("empty id must be ignored")
+	}
+}
+
+// WakeUpcoming puts the queued songs right after the song playing now and
+// starts the next batch early.
+func TestRefresherWakeUpcoming(t *testing.T) {
+	st := &fakeStore{}
+	r := New(st, &fakeSource{}, slog.New(slog.DiscardHandler))
+	r.Wake("now")
+	<-r.wake
+	r.WakeUpcoming([]string{"next1", "now", "next2"})
+	if len(r.wake) != 1 {
+		t.Fatalf("wake signals = %d", len(r.wake))
+	}
+	r.RunOnce(context.Background())
+	if want := []string{"now", "next1", "next2"}; !slices.Equal(st.priority, want) {
+		t.Errorf("priority = %q, want %q", st.priority, want)
+	}
+	r.WakeUpcoming(nil)
+	if len(r.wake) != 1 {
+		t.Error("empty list must not wake")
 	}
 }

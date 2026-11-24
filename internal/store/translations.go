@@ -94,16 +94,20 @@ func (q *Queries) EnqueueRecentTranslations(ctx context.Context, window time.Dur
 }
 
 // ClaimTranslations leases up to limit queued songs to owner for lease and
-// returns them in queue order: the priority track (the song playing now)
-// first, then re-queued songs (newest request first), then by last play.
+// returns them in queue order: the priority tracks in their order (the song
+// playing now, then the upcoming queue), then re-queued songs (newest
+// request first), then by last play.
 // Rows locked or leased by another worker are skipped.
-func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error) {
+func (q *Queries) ClaimTranslations(ctx context.Context, owner string, priority []string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error) {
+	if priority == nil {
+		priority = []string{}
+	}
 	rows, err := q.db.Query(ctx, `
 		WITH pick AS (
 			SELECT tr.track_id, t.name, COALESCE(a.name, '') AS artist, COALESCE(l.synced_lyrics, '') AS synced,
 				COALESCE(l.plain_lyrics, '') AS plain, `+srcHashSQL+` AS hash, tr.status, tr.attempts,
 				tr.source_hash <> `+srcHashSQL+` AS stale,
-				(tr.track_id = $2) AS prio, tr.requested_at, p.last_played
+				COALESCE(array_position($2::text[], tr.track_id), 2147483647) AS prio, tr.requested_at, p.last_played
 			FROM lyrics_translations tr
 			JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'
 			JOIN tracks t ON t.id = tr.track_id
@@ -112,7 +116,7 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 			LEFT JOIN LATERAL (SELECT MAX(h.played_at) AS last_played FROM listening_history h
 				WHERE h.track_id = tr.track_id) p ON true
 			WHERE `+claimableSQL+`
-			ORDER BY (tr.track_id = $2) DESC, tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST, tr.track_id
+			ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647), tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST, tr.track_id
 			LIMIT $4
 			FOR UPDATE OF tr SKIP LOCKED)
 		UPDATE lyrics_translations tr SET claimed_by = $1, claimed_until = now() + $3::interval,
@@ -127,7 +131,7 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 	defer rows.Close()
 	type claimed struct {
 		c         domain.TranslationCandidate
-		prio      bool
+		prio      int32
 		requested *time.Time
 		played    *time.Time
 	}
@@ -147,7 +151,7 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 	sort.SliceStable(got, func(i, j int) bool {
 		a, b := got[i], got[j]
 		if a.prio != b.prio {
-			return a.prio
+			return a.prio < b.prio
 		}
 		if c := cmpTimeDesc(a.requested, b.requested); c != 0 {
 			return c < 0

@@ -202,17 +202,21 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	adminAPI.TopPlaylistsConfig = topCfg
 
 	lyricsRefresher, translator := newLyricsQueue(cfg, st, svc, adminAPI, log)
+	images, albums := artistimages.New(st, mgr, log), albumdetails.New(st, mgr, log)
+	warmer := &httpapi.LyricsWarmer{}
+	hookPrefetch(cfg, svc, prefetchHooks{lyrics: lyricsRefresher, translator: translator,
+		albums: albums, images: images, warmer: warmer}, log)
 
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
 		ops:          opsSrv,
-		http:         newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), topCfg, brandCache, log),
+		http:         newHTTPServer(cfg, st, rdb, recorder, adminAPI, newAuthenticator(cfg, rdb, log), topCfg, brandCache, warmer, log),
 		grpc:         grpcSrv,
 		health:       hs,
 		alerts:       checker,
 		analytics:    recorder,
-		images:       artistimages.New(st, mgr, log),
-		albums:       albumdetails.New(st, mgr, log),
+		images:       images,
+		albums:       albums,
 		lyrics:       lyricsRefresher,
 		translator:   translator,
 		topPlaylists: topRunner,
@@ -340,7 +344,7 @@ func newAuthenticator(cfg config.API, rdb *redis.Client, log *slog.Logger) *admi
 // files and the public site at /.
 func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder *analytics.Recorder,
 	adminAPI *admin.API, auth *admin.Authenticator, topCfg topplaylists.Config, brand *brandkit.Cache,
-	log *slog.Logger) *http.Server {
+	warmer *httpapi.LyricsWarmer, log *slog.Logger) *http.Server {
 	return &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(st, rdb, log, httpapi.Options{
@@ -365,6 +369,7 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			Translation:           cfg.Translate.Enabled,
 			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
 			LyricsLookup:          cfg.Lyrics.Enabled,
+			LyricsWarmer:          warmer,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

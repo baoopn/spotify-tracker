@@ -64,18 +64,13 @@ func (s *Service) RecordPlayback(ctx context.Context, pb domain.Playback) (Recor
 	}
 	pb = normalizePlayback(pb)
 
-	prev, err := s.loadListen(ctx, pb.FetchedAt)
-	if err != nil {
-		s.log.WarnContext(ctx, "load playback state failed; assuming none", logging.Err(err))
-	}
-	listen, decision := Step(prev, Snapshot{
-		TrackID: pb.Track.ID, ProgressMS: pb.ProgressMS, DurationMS: pb.Track.DurationMS,
-		IsPlaying: pb.IsPlaying, PlayedAt: pb.PlayedAt, At: pb.FetchedAt,
-	}, s.rules)
 	catalogKnown := s.catalogKnown(ctx, pb.Track.ID)
 
-	var res RecordResult
-	err = s.store.InTx(ctx, func(q *store.Queries) error {
+	var (
+		res        RecordResult
+		usedLegacy bool
+	)
+	err := s.store.InTx(ctx, func(q *store.Queries) error {
 		if !catalogKnown {
 			queued, err := upsertCatalog(ctx, q, pb)
 			if err != nil {
@@ -83,16 +78,21 @@ func (s *Service) RecordPlayback(ctx context.Context, pb domain.Playback) (Recor
 			}
 			res.EnrichmentQueued = queued
 		}
-		if err := q.SetCurrentPlayback(ctx, pb.Track.ID, pb.IsPlaying, pb.ProgressMS, pb.FetchedAt); err != nil {
-			return err
-		}
-		return applyHistory(ctx, q, pb, decision, &res)
+		var err error
+		_, usedLegacy, err = recordListen(ctx, q, s.loadLegacyListen, pb, s.rules, &res)
+		return err
 	})
 	if err != nil {
 		return res, fmt.Errorf("record playback: %w", err)
 	}
 
-	s.afterRecord(ctx, pb, listen, res, catalogKnown)
+	if usedLegacy {
+		// listen_state has the listen now; the Redis copy is never read again.
+		if err := s.rdb.Del(ctx, redisx.KeyPlaybackState).Err(); err != nil {
+			s.log.WarnContext(ctx, "delete legacy playback state failed", logging.Err(err))
+		}
+	}
+	s.afterRecord(ctx, pb, res, catalogKnown)
 	return res, nil
 }
 
@@ -136,9 +136,18 @@ func upsertCatalog(ctx context.Context, q *store.Queries, pb domain.Playback) (b
 	return q.EnsureTrackFeatures(ctx, pb.Track.ID, pb.Track.ISRC)
 }
 
-// applyHistory appends a history row or counts a replay, per decision.
-func applyHistory(ctx context.Context, q *store.Queries, pb domain.Playback, d Decision, res *RecordResult) error {
-	if d.Replay {
+// applyHistory appends a history row or counts a replay, per decision. A
+// replay goes to the row of the listen it repeats (d.RowAt), or to the
+// latest row of the track when that row is unknown.
+func applyHistory(ctx context.Context, q playbackTx, pb domain.Playback, d Decision, res *RecordResult) error {
+	if d.Replay && !d.RowAt.IsZero() {
+		incremented, err := q.IncrementReplayAt(ctx, pb.Track.ID, d.RowAt, pb.FetchedAt)
+		if err != nil {
+			return err
+		}
+		res.ReplayIncremented = incremented
+	}
+	if d.Replay && d.RowAt.IsZero() {
 		incremented, err := incrementReplayIfLatest(ctx, q, pb)
 		if err != nil {
 			return err
@@ -157,7 +166,7 @@ func applyHistory(ctx context.Context, q *store.Queries, pb domain.Playback, d D
 
 // incrementReplayIfLatest bumps the replay count when the newest history
 // row is the same track.
-func incrementReplayIfLatest(ctx context.Context, q *store.Queries, pb domain.Playback) (bool, error) {
+func incrementReplayIfLatest(ctx context.Context, q playbackTx, pb domain.Playback) (bool, error) {
 	id, trackID, err := q.LatestHistory(ctx)
 	if errors.Is(err, domain.ErrNotFound) || (err == nil && trackID != pb.Track.ID) {
 		return false, nil
@@ -173,12 +182,9 @@ func incrementReplayIfLatest(ctx context.Context, q *store.Queries, pb domain.Pl
 
 // afterRecord runs best-effort post-commit side effects. Failures are logged,
 // never returned: the database is the source of truth.
-func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, listen Listen, res RecordResult, catalogKnown bool) {
+func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, res RecordResult, catalogKnown bool) {
 	if !catalogKnown {
 		_ = s.rdb.Set(ctx, redisx.KeyCatalogSeen(pb.Track.ID), 1, catalogSeenTTL).Err()
-	}
-	if err := s.saveListen(ctx, listen); err != nil {
-		s.log.WarnContext(ctx, "save playback state failed", logging.Err(err))
 	}
 	if res.EnrichmentQueued {
 		s.queueEnrichment(ctx, pb.Track.ID, pb.Track.ISRC)

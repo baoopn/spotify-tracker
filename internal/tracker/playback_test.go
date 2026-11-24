@@ -206,3 +206,124 @@ func TestDefaultsApplyToZeroRules(t *testing.T) {
 		t.Fatalf("first snapshot decided %+v", d)
 	}
 }
+
+func TestSeekDuringGapIsNotCounted(t *testing.T) {
+	p := newPlayer(t)
+	p.play("a", 0, 6, song, t0)
+	before := p.listen.ListenedMS
+	// No snapshots for 25 s (rate limited); meanwhile the user seeked to
+	// 150 s, 2 s ago. Only those 2 s (plus slack) count.
+	p.now = p.now.Add(25 * time.Second)
+	p.snap(0, "a", ptr(152_000), song, true, p.now.Add(-2*time.Second))
+	if got := p.listen.ListenedMS - before; got > 4_000 {
+		t.Fatalf("credited %d ms for a seek in a gap", got)
+	}
+}
+
+func TestFullListenCountsAtMaxFraction(t *testing.T) {
+	r := rules
+	r.MinFraction = 0.9
+	for _, dur := range []int32{12_000, 30_000, 200_000, 600_000} {
+		var l Listen
+		now := t0
+		counted := 0
+		// Polled every 3 s from a 1 s first snapshot; the last snapshot lands
+		// up to 3 s before the end, then the next track starts.
+		for p := int32(1_000); p < dur; p += 3_000 {
+			var d Decision
+			l, d = Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(p), DurationMS: dur, IsPlaying: true, PlayedAt: t0, At: now}, r)
+			if d.NewHistory {
+				counted++
+			}
+			now = now.Add(3 * time.Second)
+		}
+		if counted != 1 {
+			t.Errorf("duration %d ms: counted %d times, want 1", dur, counted)
+		}
+	}
+}
+
+func TestThresholdBoundary(t *testing.T) {
+	need := needMS(song, 0.3) // 60 s less the 5 s tolerance
+	if need != 55_000 {
+		t.Fatalf("need = %d", need)
+	}
+	l := Listen{TrackID: "a", StartedAt: t0, ProgressMS: ptr(0), ListenedMS: need - 1_000, LastSeen: t0}
+	l2, d := Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(999), DurationMS: song, IsPlaying: true, At: t0.Add(time.Second)}, rules)
+	if d != (Decision{}) || l2.ListenedMS != need-1 {
+		t.Fatalf("1 ms short counted: %+v, listened %d", d, l2.ListenedMS)
+	}
+	_, d = Step(l2, Snapshot{TrackID: "a", ProgressMS: ptr(1_000), DurationMS: song, IsPlaying: true, At: t0.Add(2 * time.Second)}, rules)
+	if !d.NewHistory || !d.PlayedAt.Equal(t0) {
+		t.Fatalf("exactly at the threshold: %+v", d)
+	}
+}
+
+func TestOutOfOrderSnapshotIsIgnored(t *testing.T) {
+	p := newPlayer(t)
+	p.play("a", 0, 30, song, t0)
+	before := p.listen
+	l, d := Step(p.listen, Snapshot{TrackID: "b", ProgressMS: ptr(1_000), DurationMS: song, IsPlaying: true, At: p.now.Add(-time.Second)}, rules)
+	if d != (Decision{}) || l.TrackID != "a" || l.ListenedMS != before.ListenedMS {
+		t.Fatalf("an older snapshot changed the listen: %+v %+v", l, d)
+	}
+}
+
+func TestNilProgressAcrossRestart(t *testing.T) {
+	// State saved without progress (e.g. the snapshot lacked it), then the
+	// API restarts: the next snapshot with progress just continues.
+	l := Listen{TrackID: "a", StartedAt: t0, ListenedMS: 40_000, LastSeen: t0}
+	l, d := Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(45_000), DurationMS: song, IsPlaying: true, At: t0.Add(3 * time.Second)}, rules)
+	if d != (Decision{}) || l.ListenedMS != 40_000 || *l.ProgressMS != 45_000 {
+		t.Fatalf("listen = %+v, decision %+v", l, d)
+	}
+	l, d = Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(60_000), DurationMS: song, IsPlaying: true, At: t0.Add(18 * time.Second)}, rules)
+	if !d.NewHistory {
+		t.Fatalf("did not count after progress returned: %+v (listened %d)", d, l.ListenedMS)
+	}
+}
+
+func TestShortSongRepeatOneLoop(t *testing.T) {
+	const short = 12_000 // 12 s: the loop jump (11 s -> 2 s) is under the 10 s threshold + start
+	p := newPlayer(t)
+	for i := 0; i < 3; i++ {
+		for _, prog := range []int32{2_000, 5_000, 8_000, 11_000} {
+			p.snap(3*time.Second, "a", ptr(prog), short, true, t0)
+		}
+	}
+	p.want(1, 2)
+}
+
+func TestReplayTargetsTheCountedRow(t *testing.T) {
+	p := newPlayer(t)
+	start := t0.Add(-time.Second)
+	p.play("a", 0, 120, song, start)
+	_, d := Step(p.listen, Snapshot{TrackID: "a", ProgressMS: ptr(1_000), DurationMS: song, IsPlaying: true, PlayedAt: p.now, At: p.now.Add(time.Second)}, rules)
+	if d != (Decision{}) {
+		t.Fatalf("restart decided %+v", d)
+	}
+	p.play("a", 0, 90, song, p.now)
+	if p.replays != 1 {
+		t.Fatalf("replays = %d", p.replays)
+	}
+	if !p.listen.RowAt.Equal(start) {
+		t.Fatalf("replay row = %v, want the first listen %v", p.listen.RowAt, start)
+	}
+}
+
+func TestRetriedSnapshotDoesNotCountTwice(t *testing.T) {
+	l := Listen{TrackID: "a", StartedAt: t0, ProgressMS: ptr(50_000), ListenedMS: 54_000, LastSeen: t0}
+	s := Snapshot{TrackID: "a", ProgressMS: ptr(53_000), DurationMS: song, IsPlaying: true, At: t0.Add(3 * time.Second)}
+	l, d := Step(l, s, rules)
+	if !d.NewHistory {
+		t.Fatalf("first: %+v", d)
+	}
+	if _, d = Step(l, s, rules); d != (Decision{}) {
+		t.Fatalf("retried snapshot decided %+v", d)
+	}
+	// Even a counted flag lost (state saved before the flag) is caught.
+	l.Counted = false
+	if _, d = Step(l, s, rules); d != (Decision{}) {
+		t.Fatalf("already-applied listen decided %+v", d)
+	}
+}

@@ -30,7 +30,8 @@ func TestPlayCountValidation(t *testing.T) {
 		ok         bool
 	}{
 		{"PLAY_COUNT_MIN_FRACTION", "0.5", true},
-		{"PLAY_COUNT_MIN_FRACTION", "1", true},
+		{"PLAY_COUNT_MIN_FRACTION", "0.9", true},
+		{"PLAY_COUNT_MIN_FRACTION", "1", false},
 		{"PLAY_COUNT_MIN_FRACTION", "0.05", true},
 		{"PLAY_COUNT_MIN_FRACTION", "0.01", false},
 		{"PLAY_COUNT_MIN_FRACTION", "1.5", false},
@@ -38,6 +39,8 @@ func TestPlayCountValidation(t *testing.T) {
 		{"PLAY_RESUME_WINDOW", "30s", false},
 		{"PLAY_RESUME_WINDOW", "721h", false},
 		{"REPLAY_RESET_THRESHOLD", "0s", false},
+		{"REPLAY_RESET_THRESHOLD", "10m", true},
+		{"REPLAY_RESET_THRESHOLD", "11m", false},
 	}
 	for _, c := range cases {
 		t.Run(c.key+"="+c.value, func(t *testing.T) {

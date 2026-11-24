@@ -358,11 +358,11 @@ func (a *API) validate() error {
 	if a.EnrichMaxAttempts <= 0 {
 		return fmt.Errorf("ENRICH_MAX_ATTEMPTS must be > 0")
 	}
-	if a.ReplayResetThreshold <= 0 {
-		return fmt.Errorf("REPLAY_RESET_THRESHOLD must be > 0")
+	if a.ReplayResetThreshold <= 0 || a.ReplayResetThreshold > 10*time.Minute {
+		return fmt.Errorf("REPLAY_RESET_THRESHOLD must be between 1ms and 10m")
 	}
-	if a.PlayCountMinFraction < 0.05 || a.PlayCountMinFraction > 1 {
-		return fmt.Errorf("PLAY_COUNT_MIN_FRACTION must be between 0.05 and 1")
+	if a.PlayCountMinFraction < 0.05 || a.PlayCountMinFraction > 0.9 {
+		return fmt.Errorf("PLAY_COUNT_MIN_FRACTION must be between 0.05 and 0.9")
 	}
 	if a.PlayResumeWindow < time.Minute || a.PlayResumeWindow > 30*24*time.Hour {
 		return fmt.Errorf("PLAY_RESUME_WINDOW must be between 1m and 720h")

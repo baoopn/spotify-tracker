@@ -40,6 +40,10 @@ type Poller struct {
 	log      *slog.Logger
 
 	lastSuccess atomic.Int64 // unix nanos
+	// pauseUntil (unix nanos) holds every Spotify call back after a rate
+	// limit on another endpoint (the limit is app wide).
+	pauseUntil  atomic.Int64
+	prefetch    *prefetcher // nil = queue prefetch off
 	wasPlaying  bool
 	lastTrackID string
 }
@@ -74,6 +78,13 @@ func (p *Poller) Run(ctx context.Context) error {
 			p.log.Info("poller stopped")
 			return nil
 		case <-timer.C:
+		}
+
+		if until := time.Until(time.Unix(0, p.pauseUntil.Load())); until > 0 {
+			if !sleepCtx(ctx, until) {
+				p.log.Info("poller stopped")
+				return nil
+			}
 		}
 
 		detail, err := p.cycle(ctx)
@@ -128,6 +139,9 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 			p.log.Info("nothing playing")
 		}
 		p.wasPlaying, p.lastTrackID = false, ""
+		if p.prefetch != nil {
+			p.prefetch.idle()
+		}
 		return "idle", nil
 	}
 
@@ -146,5 +160,20 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 			slog.String("state", state), slog.Bool("history_created", res.GetHistoryCreated()))
 	}
 	p.wasPlaying, p.lastTrackID = pb.IsPlaying, pb.Track.ID
+	if p.prefetch != nil && pb.IsPlaying {
+		p.prefetch.kick(ctx, pb.Track.ID)
+	}
 	return state + ": " + pb.Track.Name, nil
+}
+
+// sleepCtx waits for d; false when ctx ended first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }

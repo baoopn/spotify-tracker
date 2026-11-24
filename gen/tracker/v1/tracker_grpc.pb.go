@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IngestService_RecordPlayback_FullMethodName = "/tracker.v1.IngestService/RecordPlayback"
-	IngestService_ClearPlayback_FullMethodName  = "/tracker.v1.IngestService/ClearPlayback"
+	IngestService_RecordPlayback_FullMethodName   = "/tracker.v1.IngestService/RecordPlayback"
+	IngestService_ClearPlayback_FullMethodName    = "/tracker.v1.IngestService/ClearPlayback"
+	IngestService_PrefetchUpcoming_FullMethodName = "/tracker.v1.IngestService/PrefetchUpcoming"
 )
 
 // IngestServiceClient is the client API for IngestService service.
@@ -37,6 +38,11 @@ type IngestServiceClient interface {
 	RecordPlayback(ctx context.Context, in *RecordPlaybackRequest, opts ...grpc.CallOption) (*RecordPlaybackResponse, error)
 	// ClearPlayback marks that nothing is currently playing.
 	ClearPlayback(ctx context.Context, in *ClearPlaybackRequest, opts ...grpc.CallOption) (*ClearPlaybackResponse, error)
+	// PrefetchUpcoming stores the next tracks of the user's Spotify queue
+	// (catalog only: never a play, history row, replay or play count) and
+	// starts lyrics, translation and metadata lookups for them. It also
+	// replaces the private "up next" list shown in the admin overview.
+	PrefetchUpcoming(ctx context.Context, in *PrefetchUpcomingRequest, opts ...grpc.CallOption) (*PrefetchUpcomingResponse, error)
 }
 
 type ingestServiceClient struct {
@@ -67,6 +73,16 @@ func (c *ingestServiceClient) ClearPlayback(ctx context.Context, in *ClearPlayba
 	return out, nil
 }
 
+func (c *ingestServiceClient) PrefetchUpcoming(ctx context.Context, in *PrefetchUpcomingRequest, opts ...grpc.CallOption) (*PrefetchUpcomingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PrefetchUpcomingResponse)
+	err := c.cc.Invoke(ctx, IngestService_PrefetchUpcoming_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IngestServiceServer is the server API for IngestService service.
 // All implementations must embed UnimplementedIngestServiceServer
 // for forward compatibility.
@@ -81,6 +97,11 @@ type IngestServiceServer interface {
 	RecordPlayback(context.Context, *RecordPlaybackRequest) (*RecordPlaybackResponse, error)
 	// ClearPlayback marks that nothing is currently playing.
 	ClearPlayback(context.Context, *ClearPlaybackRequest) (*ClearPlaybackResponse, error)
+	// PrefetchUpcoming stores the next tracks of the user's Spotify queue
+	// (catalog only: never a play, history row, replay or play count) and
+	// starts lyrics, translation and metadata lookups for them. It also
+	// replaces the private "up next" list shown in the admin overview.
+	PrefetchUpcoming(context.Context, *PrefetchUpcomingRequest) (*PrefetchUpcomingResponse, error)
 	mustEmbedUnimplementedIngestServiceServer()
 }
 
@@ -96,6 +117,9 @@ func (UnimplementedIngestServiceServer) RecordPlayback(context.Context, *RecordP
 }
 func (UnimplementedIngestServiceServer) ClearPlayback(context.Context, *ClearPlaybackRequest) (*ClearPlaybackResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClearPlayback not implemented")
+}
+func (UnimplementedIngestServiceServer) PrefetchUpcoming(context.Context, *PrefetchUpcomingRequest) (*PrefetchUpcomingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrefetchUpcoming not implemented")
 }
 func (UnimplementedIngestServiceServer) mustEmbedUnimplementedIngestServiceServer() {}
 func (UnimplementedIngestServiceServer) testEmbeddedByValue()                       {}
@@ -154,6 +178,24 @@ func _IngestService_ClearPlayback_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IngestService_PrefetchUpcoming_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrefetchUpcomingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).PrefetchUpcoming(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_PrefetchUpcoming_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).PrefetchUpcoming(ctx, req.(*PrefetchUpcomingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IngestService_ServiceDesc is the grpc.ServiceDesc for IngestService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -168,6 +210,10 @@ var IngestService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClearPlayback",
 			Handler:    _IngestService_ClearPlayback_Handler,
+		},
+		{
+			MethodName: "PrefetchUpcoming",
+			Handler:    _IngestService_PrefetchUpcoming_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

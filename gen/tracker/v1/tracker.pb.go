@@ -761,6 +761,202 @@ func (*ClearPlaybackResponse) Descriptor() ([]byte, []int) {
 	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{10}
 }
 
+// UpcomingTrack is one track of the user's Spotify queue.
+type UpcomingTrack struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 0 = plays next.
+	Position int32  `protobuf:"varint,1,opt,name=position,proto3" json:"position,omitempty"`
+	Track    *Track `protobuf:"bytes,2,opt,name=track,proto3" json:"track,omitempty"`
+	Album    *Album `protobuf:"bytes,3,opt,name=album,proto3" json:"album,omitempty"`
+	// Artists in Spotify credit order.
+	Artists []*Artist `protobuf:"bytes,4,rep,name=artists,proto3" json:"artists,omitempty"`
+	// False: already prefetched recently, listed only.
+	Prefetch      bool `protobuf:"varint,5,opt,name=prefetch,proto3" json:"prefetch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpcomingTrack) Reset() {
+	*x = UpcomingTrack{}
+	mi := &file_tracker_v1_tracker_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpcomingTrack) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpcomingTrack) ProtoMessage() {}
+
+func (x *UpcomingTrack) ProtoReflect() protoreflect.Message {
+	mi := &file_tracker_v1_tracker_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpcomingTrack.ProtoReflect.Descriptor instead.
+func (*UpcomingTrack) Descriptor() ([]byte, []int) {
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *UpcomingTrack) GetPosition() int32 {
+	if x != nil {
+		return x.Position
+	}
+	return 0
+}
+
+func (x *UpcomingTrack) GetTrack() *Track {
+	if x != nil {
+		return x.Track
+	}
+	return nil
+}
+
+func (x *UpcomingTrack) GetAlbum() *Album {
+	if x != nil {
+		return x.Album
+	}
+	return nil
+}
+
+func (x *UpcomingTrack) GetArtists() []*Artist {
+	if x != nil {
+		return x.Artists
+	}
+	return nil
+}
+
+func (x *UpcomingTrack) GetPrefetch() bool {
+	if x != nil {
+		return x.Prefetch
+	}
+	return false
+}
+
+type PrefetchUpcomingRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The track playing now (excluded from the list).
+	CurrentTrackId string `protobuf:"bytes,1,opt,name=current_track_id,json=currentTrackId,proto3" json:"current_track_id,omitempty"`
+	// At most 20; empty means the queue is empty.
+	Tracks        []*UpcomingTrack       `protobuf:"bytes,2,rep,name=tracks,proto3" json:"tracks,omitempty"`
+	FetchedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=fetched_at,json=fetchedAt,proto3" json:"fetched_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrefetchUpcomingRequest) Reset() {
+	*x = PrefetchUpcomingRequest{}
+	mi := &file_tracker_v1_tracker_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrefetchUpcomingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrefetchUpcomingRequest) ProtoMessage() {}
+
+func (x *PrefetchUpcomingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tracker_v1_tracker_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrefetchUpcomingRequest.ProtoReflect.Descriptor instead.
+func (*PrefetchUpcomingRequest) Descriptor() ([]byte, []int) {
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PrefetchUpcomingRequest) GetCurrentTrackId() string {
+	if x != nil {
+		return x.CurrentTrackId
+	}
+	return ""
+}
+
+func (x *PrefetchUpcomingRequest) GetTracks() []*UpcomingTrack {
+	if x != nil {
+		return x.Tracks
+	}
+	return nil
+}
+
+func (x *PrefetchUpcomingRequest) GetFetchedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FetchedAt
+	}
+	return nil
+}
+
+type PrefetchUpcomingResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Tracks whose catalog rows were stored and lookups started.
+	PrefetchedTrackIds []string `protobuf:"bytes,1,rep,name=prefetched_track_ids,json=prefetchedTrackIds,proto3" json:"prefetched_track_ids,omitempty"`
+	// Invalid entries dropped (no id or name).
+	Skipped       int32 `protobuf:"varint,2,opt,name=skipped,proto3" json:"skipped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrefetchUpcomingResponse) Reset() {
+	*x = PrefetchUpcomingResponse{}
+	mi := &file_tracker_v1_tracker_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrefetchUpcomingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrefetchUpcomingResponse) ProtoMessage() {}
+
+func (x *PrefetchUpcomingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tracker_v1_tracker_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrefetchUpcomingResponse.ProtoReflect.Descriptor instead.
+func (*PrefetchUpcomingResponse) Descriptor() ([]byte, []int) {
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PrefetchUpcomingResponse) GetPrefetchedTrackIds() []string {
+	if x != nil {
+		return x.PrefetchedTrackIds
+	}
+	return nil
+}
+
+func (x *PrefetchUpcomingResponse) GetSkipped() int32 {
+	if x != nil {
+		return x.Skipped
+	}
+	return 0
+}
+
 type PendingTrack struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
@@ -772,7 +968,7 @@ type PendingTrack struct {
 
 func (x *PendingTrack) Reset() {
 	*x = PendingTrack{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[11]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -784,7 +980,7 @@ func (x *PendingTrack) String() string {
 func (*PendingTrack) ProtoMessage() {}
 
 func (x *PendingTrack) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[11]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -797,7 +993,7 @@ func (x *PendingTrack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PendingTrack.ProtoReflect.Descriptor instead.
 func (*PendingTrack) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{11}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PendingTrack) GetTrackId() string {
@@ -830,7 +1026,7 @@ type ListPendingTracksRequest struct {
 
 func (x *ListPendingTracksRequest) Reset() {
 	*x = ListPendingTracksRequest{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[12]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -842,7 +1038,7 @@ func (x *ListPendingTracksRequest) String() string {
 func (*ListPendingTracksRequest) ProtoMessage() {}
 
 func (x *ListPendingTracksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[12]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -855,7 +1051,7 @@ func (x *ListPendingTracksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingTracksRequest.ProtoReflect.Descriptor instead.
 func (*ListPendingTracksRequest) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{12}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListPendingTracksRequest) GetLimit() int32 {
@@ -874,7 +1070,7 @@ type ListPendingTracksResponse struct {
 
 func (x *ListPendingTracksResponse) Reset() {
 	*x = ListPendingTracksResponse{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[13]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -886,7 +1082,7 @@ func (x *ListPendingTracksResponse) String() string {
 func (*ListPendingTracksResponse) ProtoMessage() {}
 
 func (x *ListPendingTracksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[13]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -899,7 +1095,7 @@ func (x *ListPendingTracksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingTracksResponse.ProtoReflect.Descriptor instead.
 func (*ListPendingTracksResponse) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{13}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListPendingTracksResponse) GetTracks() []*PendingTrack {
@@ -919,7 +1115,7 @@ type Genre struct {
 
 func (x *Genre) Reset() {
 	*x = Genre{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[14]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -931,7 +1127,7 @@ func (x *Genre) String() string {
 func (*Genre) ProtoMessage() {}
 
 func (x *Genre) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[14]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -944,7 +1140,7 @@ func (x *Genre) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Genre.ProtoReflect.Descriptor instead.
 func (*Genre) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{14}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Genre) GetRoot() string {
@@ -981,7 +1177,7 @@ type AudioFeatures struct {
 
 func (x *AudioFeatures) Reset() {
 	*x = AudioFeatures{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[15]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -993,7 +1189,7 @@ func (x *AudioFeatures) String() string {
 func (*AudioFeatures) ProtoMessage() {}
 
 func (x *AudioFeatures) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[15]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1006,7 +1202,7 @@ func (x *AudioFeatures) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioFeatures.ProtoReflect.Descriptor instead.
 func (*AudioFeatures) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{15}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AudioFeatures) GetAcousticness() float64 {
@@ -1109,7 +1305,7 @@ type SubmitTrackFeaturesRequest struct {
 
 func (x *SubmitTrackFeaturesRequest) Reset() {
 	*x = SubmitTrackFeaturesRequest{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[16]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1121,7 +1317,7 @@ func (x *SubmitTrackFeaturesRequest) String() string {
 func (*SubmitTrackFeaturesRequest) ProtoMessage() {}
 
 func (x *SubmitTrackFeaturesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[16]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1134,7 +1330,7 @@ func (x *SubmitTrackFeaturesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTrackFeaturesRequest.ProtoReflect.Descriptor instead.
 func (*SubmitTrackFeaturesRequest) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{16}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SubmitTrackFeaturesRequest) GetTrackId() string {
@@ -1180,7 +1376,7 @@ type SubmitTrackFeaturesResponse struct {
 
 func (x *SubmitTrackFeaturesResponse) Reset() {
 	*x = SubmitTrackFeaturesResponse{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[17]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1192,7 +1388,7 @@ func (x *SubmitTrackFeaturesResponse) String() string {
 func (*SubmitTrackFeaturesResponse) ProtoMessage() {}
 
 func (x *SubmitTrackFeaturesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[17]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1205,7 +1401,7 @@ func (x *SubmitTrackFeaturesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTrackFeaturesResponse.ProtoReflect.Descriptor instead.
 func (*SubmitTrackFeaturesResponse) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{17}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{20}
 }
 
 type ReportEnrichmentFailureRequest struct {
@@ -1223,7 +1419,7 @@ type ReportEnrichmentFailureRequest struct {
 
 func (x *ReportEnrichmentFailureRequest) Reset() {
 	*x = ReportEnrichmentFailureRequest{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[18]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1431,7 @@ func (x *ReportEnrichmentFailureRequest) String() string {
 func (*ReportEnrichmentFailureRequest) ProtoMessage() {}
 
 func (x *ReportEnrichmentFailureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[18]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1444,7 @@ func (x *ReportEnrichmentFailureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportEnrichmentFailureRequest.ProtoReflect.Descriptor instead.
 func (*ReportEnrichmentFailureRequest) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{18}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ReportEnrichmentFailureRequest) GetTrackId() string {
@@ -1289,7 +1485,7 @@ type ReportEnrichmentFailureResponse struct {
 
 func (x *ReportEnrichmentFailureResponse) Reset() {
 	*x = ReportEnrichmentFailureResponse{}
-	mi := &file_tracker_v1_tracker_proto_msgTypes[19]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1301,7 +1497,7 @@ func (x *ReportEnrichmentFailureResponse) String() string {
 func (*ReportEnrichmentFailureResponse) ProtoMessage() {}
 
 func (x *ReportEnrichmentFailureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tracker_v1_tracker_proto_msgTypes[19]
+	mi := &file_tracker_v1_tracker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1314,7 +1510,7 @@ func (x *ReportEnrichmentFailureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportEnrichmentFailureResponse.ProtoReflect.Descriptor instead.
 func (*ReportEnrichmentFailureResponse) Descriptor() ([]byte, []int) {
-	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{19}
+	return file_tracker_v1_tracker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ReportEnrichmentFailureResponse) GetExhausted() bool {
@@ -1393,7 +1589,21 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\x14ClearPlaybackRequest\x129\n" +
 	"\n" +
 	"fetched_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\tfetchedAt\"\x17\n" +
-	"\x15ClearPlaybackResponse\"Y\n" +
+	"\x15ClearPlaybackResponse\"\xc7\x01\n" +
+	"\rUpcomingTrack\x12\x1a\n" +
+	"\bposition\x18\x01 \x01(\x05R\bposition\x12'\n" +
+	"\x05track\x18\x02 \x01(\v2\x11.tracker.v1.TrackR\x05track\x12'\n" +
+	"\x05album\x18\x03 \x01(\v2\x11.tracker.v1.AlbumR\x05album\x12,\n" +
+	"\aartists\x18\x04 \x03(\v2\x12.tracker.v1.ArtistR\aartists\x12\x1a\n" +
+	"\bprefetch\x18\x05 \x01(\bR\bprefetch\"\xb1\x01\n" +
+	"\x17PrefetchUpcomingRequest\x12(\n" +
+	"\x10current_track_id\x18\x01 \x01(\tR\x0ecurrentTrackId\x121\n" +
+	"\x06tracks\x18\x02 \x03(\v2\x19.tracker.v1.UpcomingTrackR\x06tracks\x129\n" +
+	"\n" +
+	"fetched_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tfetchedAt\"f\n" +
+	"\x18PrefetchUpcomingResponse\x120\n" +
+	"\x14prefetched_track_ids\x18\x01 \x03(\tR\x12prefetchedTrackIds\x12\x18\n" +
+	"\askipped\x18\x02 \x01(\x05R\askipped\"Y\n" +
 	"\fPendingTrack\x12\x19\n" +
 	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x12\n" +
 	"\x04isrc\x18\x02 \x01(\tR\x04isrc\x12\x1a\n" +
@@ -1446,10 +1656,11 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\tretryable\x18\x03 \x01(\bR\tretryable\x12.\n" +
 	"\x13retry_after_seconds\x18\x04 \x01(\x05R\x11retryAfterSeconds\"?\n" +
 	"\x1fReportEnrichmentFailureResponse\x12\x1c\n" +
-	"\texhausted\x18\x01 \x01(\bR\texhausted2\xbe\x01\n" +
+	"\texhausted\x18\x01 \x01(\bR\texhausted2\x9d\x02\n" +
 	"\rIngestService\x12W\n" +
 	"\x0eRecordPlayback\x12!.tracker.v1.RecordPlaybackRequest\x1a\".tracker.v1.RecordPlaybackResponse\x12T\n" +
-	"\rClearPlayback\x12 .tracker.v1.ClearPlaybackRequest\x1a!.tracker.v1.ClearPlaybackResponse2\xd1\x02\n" +
+	"\rClearPlayback\x12 .tracker.v1.ClearPlaybackRequest\x1a!.tracker.v1.ClearPlaybackResponse\x12]\n" +
+	"\x10PrefetchUpcoming\x12#.tracker.v1.PrefetchUpcomingRequest\x1a$.tracker.v1.PrefetchUpcomingResponse2\xd1\x02\n" +
 	"\x11EnrichmentService\x12`\n" +
 	"\x11ListPendingTracks\x12$.tracker.v1.ListPendingTracksRequest\x1a%.tracker.v1.ListPendingTracksResponse\x12f\n" +
 	"\x13SubmitTrackFeatures\x12&.tracker.v1.SubmitTrackFeaturesRequest\x1a'.tracker.v1.SubmitTrackFeaturesResponse\x12r\n" +
@@ -1472,7 +1683,7 @@ func file_tracker_v1_tracker_proto_rawDescGZIP() []byte {
 	return file_tracker_v1_tracker_proto_rawDescData
 }
 
-var file_tracker_v1_tracker_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_tracker_v1_tracker_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_tracker_v1_tracker_proto_goTypes = []any{
 	(*GetAccessTokenRequest)(nil),           // 0: tracker.v1.GetAccessTokenRequest
 	(*GetAccessTokenResponse)(nil),          // 1: tracker.v1.GetAccessTokenResponse
@@ -1485,47 +1696,57 @@ var file_tracker_v1_tracker_proto_goTypes = []any{
 	(*RecordPlaybackResponse)(nil),          // 8: tracker.v1.RecordPlaybackResponse
 	(*ClearPlaybackRequest)(nil),            // 9: tracker.v1.ClearPlaybackRequest
 	(*ClearPlaybackResponse)(nil),           // 10: tracker.v1.ClearPlaybackResponse
-	(*PendingTrack)(nil),                    // 11: tracker.v1.PendingTrack
-	(*ListPendingTracksRequest)(nil),        // 12: tracker.v1.ListPendingTracksRequest
-	(*ListPendingTracksResponse)(nil),       // 13: tracker.v1.ListPendingTracksResponse
-	(*Genre)(nil),                           // 14: tracker.v1.Genre
-	(*AudioFeatures)(nil),                   // 15: tracker.v1.AudioFeatures
-	(*SubmitTrackFeaturesRequest)(nil),      // 16: tracker.v1.SubmitTrackFeaturesRequest
-	(*SubmitTrackFeaturesResponse)(nil),     // 17: tracker.v1.SubmitTrackFeaturesResponse
-	(*ReportEnrichmentFailureRequest)(nil),  // 18: tracker.v1.ReportEnrichmentFailureRequest
-	(*ReportEnrichmentFailureResponse)(nil), // 19: tracker.v1.ReportEnrichmentFailureResponse
-	(*timestamppb.Timestamp)(nil),           // 20: google.protobuf.Timestamp
+	(*UpcomingTrack)(nil),                   // 11: tracker.v1.UpcomingTrack
+	(*PrefetchUpcomingRequest)(nil),         // 12: tracker.v1.PrefetchUpcomingRequest
+	(*PrefetchUpcomingResponse)(nil),        // 13: tracker.v1.PrefetchUpcomingResponse
+	(*PendingTrack)(nil),                    // 14: tracker.v1.PendingTrack
+	(*ListPendingTracksRequest)(nil),        // 15: tracker.v1.ListPendingTracksRequest
+	(*ListPendingTracksResponse)(nil),       // 16: tracker.v1.ListPendingTracksResponse
+	(*Genre)(nil),                           // 17: tracker.v1.Genre
+	(*AudioFeatures)(nil),                   // 18: tracker.v1.AudioFeatures
+	(*SubmitTrackFeaturesRequest)(nil),      // 19: tracker.v1.SubmitTrackFeaturesRequest
+	(*SubmitTrackFeaturesResponse)(nil),     // 20: tracker.v1.SubmitTrackFeaturesResponse
+	(*ReportEnrichmentFailureRequest)(nil),  // 21: tracker.v1.ReportEnrichmentFailureRequest
+	(*ReportEnrichmentFailureResponse)(nil), // 22: tracker.v1.ReportEnrichmentFailureResponse
+	(*timestamppb.Timestamp)(nil),           // 23: google.protobuf.Timestamp
 }
 var file_tracker_v1_tracker_proto_depIdxs = []int32{
-	20, // 0: tracker.v1.GetAccessTokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	23, // 0: tracker.v1.GetAccessTokenResponse.expires_at:type_name -> google.protobuf.Timestamp
 	4,  // 1: tracker.v1.Playback.track:type_name -> tracker.v1.Track
 	3,  // 2: tracker.v1.Playback.album:type_name -> tracker.v1.Album
 	2,  // 3: tracker.v1.Playback.artists:type_name -> tracker.v1.Artist
-	20, // 4: tracker.v1.Playback.played_at:type_name -> google.protobuf.Timestamp
-	20, // 5: tracker.v1.Playback.fetched_at:type_name -> google.protobuf.Timestamp
+	23, // 4: tracker.v1.Playback.played_at:type_name -> google.protobuf.Timestamp
+	23, // 5: tracker.v1.Playback.fetched_at:type_name -> google.protobuf.Timestamp
 	6,  // 6: tracker.v1.Playback.context:type_name -> tracker.v1.PlaybackContext
 	5,  // 7: tracker.v1.RecordPlaybackRequest.playback:type_name -> tracker.v1.Playback
-	20, // 8: tracker.v1.ClearPlaybackRequest.fetched_at:type_name -> google.protobuf.Timestamp
-	11, // 9: tracker.v1.ListPendingTracksResponse.tracks:type_name -> tracker.v1.PendingTrack
-	15, // 10: tracker.v1.SubmitTrackFeaturesRequest.features:type_name -> tracker.v1.AudioFeatures
-	14, // 11: tracker.v1.SubmitTrackFeaturesRequest.genres:type_name -> tracker.v1.Genre
-	7,  // 12: tracker.v1.IngestService.RecordPlayback:input_type -> tracker.v1.RecordPlaybackRequest
-	9,  // 13: tracker.v1.IngestService.ClearPlayback:input_type -> tracker.v1.ClearPlaybackRequest
-	12, // 14: tracker.v1.EnrichmentService.ListPendingTracks:input_type -> tracker.v1.ListPendingTracksRequest
-	16, // 15: tracker.v1.EnrichmentService.SubmitTrackFeatures:input_type -> tracker.v1.SubmitTrackFeaturesRequest
-	18, // 16: tracker.v1.EnrichmentService.ReportEnrichmentFailure:input_type -> tracker.v1.ReportEnrichmentFailureRequest
-	0,  // 17: tracker.v1.SpotifyService.GetAccessToken:input_type -> tracker.v1.GetAccessTokenRequest
-	8,  // 18: tracker.v1.IngestService.RecordPlayback:output_type -> tracker.v1.RecordPlaybackResponse
-	10, // 19: tracker.v1.IngestService.ClearPlayback:output_type -> tracker.v1.ClearPlaybackResponse
-	13, // 20: tracker.v1.EnrichmentService.ListPendingTracks:output_type -> tracker.v1.ListPendingTracksResponse
-	17, // 21: tracker.v1.EnrichmentService.SubmitTrackFeatures:output_type -> tracker.v1.SubmitTrackFeaturesResponse
-	19, // 22: tracker.v1.EnrichmentService.ReportEnrichmentFailure:output_type -> tracker.v1.ReportEnrichmentFailureResponse
-	1,  // 23: tracker.v1.SpotifyService.GetAccessToken:output_type -> tracker.v1.GetAccessTokenResponse
-	18, // [18:24] is the sub-list for method output_type
-	12, // [12:18] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	23, // 8: tracker.v1.ClearPlaybackRequest.fetched_at:type_name -> google.protobuf.Timestamp
+	4,  // 9: tracker.v1.UpcomingTrack.track:type_name -> tracker.v1.Track
+	3,  // 10: tracker.v1.UpcomingTrack.album:type_name -> tracker.v1.Album
+	2,  // 11: tracker.v1.UpcomingTrack.artists:type_name -> tracker.v1.Artist
+	11, // 12: tracker.v1.PrefetchUpcomingRequest.tracks:type_name -> tracker.v1.UpcomingTrack
+	23, // 13: tracker.v1.PrefetchUpcomingRequest.fetched_at:type_name -> google.protobuf.Timestamp
+	14, // 14: tracker.v1.ListPendingTracksResponse.tracks:type_name -> tracker.v1.PendingTrack
+	18, // 15: tracker.v1.SubmitTrackFeaturesRequest.features:type_name -> tracker.v1.AudioFeatures
+	17, // 16: tracker.v1.SubmitTrackFeaturesRequest.genres:type_name -> tracker.v1.Genre
+	7,  // 17: tracker.v1.IngestService.RecordPlayback:input_type -> tracker.v1.RecordPlaybackRequest
+	9,  // 18: tracker.v1.IngestService.ClearPlayback:input_type -> tracker.v1.ClearPlaybackRequest
+	12, // 19: tracker.v1.IngestService.PrefetchUpcoming:input_type -> tracker.v1.PrefetchUpcomingRequest
+	15, // 20: tracker.v1.EnrichmentService.ListPendingTracks:input_type -> tracker.v1.ListPendingTracksRequest
+	19, // 21: tracker.v1.EnrichmentService.SubmitTrackFeatures:input_type -> tracker.v1.SubmitTrackFeaturesRequest
+	21, // 22: tracker.v1.EnrichmentService.ReportEnrichmentFailure:input_type -> tracker.v1.ReportEnrichmentFailureRequest
+	0,  // 23: tracker.v1.SpotifyService.GetAccessToken:input_type -> tracker.v1.GetAccessTokenRequest
+	8,  // 24: tracker.v1.IngestService.RecordPlayback:output_type -> tracker.v1.RecordPlaybackResponse
+	10, // 25: tracker.v1.IngestService.ClearPlayback:output_type -> tracker.v1.ClearPlaybackResponse
+	13, // 26: tracker.v1.IngestService.PrefetchUpcoming:output_type -> tracker.v1.PrefetchUpcomingResponse
+	16, // 27: tracker.v1.EnrichmentService.ListPendingTracks:output_type -> tracker.v1.ListPendingTracksResponse
+	20, // 28: tracker.v1.EnrichmentService.SubmitTrackFeatures:output_type -> tracker.v1.SubmitTrackFeaturesResponse
+	22, // 29: tracker.v1.EnrichmentService.ReportEnrichmentFailure:output_type -> tracker.v1.ReportEnrichmentFailureResponse
+	1,  // 30: tracker.v1.SpotifyService.GetAccessToken:output_type -> tracker.v1.GetAccessTokenResponse
+	24, // [24:31] is the sub-list for method output_type
+	17, // [17:24] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_tracker_v1_tracker_proto_init() }
@@ -1536,14 +1757,14 @@ func file_tracker_v1_tracker_proto_init() {
 	file_tracker_v1_tracker_proto_msgTypes[3].OneofWrappers = []any{}
 	file_tracker_v1_tracker_proto_msgTypes[4].OneofWrappers = []any{}
 	file_tracker_v1_tracker_proto_msgTypes[5].OneofWrappers = []any{}
-	file_tracker_v1_tracker_proto_msgTypes[15].OneofWrappers = []any{}
+	file_tracker_v1_tracker_proto_msgTypes[18].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tracker_v1_tracker_proto_rawDesc), len(file_tracker_v1_tracker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

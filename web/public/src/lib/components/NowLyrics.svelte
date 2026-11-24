@@ -243,6 +243,5 @@
 	/* A modal dialog does not stop the page behind it from scrolling. */
 	:global(html:has(dialog.lyrics-dialog[open])) {
 		overflow: hidden;
-		scrollbar-gutter: stable;
 	}
 </style>

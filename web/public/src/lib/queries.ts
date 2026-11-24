@@ -9,6 +9,7 @@ import {
 	ApiError,
 	fetchAudioProfile,
 	fetchHistory,
+	fetchNowLyrics,
 	fetchNowPlaying,
 	fetchRecentPlaylists,
 	fetchTopArtists,
@@ -16,7 +17,7 @@ import {
 	fetchTopPlaylists,
 	fetchTrackDetail
 } from './api';
-import type { NowPlaying, StatsRange, TopArtist, TopTrack, TrackDetail } from './types';
+import type { NowLyrics, NowPlaying, StatsRange, TopArtist, TopTrack, TrackDetail } from './types';
 
 export const HISTORY_LIMIT = 6;
 export const PLAYLIST_LIMIT = 5;
@@ -38,6 +39,9 @@ const TRACK_REFRESH_MS = 60_000;
 const TOP_REFRESH_MS = 60_000;
 /** Fast poll while the enricher is still analysing the track on show. */
 const TRACK_PENDING_MS = 4_000;
+/** Re-ask while a playing track has no lyrics window yet (lookup may be pending). */
+/** Re-ask for lyrics while none are shown (no synced lyrics yet, or a reply for another track). */
+const LYRICS_EMPTY_MS = 15_000;
 
 export const queryKeys = {
 	nowPlaying: ['now-playing'] as const,
@@ -47,6 +51,7 @@ export const queryKeys = {
 	topPlaylists: (limit: number) => ['playlists', 'top', limit] as const,
 	playlistsAll: ['playlists'] as const,
 	track: (id: string | null) => ['track', id] as const,
+	nowLyrics: (trackId: string | null) => ['now-lyrics', trackId] as const,
 	audioProfile: (range: string) => ['stats', 'audio-profile', range] as const,
 	topTracks: (range: StatsRange, limit: number) => ['stats', 'top-tracks', range, limit] as const,
 	topArtists: (range: StatsRange, limit: number) => ['stats', 'top-artists', range, limit] as const,
@@ -124,6 +129,26 @@ export function trackDetailQuery(id: string | null) {
 		queryFn: id ? ({ signal }) => fetchTrackDetail(id, signal) : skipToken,
 		// Poll fast until the audio features land, then back to the normal interval.
 		refetchInterval: (q) => (isAnalysing(q.state.data) ? TRACK_PENDING_MS : TRACK_REFRESH_MS)
+	});
+}
+
+/**
+ * Lyrics window for the track playing now. Keyed by track so the previous
+ * song's lines never show; idle while paused or without a track. The
+ * component refetches itself when the window runs out or playback seeks.
+ */
+export function nowLyricsQuery(trackId: string | null, playing: boolean) {
+	return queryOptions({
+		queryKey: queryKeys.nowLyrics(trackId),
+		queryFn:
+			trackId && playing
+				? ({ signal }): Promise<NowLyrics | null> => fetchNowLyrics(signal)
+				: skipToken,
+		refetchInterval: (q) => {
+			const d = q.state.data;
+			return d == null || d.track_id !== trackId ? LYRICS_EMPTY_MS : false;
+		},
+		refetchOnWindowFocus: false
 	});
 }
 

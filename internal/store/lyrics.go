@@ -153,6 +153,24 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 	return out, nil
 }
 
+// SyncedLyrics returns the synced LRC text of a track whose lyrics were found,
+// or "" when there is none. It never reads the plain lyrics: it feeds the
+// public now-playing window (GET /api/v1/now-playing/lyrics).
+func (q *Queries) SyncedLyrics(ctx context.Context, trackID string) (string, error) {
+	var synced string
+	err := q.db.QueryRow(ctx, `
+		SELECT synced_lyrics FROM lyrics
+		WHERE track_id = $1 AND status = 'found' AND COALESCE(synced_lyrics, '') <> ''`,
+		trackID).Scan(&synced)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("synced lyrics %s: %w", trackID, err)
+	}
+	return synced, nil
+}
+
 // SearchLyrics finds tracks whose lyrics match query (websearch syntax over
 // accent- and case-folded text). Exact phrase matches come first. Each match
 // has a snippet: the best matching line and the next one.

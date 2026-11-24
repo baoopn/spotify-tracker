@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -62,6 +63,11 @@ type Handler struct {
 	// their lifetime (nil = randomStreamAge).
 	streams   *streamSlots
 	streamAge func() time.Duration
+	// lyrics feeds the public now-playing lyrics window (nil = always null);
+	// playback is a test seam for the snapshot (nil = nowPlayingJSON).
+	lyrics      syncedLyricsStore
+	playback    func(ctx context.Context) ([]byte, error)
+	lyricsCache lyricsMemo
 }
 
 func (h *Handler) clock() time.Time {
@@ -76,6 +82,7 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 	h := &Handler{store: st, rdb: rdb, log: log, opts: opts, streams: newStreamSlots()}
 	if st != nil {
 		h.top = st
+		h.lyrics = st
 	}
 
 	r := chi.NewRouter()
@@ -118,6 +125,8 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(10 * time.Second))
 			h.v1Routes(r)
+			// Deliberately not in v1Routes: never reachable through V1Handler (MCP).
+			r.Get("/now-playing/lyrics", h.nowPlayingLyrics)
 			if opts.Events != nil {
 				r.Post("/events", opts.Events)
 			}

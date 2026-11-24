@@ -77,7 +77,7 @@ export const qk = {
 		lists: ['tracks', 'list'] as const,
 		list: (p: TracksParams) => ['tracks', 'list', p] as const,
 		detail: (id: string) => ['tracks', 'detail', id] as const,
-		lyrics: (id: string) => ['tracks', 'lyrics', id] as const
+		lyrics: (id: string, synced = false) => ['tracks', 'lyrics', id, synced] as const
 	},
 	lyrics: {
 		search: (q: string, limit: number) => ['lyrics', 'search', q, limit] as const
@@ -221,13 +221,14 @@ export const queries = {
 			refetchInterval: REFRESH.list
 		}),
 
-	/** Lyrics change rarely and are large, so they are never polled. */
-	trackLyrics: (id: string | null) =>
+	/** Lyrics change rarely and are large: polled only while the lookup is pending. */
+	trackLyrics: (id: string | null, synced = false) =>
 		queryOptions({
-			queryKey: qk.tracks.lyrics(id ?? ''),
-			queryFn: ({ signal }) => api.trackLyrics(id ?? '', { signal }),
+			queryKey: qk.tracks.lyrics(id ?? '', synced),
+			queryFn: ({ signal }) => api.trackLyrics(id ?? '', { synced, signal }),
 			enabled: !!id,
-			staleTime: 60_000
+			staleTime: 60_000,
+			refetchInterval: (q) => (q.state.data?.status === 'pending' ? 60_000 : false)
 		}),
 
 	searchLyrics: (q: string, limit: number) =>

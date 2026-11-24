@@ -17,6 +17,8 @@ class Clock {
 	}
 }
 
+/** 250 ms ticks, for following synced lyrics. */
+export const fastClock = new Clock(250);
 /** 1 s ticks, for progress bars. */
 export const secondClock = new Clock(1000);
 /** 20 s ticks, for relative timestamps. */

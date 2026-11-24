@@ -223,8 +223,12 @@ Other playlist, user or show links fall back to the name search.
 Lyrics come from [LRCLIB](https://lrclib.net) and are looked up in the
 background (see [architecture](architecture.md#lyrics)). They are served only
 here and through the admin MCP tools (`admin_track_lyrics`,
-`admin_search_lyrics`); the public `/api/v1` and the public page never return
-lyrics text. Credit LRCLIB wherever lyrics are shown.
+`admin_search_lyrics`). The public side gets only a short window of synced
+lines of the song playing now (`GET /api/v1/now-playing/lyrics`, see
+[architecture](architecture.md#public-now-playing-lyrics-window)), never plain
+or full lyrics. The admin overview's now-playing card uses
+`GET /tracks/{id}/lyrics?synced=true` for the current track; there is no
+admin-only now-playing lyrics route. Credit LRCLIB wherever lyrics are shown.
 
 ```ts
 type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';

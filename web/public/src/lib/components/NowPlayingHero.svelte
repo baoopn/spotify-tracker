@@ -3,7 +3,9 @@
 	import ArtistLinks from './ArtistLinks.svelte';
 	import BrandIcon from './BrandIcon.svelte';
 	import ExplicitBadge from './ExplicitBadge.svelte';
+	import NowLyrics from './NowLyrics.svelte';
 	import RelTime from './RelTime.svelte';
+	import { estimatePositionMs } from '#lib/playback.js';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { frameClock, secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear, spotifyUrl, toDate } from '#lib/format.js';
@@ -34,13 +36,9 @@
 	// [0, duration] so a wrong system clock can't push it off either end.
 	const reducedMotion = new MediaQuery('prefers-reduced-motion: reduce');
 	const progressMs = $derived.by(() => {
-		if (!track || np?.progress_ms == null) return null;
-		const base = np.progress_ms;
-		const fetched = toDate(np.fetched_at)?.getTime();
+		if (!track || !np) return null;
 		const now = playing ? (reducedMotion.current ? secondClock.now : frameClock.now) : 0;
-		const elapsed = playing && fetched != null ? Math.max(0, live.serverNow(now) - fetched) : 0;
-		const p = base + elapsed;
-		return Math.max(0, durationMs > 0 ? Math.min(p, durationMs) : p);
+		return estimatePositionMs({ ...np, is_playing: playing }, live.serverNow(now), durationMs);
 	});
 	const ratio = $derived(progressMs != null && durationMs > 0 ? progressMs / durationMs : 0);
 
@@ -218,6 +216,8 @@
 						<span>{duration(durationMs)}</span>
 					</div>
 				</div>
+
+				{#if playing && np}<NowLyrics {np} />{/if}
 
 				{#if trackUrl}
 					<a href={trackUrl} target="_blank" rel="noopener noreferrer" class="btn btn-primary mt-7">

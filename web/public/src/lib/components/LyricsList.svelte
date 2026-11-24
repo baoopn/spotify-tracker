@@ -1,0 +1,95 @@
+<script lang="ts">
+	import { MediaQuery } from 'svelte/reactivity';
+	import type { LyricLine } from '#lib/types.js';
+
+	let {
+		lines,
+		keys,
+		active,
+		size = 'sm',
+		class: className = ''
+	}: {
+		lines: readonly LyricLine[];
+		keys: readonly string[];
+		active: number;
+		size?: 'sm' | 'lg';
+		class?: string;
+	} = $props();
+
+	const reducedMotion = new MediaQuery('prefers-reduced-motion: reduce');
+	let box = $state<HTMLDivElement>();
+	let pausedUntil = 0;
+	let placed = false; // the first scroll after mount jumps; later ones glide
+
+	function userScrolled() {
+		pausedUntil = Date.now() + 5000;
+	}
+
+	// Keep the active line centred inside the box only (never scroll the page),
+	// also when the run changes around it.
+	$effect(() => {
+		const i = active;
+		void keys;
+		if (!box) {
+			placed = false;
+			return;
+		}
+		if (i < 0 || Date.now() < pausedUntil) return;
+		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
+		if (!el) return;
+		box.scrollTo({
+			top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
+			behavior: !placed || reducedMotion.current ? 'auto' : 'smooth'
+		});
+		placed = true;
+	});
+</script>
+
+<!-- A scrollable box must be focusable so keyboard users can scroll it; the
+     listeners only pause auto-scroll while the user scrolls by hand.
+     No aria-live: a line that changes every few seconds is too noisy. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<div
+	bind:this={box}
+	role="region"
+	aria-label="Lyrics, scrollable"
+	tabindex="0"
+	class={[
+		'relative overflow-y-auto',
+		size === 'lg'
+			? 'overscroll-contain py-[20dvh] font-display text-2xl leading-snug font-medium tracking-tight sm:text-3xl'
+			: 'py-2 text-base leading-relaxed',
+		className
+	]}
+	onwheel={userScrolled}
+	onpointerdown={userScrolled}
+	ontouchmove={userScrolled}
+	onkeydown={userScrolled}
+>
+	{#each lines as line, i (keys[i])}
+		<p
+			data-i={i}
+			dir="auto"
+			aria-current={i === active ? 'true' : undefined}
+			class={[
+				'lyric-line break-words',
+				size === 'lg' ? 'py-2' : 'py-0.5',
+				i === active
+					? [size === 'lg' ? 'font-bold' : 'font-semibold', 'text-ink']
+					: ['text-ink-soft', size === 'lg' ? 'opacity-50' : 'opacity-70']
+			]}
+		>
+			{#if line.text}{line.text}{:else}<span aria-hidden="true">♪</span>{/if}
+		</p>
+	{/each}
+</div>
+
+<style>
+	@media (prefers-reduced-motion: no-preference) {
+		.lyric-line {
+			transition:
+				color 200ms ease,
+				opacity 200ms ease;
+		}
+	}
+</style>

@@ -1,13 +1,29 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
+	import { tick, untrack } from 'svelte';
+	import LyricsList from './LyricsList.svelte';
 	import { lyricClock } from '#lib/clock.svelte.js';
+	import { artistNames } from '#lib/format.js';
 	import { live } from '#lib/live.svelte.js';
-	import { currentIndex, shouldRefetch, windowKey, type RefetchMemo } from '#lib/lyrics.js';
+	import {
+		currentIndex,
+		lineKeys,
+		rollLines,
+		shouldRefetch,
+		windowKey,
+		type RefetchMemo,
+		type Rolling
+	} from '#lib/lyrics.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
 	import type { NowPlaying } from '#lib/types.js';
 
 	let { np }: { np: NowPlaying } = $props();
+
+	const uid = $props.id();
+	const headingId = `${uid}-now-lyrics`;
+	const dialogId = `${uid}-lyrics-dialog`;
+	const dialogTitleId = `${uid}-lyrics-dialog-title`;
 
 	const trackId = $derived(np.track?.id ?? null);
 	const playing = $derived(!!trackId && np.is_playing);
@@ -26,10 +42,18 @@
 		playing ? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs) : null
 	);
 
-	const idx = $derived(data && posMs != null ? currentIndex(data.lines, posMs) : -1);
-	const prev = $derived(data && idx > 0 ? data.lines[idx - 1].text : null);
-	const current = $derived(data && idx >= 0 ? data.lines[idx].text : '');
-	const next = $derived(data && idx + 1 < data.lines.length ? data.lines[idx + 1].text : null);
+	// A short rolling run: a few past lines plus the current server window,
+	// never the whole song. Folded in once per new window, not on every tick.
+	let roll = $state<Rolling | null>(null);
+	$effect.pre(() => {
+		const d = data;
+		if (!d) return;
+		roll = untrack(() => rollLines(roll, d, posMs ?? 0));
+	});
+	const lines = $derived(data && roll && roll.trackId === trackId ? roll.lines : []);
+	const keys = $derived(lineKeys(lines));
+	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);
+	const shown = $derived(playing && !!data && lines.length > 0);
 
 	// Refetch when the window runs out or playback seeks back; see shouldRefetch.
 	const memo: RefetchMemo = { key: null, at: 0 };
@@ -45,63 +69,179 @@
 		memo.at = state.nowMs;
 		void query.refetch();
 	});
+
+	// Expanded view: a native modal dialog (focus trap, Esc, focus return).
+	let dialog = $state<HTMLDialogElement>();
+	let open = $state(false);
+
+	// Render the content first so the close button gets focus and
+	// aria-labelledby resolves when the dialog opens.
+	async function expand() {
+		if (!dialog || dialog.open) return;
+		open = true;
+		await tick();
+		if (dialog && !dialog.open && shown) dialog.showModal();
+		else open = false;
+	}
+	function collapse() {
+		// close() fires onclose, which clears `open`; clear it directly if the
+		// dialog never opened (e.g. lyrics vanished during the tick).
+		if (dialog?.open) dialog.close();
+		else open = false;
+	}
+	// Clicks on the panel land on its children; only the backdrop hits the
+	// dialog itself. Both ends must be on it, so a text selection dragged
+	// out of the panel does not close it.
+	let downOnBackdrop = false;
+	function onBackdropDown(e: PointerEvent) {
+		downOnBackdrop = e.target === dialog;
+	}
+	function onBackdrop(e: MouseEvent) {
+		if (downOnBackdrop && e.target === dialog) collapse();
+		downOnBackdrop = false;
+	}
+
+	// Playback stopped or the lyrics went away: close cleanly.
+	$effect(() => {
+		if (!shown && open) collapse();
+	});
 </script>
 
-{#if playing && data}
-	<section aria-label="Lyrics" class="mt-6 border-t border-rule pt-4">
-		<!-- aria-live off: a line that changes every few seconds is too noisy to
-		     announce; the current line can still be read on demand. -->
-		<div class="lines" aria-live="off">
-			<p class="row text-sm text-ink-soft" dir="auto">{prev ?? ''}</p>
-			{#key idx}
-				<p
-					class="row current enter font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl"
-					dir="auto"
+{#if shown && data}
+	<section aria-labelledby={headingId} class="mt-6 border-t border-rule pt-4">
+		<div class="mb-2 flex items-center gap-2">
+			<h3 id={headingId} class="label text-ink">Lyrics</h3>
+			<span class="chip label">Synced</span>
+			<button
+				type="button"
+				class="ml-auto inline-flex size-9 items-center justify-center rounded-lg border border-rule text-ink-soft transition-colors hover:border-ink hover:text-ink"
+				aria-label="Expand lyrics"
+				title="Expand lyrics"
+				aria-haspopup="dialog"
+				aria-expanded={open}
+				aria-controls={dialogId}
+				onclick={expand}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					class="size-4"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.75"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
 				>
-					{#if current}{current}{:else}<span aria-hidden="true">♪</span>{/if}
-				</p>
-			{/key}
-			<p class="row text-sm text-ink-soft" dir="auto">{next ?? ''}</p>
+					<path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" />
+				</svg>
+			</button>
 		</div>
-		<p class="mt-3 text-xs text-ink-soft">
-			<a href={data.credit.url} target="_blank" rel="noopener noreferrer" class="link"
-				>{data.credit.text}</a
+
+		<!-- One scroller at a time; the empty box holds the card's height. -->
+		{#if open}
+			<div class="h-64" aria-hidden="true"></div>
+		{:else}
+			<LyricsList {lines} {keys} {active} class="h-64" />
+		{/if}
+
+		<p class="mt-2 text-xs text-ink-soft">
+			<a
+				href={data.credit.url}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="link font-semibold text-ink">{data.credit.text}</a
 			>
 		</p>
 	</section>
 {/if}
 
+<!-- Outside the {#if} so it can close itself when the card goes away. Focus
+     returns to the Expand button; if the card is gone, the browser drops it
+     back to the page. Content renders only while open. -->
+<dialog
+	bind:this={dialog}
+	id={dialogId}
+	aria-labelledby={dialogTitleId}
+	class="lyrics-dialog"
+	onclose={() => (open = false)}
+	onpointerdown={onBackdropDown}
+	onclick={onBackdrop}
+>
+	{#if open && data && np.track}
+		<div class="flex h-full flex-col bg-paper text-ink">
+			<header class="flex items-start gap-3 border-b border-rule px-5 py-4">
+				<div class="min-w-0 flex-1">
+					<h2 id={dialogTitleId} class="truncate text-sm font-semibold" dir="auto">
+						{np.track.name}
+					</h2>
+					<p class="truncate text-sm text-ink-soft" dir="auto">{artistNames(np.track.artists)}</p>
+				</div>
+				<button
+					type="button"
+					class="btn btn-secondary btn-icon"
+					aria-label="Close lyrics"
+					title="Close lyrics"
+					onclick={collapse}
+				>
+					<svg
+						viewBox="0 0 24 24"
+						class="size-5"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.75"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M6 6l12 12M18 6L6 18" />
+					</svg>
+				</button>
+			</header>
+			<LyricsList {lines} {keys} {active} size="lg" class="min-h-0 flex-1 px-5 sm:px-8" />
+			<p class="border-t border-rule px-5 py-3 text-xs text-ink-soft">
+				<a
+					href={data.credit.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="link font-semibold text-ink">{data.credit.text}</a
+				>
+			</p>
+		</div>
+	{/if}
+</dialog>
+
 <style>
-	/* Fixed row heights so a line change never shifts the layout. */
-	.row {
-		display: -webkit-box;
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 1;
-		line-clamp: 1;
+	/* Full screen on phones; a large centred panel from sm up. */
+	.lyrics-dialog {
+		margin: 0;
+		padding: 0;
+		width: 100%;
+		max-width: none;
+		height: 100dvh;
+		max-height: none;
+		border: 0;
+		background: var(--paper);
+		color: var(--ink);
+		overscroll-behavior: contain;
+	}
+	@media (min-width: 640px) {
+		.lyrics-dialog {
+			margin: auto;
+			width: calc(100% - 3rem);
+			max-width: 42rem;
+			height: 80vh;
+			height: 80dvh;
+			border: 1px solid var(--ink);
+			border-radius: 12px;
+			box-shadow: 4px 4px 0 var(--print-color, var(--ink));
+		}
+	}
+	.lyrics-dialog::backdrop {
+		/* A literal scrim: --ink turns light in dark mode. */
+		background: rgb(10 8 20 / 0.55);
+	}
+	/* A modal dialog does not stop the page behind it from scrolling. */
+	:global(html:has(dialog.lyrics-dialog[open])) {
 		overflow: hidden;
-		min-height: 1.5em;
-		overflow-wrap: anywhere;
-	}
-	.current {
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		min-height: 2.5em;
-		line-height: 1.25;
-		margin-block: 0.25rem;
-	}
-	@media (prefers-reduced-motion: no-preference) {
-		.enter {
-			animation: line-in 220ms ease-out;
-		}
-	}
-	@keyframes line-in {
-		from {
-			opacity: 0;
-			transform: translateY(0.35em);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
 	}
 </style>

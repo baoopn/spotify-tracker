@@ -70,3 +70,72 @@ export function shouldRefetch(
 	if (since < REFETCH_THROTTLE_MS) return false;
 	return memo.key !== windowKey(data) || since >= SAME_WINDOW_RETRY_MS;
 }
+/** Lines kept on screen before the active one. */
+export const KEEP_BEFORE = 4;
+
+/** What the public card shows: a short rolling run, never the whole song. */
+export type Rolling = { trackId: string; lines: LyricLine[]; until_ms: number | null };
+
+type LyricsWindow = { track_id: string; until_ms: number | null; lines: readonly LyricLine[] };
+
+/** Lines grouped by start_ms, in order. */
+function groups(lines: readonly LyricLine[]): Map<number, LyricLine[]> {
+	const m = new Map<number, LyricLine[]>();
+	for (const l of lines) {
+		const g = m.get(l.start_ms);
+		if (g) g.push(l);
+		else m.set(l.start_ms, [l]);
+	}
+	return m;
+}
+
+/**
+ * Merge two runs by start_ms, sorted. Lines that share a start form a
+ * group; the larger group wins (a window can start mid-group), the newer
+ * one on a tie.
+ */
+export function mergeLines(prev: readonly LyricLine[], next: readonly LyricLine[]): LyricLine[] {
+	const out = groups(prev);
+	for (const [k, g] of groups(next)) {
+		const old = out.get(k);
+		if (!old || g.length >= old.length) out.set(k, g);
+	}
+	return [...out.keys()].sort((a, b) => a - b).flatMap((k) => out.get(k)!);
+}
+
+/**
+ * Fold a new server window into the rolling run. A new track, or a window
+ * that does not touch the kept lines (a gap ahead, or a seek back before
+ * them), replaces the run; otherwise the two merge. Past lines are trimmed
+ * to KEEP_BEFORE before the line playing at `posMs`.
+ */
+export function rollLines(
+	prev: Rolling | null,
+	win: LyricsWindow,
+	posMs: number,
+	keepBefore = KEEP_BEFORE
+): Rolling {
+	const first = win.lines[0]?.start_ms;
+	const touches =
+		prev != null &&
+		prev.trackId === win.track_id &&
+		prev.lines.length > 0 &&
+		first != null &&
+		first >= prev.lines[0].start_ms &&
+		(prev.until_ms == null || first <= prev.until_ms);
+	const lines = touches ? mergeLines(prev.lines, win.lines) : [...win.lines];
+	const idx = currentIndex(lines, posMs);
+	const from = Math.max(0, idx - keepBefore);
+	return { trackId: win.track_id, lines: lines.slice(from), until_ms: win.until_ms };
+}
+
+/** Stable keys: start_ms plus the line's place in its same-start group. */
+export function lineKeys(lines: readonly LyricLine[]): string[] {
+	let prevStart = NaN;
+	let n = 0;
+	return lines.map((l) => {
+		n = l.start_ms === prevStart ? n + 1 : 0;
+		prevStart = l.start_ms;
+		return `${l.start_ms}:${n}`;
+	});
+}

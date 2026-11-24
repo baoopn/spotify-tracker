@@ -38,6 +38,7 @@ import type {
 	LyricsMatch,
 	TrackAdminDetail,
 	TrackLyrics,
+	TranslationQueue,
 	TrackRow,
 	TrackSort,
 	Playlist,
@@ -266,6 +267,13 @@ export const api = {
 			query: { q, limit },
 			signal
 		}).then((r) => r.data),
+	requeueTranslation: (id: string) =>
+		request<{ queued: boolean }>(
+			`${ADMIN_API}/tracks/${encodeURIComponent(id)}/translation/requeue`,
+			{ method: 'POST' }
+		),
+	translationQueue: ({ signal }: Signal = {}) =>
+		request<TranslationQueue>(`${ADMIN_API}/lyrics/translation-queue`, { signal }),
 	enrichTrack: (id: string) =>
 		request<{ queued: boolean }>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/enrich`, {
 			method: 'POST'

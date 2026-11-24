@@ -23,9 +23,11 @@ type fakeStore struct {
 	setErr   error
 	set      map[string]domain.Lyrics
 	deferred []deferred
+	priority string // last priority asked for
 }
 
-func (f *fakeStore) TracksNeedingLyrics(_ context.Context, limit int) ([]domain.LyricsCandidate, error) {
+func (f *fakeStore) TracksNeedingLyrics(_ context.Context, limit int, priority string) ([]domain.LyricsCandidate, error) {
+	f.priority = priority
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -294,5 +296,36 @@ func TestBadBatchPauseGrowsAndResets(t *testing.T) {
 	_ = r.Run(context.Background())
 	if waited != 4*time.Minute {
 		t.Errorf("Run waited %s, want 4m", waited)
+	}
+}
+
+// Wake makes the song playing now the priority of the next batch and starts
+// it early; the same song twice signals once.
+func TestRefresherWake(t *testing.T) {
+	st := &fakeStore{cands: []domain.LyricsCandidate{{TrackID: "now"}}}
+	src := &fakeSource{res: map[string]result{"now": {l: &domain.Lyrics{Status: domain.LyricsFound, Plain: "x"}}}}
+	r := New(st, src, slog.New(slog.DiscardHandler))
+	var found []string
+	r.OnFound = func(id string) { found = append(found, id) }
+	r.Wake("now")
+	r.Wake("now")
+	if len(r.wake) != 1 {
+		t.Fatalf("wake signals = %d, want 1", len(r.wake))
+	}
+	r.RunOnce(context.Background())
+	if st.priority != "now" {
+		t.Errorf("priority = %q", st.priority)
+	}
+	if len(found) != 1 || found[0] != "now" {
+		t.Errorf("OnFound = %v", found)
+	}
+	<-r.wake
+	r.Wake("now")
+	if len(r.wake) != 0 {
+		t.Error("same song woke the refresher again")
+	}
+	r.Wake("")
+	if len(r.wake) != 0 || st.priority != "now" {
+		t.Error("empty id must be ignored")
 	}
 }

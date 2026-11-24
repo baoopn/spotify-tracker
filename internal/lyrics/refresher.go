@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
@@ -18,7 +19,7 @@ import (
 
 // Store is the persistence the refresher needs (implemented by *store.Queries).
 type Store interface {
-	TracksNeedingLyrics(ctx context.Context, limit int) ([]domain.LyricsCandidate, error)
+	TracksNeedingLyrics(ctx context.Context, limit int, priority string) ([]domain.LyricsCandidate, error)
 	SetLyrics(ctx context.Context, trackID string, l domain.Lyrics) error
 	DeferLyrics(ctx context.Context, trackID, status string, next time.Time, lastErr string) error
 }
@@ -50,8 +51,14 @@ type Refresher struct {
 	// MaxPause caps the growing pause after batches that end on transient
 	// errors (Interval doubled per bad batch in a row).
 	MaxPause time.Duration
+	// OnFound, when set, is called after lyrics were found and stored for a
+	// track (the translator uses it to start sooner).
+	OnFound func(trackID string)
 
-	badBatches int // batches in a row that ended on maxTransient errors
+	wake       chan struct{}
+	mu         sync.Mutex
+	priority   string // the song playing now: looked up first
+	badBatches int    // batches in a row that ended on maxTransient errors
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) bool
 }
@@ -62,17 +69,37 @@ type Refresher struct {
 func New(st Store, src Source, log *slog.Logger) *Refresher {
 	return &Refresher{Store: st, Source: src, Log: log, Interval: time.Minute, Batch: 10,
 		NotFoundRetry: 30 * 24 * time.Hour, MinBackoff: time.Hour, MaxBackoff: 7 * 24 * time.Hour,
-		MaxPause: time.Hour}
+		MaxPause: time.Hour, wake: make(chan struct{}, 1)}
+}
+
+// Wake tells the refresher which song is playing now: it is looked up before
+// anything else, and the next batch starts now when the song changed. Never
+// blocks.
+func (r *Refresher) Wake(trackID string) {
+	if trackID == "" {
+		return
+	}
+	r.mu.Lock()
+	same := r.priority == trackID
+	r.priority = trackID
+	r.mu.Unlock()
+	if same || r.wake == nil {
+		return
+	}
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Run processes batches until ctx is done.
 func (r *Refresher) Run(ctx context.Context) error {
 	for {
-		wait := r.Interval
+		wait, wake := r.Interval, r.wake
 		if pause := r.RunOnce(ctx); pause > wait {
-			wait = pause
+			wait, wake = pause, nil // a rate limit or bad batch pause is not cut short
 		}
-		if !r.wait(ctx, wait) {
+		if !r.wait(ctx, wait, wake) {
 			return nil
 		}
 	}
@@ -83,7 +110,10 @@ func (r *Refresher) Run(ctx context.Context) error {
 // ended on maxTransient errors in a row (Interval doubled per such batch in a
 // row, at most MaxPause), otherwise 0.
 func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
-	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch)
+	r.mu.Lock()
+	prio := r.priority
+	r.mu.Unlock()
+	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch, prio)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.Log.WarnContext(ctx, "list tracks needing lyrics failed", logging.Err(err))
@@ -142,6 +172,9 @@ func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
 			instrumental++
 		} else {
 			found++
+			if r.OnFound != nil {
+				r.OnFound(c.TrackID)
+			}
 		}
 	}
 	if found+instrumental+notFound > 0 {
@@ -200,7 +233,8 @@ func (r *Refresher) clock() time.Time {
 	return time.Now()
 }
 
-func (r *Refresher) wait(ctx context.Context, d time.Duration) bool {
+// wait sleeps for d; a signal on wake (nil = none) ends it early.
+func (r *Refresher) wait(ctx context.Context, d time.Duration, wake <-chan struct{}) bool {
 	if r.sleep != nil {
 		return r.sleep(ctx, d)
 	}
@@ -210,6 +244,8 @@ func (r *Refresher) wait(ctx context.Context, d time.Duration) bool {
 	case <-ctx.Done():
 		return false
 	case <-t.C:
+		return true
+	case <-wake:
 		return true
 	}
 }

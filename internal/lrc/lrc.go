@@ -1,5 +1,4 @@
-// Package lrc parses LRC (time-synced lyrics) text and cuts short windows of
-// lines around a playback position. It has no dependencies.
+// Package lrc parses LRC (time-synced lyrics) text. It has no dependencies.
 package lrc
 
 import (
@@ -7,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -105,48 +103,8 @@ func tagMS(s string, m []int) (int64, bool) {
 	return minutes*60_000 + secs*1000 + frac, true
 }
 
-// WindowOptions bounds a Window.
-type WindowOptions struct {
-	Ahead    time.Duration // lines starting up to this far after the position
-	MaxLines int           // hard cap on returned lines (at least 3)
-	MaxRunes int           // each line's text is cut to this many runes (0 = no cut)
-}
-
-// Window is a short run of lines around a position.
-type Window struct {
-	FromMS  int64  // start of the current line (0 before the first line)
-	UntilMS *int64 // start of the first line not included; nil when none remain
-	Lines   []Line
-}
-
-// Cut returns the previous line, the current line (the last one starting at
-// or before posMS), the next line, and further lines starting within
-// opt.Ahead of posMS, never more than opt.MaxLines.
-func Cut(lines []Line, posMS int64, opt WindowOptions) Window {
-	maxLines := max(opt.MaxLines, 3)
-	i := sort.Search(len(lines), func(k int) bool { return lines[k].StartMS > posMS }) - 1
-	w := Window{}
-	if i >= 0 {
-		w.FromMS = lines[i].StartMS
-	}
-	limit := posMS + opt.Ahead.Milliseconds()
-	j := max(0, i-1)
-	for ; j < len(lines) && len(w.Lines) < maxLines; j++ {
-		if j > i+1 && lines[j].StartMS > limit {
-			break
-		}
-		l := lines[j]
-		l.Text = cutRunes(l.Text, opt.MaxRunes)
-		w.Lines = append(w.Lines, l)
-	}
-	if j < len(lines) {
-		u := lines[j].StartMS
-		w.UntilMS = &u
-	}
-	return w
-}
-
-func cutRunes(s string, n int) string {
+// CutRunes returns s cut to at most n runes (n <= 0: no cut).
+func CutRunes(s string, n int) string {
 	if n <= 0 || utf8.RuneCountInString(s) <= n {
 		return s
 	}

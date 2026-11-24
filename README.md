@@ -68,7 +68,7 @@ make test lint # quality gates (same as CI)
 |---|---|
 | `GET /api/v1/now-playing` | Current playback (track, album, artists, progress). |
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
-| `GET /api/v1/now-playing/lyrics` | A short window of synced lyrics of the track playing now: `{ track_id, position_ms, at, from_ms, until_ms, lines: [{ start_ms, text }], credit }`, at most 10 lines, never the full text; `null` when nothing plays or there are no synced lyrics. |
+| `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, status, synced, instrumental, lines: [{ start_ms, text }], plain, credit, translation }`, synced lines when there are any, else the plain text. `status` is found, instrumental or pending (looked up soon); `translation` holds the English and Vietnamese Claude translation when enabled. `null` when nothing plays or no lyrics were found. |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |
 | `GET /api/v1/tracks/{id}` | Track with audio features, genres and play count, plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
 | `GET /api/v1/stats/summary?range=` | Totals: plays, unique tracks/artists, listening time. |
@@ -139,11 +139,11 @@ once; the page also has the filled-in commands), then pass it as
 `--header "Authorization: Bearer <token>"` to `claude mcp add`, or set it for
 `.mcp.json` (PowerShell: `setx SPOTIFY_TRACKER_MCP_TOKEN "<token>"`). Rotate or
 revoke it on the same page. The server's `MCP_ADMIN_TOKEN`, if set, also works.
-The admin tools include track lyrics and a lyrics search ("which song says
-…"). Lyrics come from [LRCLIB](https://lrclib.net). The public API serves only
-a short window of synced lines of the song playing now
-(`/api/v1/now-playing/lyrics`), never full lyrics, and no public MCP tool
-returns lyrics.
+The admin tools include track lyrics, a lyrics search ("which song says
+…"), the lyrics translation queue and a re-queue action. Lyrics come from
+[LRCLIB](https://lrclib.net), translations from Claude. The public API serves
+only the lyrics (and translation) of the song playing now
+(`/api/v1/now-playing/lyrics`), and no public MCP tool returns lyrics.
 claude.ai and Claude desktop custom connectors send no custom headers, so they
 get the public tools only.
 

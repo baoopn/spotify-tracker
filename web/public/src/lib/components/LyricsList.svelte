@@ -7,12 +7,17 @@
 		keys,
 		active,
 		size = 'sm',
+		translation = null,
+		translationLang,
 		class: className = ''
 	}: {
 		lines: readonly LyricLine[];
 		keys: readonly string[];
 		active: number;
 		size?: 'sm' | 'lg';
+		/** One translated line per line ("" = none), shown under each one. */
+		translation?: readonly string[] | null;
+		translationLang?: string;
 		class?: string;
 	} = $props();
 
@@ -26,20 +31,28 @@
 	}
 
 	// Keep the active line centred inside the box only (never scroll the page),
-	// also when the run changes around it.
+	// also when the lines change around it. Before the first line (or after
+	// a change of song), go back to the top.
 	$effect(() => {
 		const i = active;
 		void keys;
+		void translation; // lines grow taller when a translation shows
 		if (!box) {
 			placed = false;
 			return;
 		}
-		if (i < 0 || Date.now() < pausedUntil) return;
+		if (Date.now() < pausedUntil) return;
+		const behavior = !placed || reducedMotion.current ? 'auto' : 'smooth';
+		if (i < 0) {
+			box.scrollTo({ top: 0, behavior });
+			placed = true;
+			return;
+		}
 		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
 		if (!el) return;
 		box.scrollTo({
 			top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
-			behavior: !placed || reducedMotion.current ? 'auto' : 'smooth'
+			behavior
 		});
 		placed = true;
 	});
@@ -80,6 +93,16 @@
 			]}
 		>
 			{#if line.text}{line.text}{:else}<span aria-hidden="true">♪</span>{/if}
+			{#if translation?.[i]}
+				<span
+					class={[
+						'block font-normal opacity-75',
+						size === 'lg' ? 'font-sans text-lg sm:text-xl' : 'text-[0.85em]'
+					]}
+					lang={translationLang}
+					dir="auto">{translation[i]}</span
+				>
+			{/if}
 		</p>
 	{/each}
 </div>

@@ -10,7 +10,7 @@ import (
 )
 
 // TestReadOnlyHandlerRoutes checks the MCP admin handler exposes only GET
-// routes, and none of the excluded ones.
+// routes (plus the translation re-queue), and none of the excluded ones.
 func TestReadOnlyHandlerRoutes(t *testing.T) {
 	h := ReadOnlyHandler(&API{})
 	routes, ok := h.(chi.Routes)
@@ -20,7 +20,7 @@ func TestReadOnlyHandlerRoutes(t *testing.T) {
 	n := 0
 	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		n++
-		if method != http.MethodGet {
+		if method != http.MethodGet && method+" "+route != "POST /tracks/{id}/translation/requeue" {
 			t.Errorf("%s %s: only GET routes are allowed", method, route)
 		}
 		for _, banned := range []string{"/settings", "/auth", "/audit", "/config", "/callback", "/mcp"} {
@@ -33,8 +33,8 @@ func TestReadOnlyHandlerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 14 {
-		t.Errorf("got %d routes, want 14", n)
+	if n != 16 {
+		t.Errorf("got %d routes, want 16", n)
 	}
 
 	for _, tc := range []struct {

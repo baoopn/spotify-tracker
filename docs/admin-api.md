@@ -189,6 +189,8 @@ The token is never logged or audited.
 | GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, created_at }` |
 | GET | `/admin/api/tracks/{id}` | – | `TrackAdminDetail = TrackView & { plays, last_played, created_at, enrichment: { status, source, attempts, last_error, next_attempt_at, enriched_at, features: AudioFeatures, genres: Genre[] } \| null }` |
 | GET | `/admin/api/tracks/{id}/lyrics` | `synced` (`true`\|`false`, default false) | `TrackLyrics` (see [Lyrics](#lyrics)) |
+| GET | `/admin/api/lyrics/translation-queue` | – | `TranslationQueue` (see [Lyrics](#lyrics)) |
+| POST | `/admin/api/tracks/{id}/translation/requeue` | – | `202 { queued: true }`; `404 no_lyrics` when the track has no found lyrics |
 | GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
@@ -223,10 +225,10 @@ Other playlist, user or show links fall back to the name search.
 Lyrics come from [LRCLIB](https://lrclib.net) and are looked up in the
 background (see [architecture](architecture.md#lyrics)). They are served only
 here and through the admin MCP tools (`admin_track_lyrics`,
-`admin_search_lyrics`). The public side gets only a short window of synced
-lines of the song playing now (`GET /api/v1/now-playing/lyrics`, see
-[architecture](architecture.md#public-now-playing-lyrics-window)), never plain
-or full lyrics. The admin overview's now-playing card uses
+`admin_search_lyrics`). The public side gets only the lyrics of the song playing now
+(`GET /api/v1/now-playing/lyrics`, see
+[architecture](architecture.md#public-now-playing-lyrics)), never those of any
+other track. The admin overview's now-playing card uses
 `GET /tracks/{id}/lyrics?synced=true` for the current track; there is no
 admin-only now-playing lyrics route. Credit LRCLIB wherever lyrics are shown.
 
@@ -244,9 +246,51 @@ type TrackLyrics = {
   last_error: string;
   fetched_at: string | null; // last lookup
   next_attempt_at: string | null; // next retry (not_found / error)
+  waiting: boolean;          // a lookup is due soon (pending with the fetcher on, or an error retried within minutes)
+  translation: TrackTranslation | null; // only when status is found
+};
+type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
+type TrackTranslation = {
+  status: TranslationStatus; // not_queued = never queued (no backfill; queued when it plays or re-queued)
+  stale: boolean;            // the lyrics changed since; it is being redone
+  waiting: boolean;          // it will be worked on soon: leased, queued, re-queued, stale or a retry
+                             // due within minutes, and no cap reached (poll only then);
+                             // false when translation is off or never queued
+  kind: 'synced' | 'plain' | null;
+  source_language: string | null; // ISO 639-1, or "und"
+  // Synced: one line per line of the parsed LRC (internal/lrc, src/lib/lrc.ts),
+  // joined with "\n"; split it to line it up. Plain: the text.
+  // null = the song is already in that language.
+  en: string | null;
+  vi: string | null;
+  model: string;             // the model that answered
+  attempts: number;          // failures in a row
+  last_error: string;
+  translated_at: string | null;
+  next_attempt_at: string | null; // retry of an error; null after giving up
+};
+type TranslationQueue = {
+  enabled: boolean; daily_cap: number; monthly_cap: number;
+  queued: number;       // waiting, stale, or a retry that is due
+  in_progress: number;  // leased by a worker now
+  done: number; skipped: number; refused: number;
+  error: number;        // failed, retry scheduled
+  given_up: number;     // failed too often; re-queue to try again
+  next_retry_at: string | null;
+  calls_today: number; calls_month: number;      // Claude calls (UTC)
+  tokens_month: { input: number; output: number };
 };
 type LyricsMatch = { track: TrackView; snippet: string; phrase_match: boolean; has_synced: boolean };
 ```
+
+Translations (Claude) are queued when a song plays, never for the whole
+library (see [architecture](architecture.md#lyrics-translation)).
+`POST /tracks/{id}/translation/requeue` puts the track first and clears a
+refused, failed, given-up or done translation; it is audited
+(`translation.requeued`) and is the one write route the MCP server can reach
+(`admin_requeue_translation`). The admin overview polls the song playing now
+every 10 s while its lyrics or translation are on their way; other tracks
+every minute.
 
 An unknown track is `404 not_found`; a bad `synced` value is
 `400 invalid_synced`. `GET /lyrics/search` answers `400 invalid_query` or

@@ -38,10 +38,16 @@ type Service struct {
 	rules       PlayRules
 	maxAttempts int
 	playlists   PlaylistFetcher
+	onPlaying   func(trackID string)
 }
 
 // SetPlaylistFetcher enables playlist metadata lookups for played contexts.
 func (s *Service) SetPlaylistFetcher(f PlaylistFetcher) { s.playlists = f }
+
+// OnPlaying sets a hook called with the track id of every recorded snapshot
+// that is playing (the lyrics fetcher and translator wake on it). It must
+// not block.
+func (s *Service) OnPlaying(f func(trackID string)) { s.onPlaying = f }
 
 // NewService creates a Service. rules decide when a listen counts as a play.
 func NewService(st *store.Store, rdb *redis.Client, log *slog.Logger, rules PlayRules, maxAttempts int) *Service {
@@ -196,6 +202,9 @@ func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, res Recor
 		s.InvalidateCache(ctx)
 	}
 	s.publishNowPlaying(ctx)
+	if s.onPlaying != nil && pb.IsPlaying && pb.Track.ID != "" {
+		s.onPlaying(pb.Track.ID)
+	}
 
 	if res.HistoryCreated {
 		observability.HistoryEntries.Inc()

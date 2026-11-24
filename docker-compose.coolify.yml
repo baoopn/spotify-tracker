@@ -20,6 +20,8 @@
 #     docs/backup.md; the backup service idles until they are set)
 #   MCP_ADMIN_TOKEN (optional, openssl rand -hex 32; a bootstrap token for the
 #     read-only admin tools of /mcp; normally generate one in Settings -> MCP)
+#   ANTHROPIC_API_KEY + TRANSLATE_ENABLED=true (optional: Claude lyrics
+#     translation; uses Anthropic API credit, see docs/deployment.md)
 # Register <api domain>/admin/api/spotify/callback as a Redirect URI in the
 # Spotify Developer Dashboard.
 # Set the API domain on the "api" service (e.g. https://spotify-api.example.com);
@@ -126,6 +128,19 @@ services:
       - PLAY_COUNT_MIN_FRACTION=${PLAY_COUNT_MIN_FRACTION:-0.3}
       - PLAY_RESUME_WINDOW=${PLAY_RESUME_WINDOW:-24h}
       - REPLAY_RESET_THRESHOLD=${REPLAY_RESET_THRESHOLD:-10s}
+      # Lyrics translation by Claude (off by default; uses Anthropic API credit).
+      - TRANSLATE_ENABLED=${TRANSLATE_ENABLED:-false}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TRANSLATE_MODEL=${TRANSLATE_MODEL:-claude-opus-5-5}
+      - TRANSLATE_EFFORT=${TRANSLATE_EFFORT:-low}
+      - TRANSLATE_INTERVAL=${TRANSLATE_INTERVAL:-1m}
+      - TRANSLATE_BATCH=${TRANSLATE_BATCH:-5}
+      - TRANSLATE_SPACING=${TRANSLATE_SPACING:-15s}
+      - TRANSLATE_LEASE=${TRANSLATE_LEASE:-10m}
+      - TRANSLATE_RECENT_WINDOW=${TRANSLATE_RECENT_WINDOW:-30m}
+      - TRANSLATE_DAILY_CAP=${TRANSLATE_DAILY_CAP:-100}
+      - TRANSLATE_MONTHLY_CAP=${TRANSLATE_MONTHLY_CAP:-1000}
+      - TRANSLATE_MAX_ATTEMPTS=${TRANSLATE_MAX_ATTEMPTS:-5}
       - PUBLIC_URL=${SERVICE_URL_API}
       - SECRETS_KEY=${SECRETS_KEY}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}

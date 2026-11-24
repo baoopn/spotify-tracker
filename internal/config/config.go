@@ -81,6 +81,12 @@ type API struct {
 	// ReplayResetThreshold is how far the progress must jump back on the
 	// same track to count as a replay.
 	ReplayResetThreshold time.Duration `env:"REPLAY_RESET_THRESHOLD" envDefault:"10s"`
+	// PlayCountMinFraction is the share of a track that must be heard before
+	// a listen counts as a play (30 s when the duration is unknown).
+	PlayCountMinFraction float64 `env:"PLAY_COUNT_MIN_FRACTION" envDefault:"0.3"`
+	// PlayResumeWindow is how long a paused or idle song can resume as the
+	// same listen instead of counting another play.
+	PlayResumeWindow time.Duration `env:"PLAY_RESUME_WINDOW" envDefault:"24h"`
 }
 
 // Poller is the configuration of cmd/poller. It holds no Spotify secrets:
@@ -351,6 +357,15 @@ func (a *API) validate() error {
 	}
 	if a.EnrichMaxAttempts <= 0 {
 		return fmt.Errorf("ENRICH_MAX_ATTEMPTS must be > 0")
+	}
+	if a.ReplayResetThreshold <= 0 {
+		return fmt.Errorf("REPLAY_RESET_THRESHOLD must be > 0")
+	}
+	if a.PlayCountMinFraction < 0.05 || a.PlayCountMinFraction > 1 {
+		return fmt.Errorf("PLAY_COUNT_MIN_FRACTION must be between 0.05 and 1")
+	}
+	if a.PlayResumeWindow < time.Minute || a.PlayResumeWindow > 30*24*time.Hour {
+		return fmt.Errorf("PLAY_RESUME_WINDOW must be between 1m and 720h")
 	}
 	if a.MCP.AdminToken != "" && len(a.MCP.AdminToken) < minMCPAdminTokenLen {
 		return fmt.Errorf("MCP_ADMIN_TOKEN must be at least %d characters", minMCPAdminTokenLen)

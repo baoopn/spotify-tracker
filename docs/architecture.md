@@ -183,8 +183,15 @@ public page the full lyrics of the song playing now, and of no other song:
 - **Current track only.** It takes no parameters (a query string is ignored)
   and reads the now-playing snapshot. It answers `{"data":null}` when nothing
   plays, playback is paused, the snapshot is older than 60 s (poller down),
-  the estimated position is past the track's end, or the track has no lyrics
-  (yet).
+  the estimated position is past the track's end, or no lyrics were found.
+- **Status.** The body has `status`: `found`, `instrumental`, or `pending`
+  (no text). Pending always ends: it means no lookup yet while the lyrics
+  fetcher runs (`LYRICS_ENABLED`), or a failed lookup retried within two
+  minutes; otherwise the answer is null. The page shows "Looking for
+  lyrics…" and asks again every 10 s while lyrics or their translation are
+  pending, every 30 s while the answer is null, and stops once both are
+  settled. The lyrics fetcher is woken for the song playing now, so pending
+  clears quickly.
 - **Full lyrics.** `store.NowLyrics` reads the track's found or instrumental
   lyrics. Synced LRC text is parsed by `internal/lrc` (several time tags per
   line, `[offset:]`, metadata and untimed lines dropped) and sent as
@@ -194,14 +201,89 @@ public page the full lyrics of the song playing now, and of no other song:
   20 000 runes). Instrumental tracks get
   `instrumental: true` and no text. The page highlights the current line
   from its own position estimate.
+- **Translation.** With `TRANSLATE_ENABLED`, found lyrics carry
+  `translation: { status: 'pending' | 'done', source_language, en, vi, credit }`
+  (see [Lyrics translation](#lyrics-translation)). Each language is
+  `{ lines, plain }`: for synced lyrics `lines` has one entry per served line
+  (`""` for empty lines; a language whose line count does not match the
+  parsed LRC is dropped), for plain lyrics `plain` holds the text. A null
+  language means the song is in that language. `translation` is null when the
+  feature is off, for instrumental or pending lyrics, and when there will be
+  no translation (skipped, refused, given up). The translation is `pending`
+  only while it will be worked on soon: leased now, or queued, stale or a
+  retry due within two minutes while no cap is reached. A retry further
+  away, or one held back by a reached cap, shows no translation, so the
+  "Translating…" tag and the 10 s poll cannot run for a whole song. Credit:
+  "Translated by Claude".
 - **Credit and caching.** Every answer carries `credit` ("Lyrics from
   LRCLIB", <https://lrclib.net>). `Cache-Control: no-store`, so Cloudflare
   never caches it. The current track's answer is kept in memory for 1 min
-  (10 s when there are no lyrics yet), and concurrent misses share one store
-  read. So each replica reads the database about once a minute while one
-  track plays (every 10 s while it has no lyrics), plus once per track change.
+  (10 s while there are no lyrics, or the lyrics or translation are pending),
+  and concurrent misses share one store read. So each replica reads the
+  database about once a minute while one track plays (every 10 s while
+  something is pending), plus once per track change.
 - **Not in MCP.** The route is registered next to `v1Routes`, not in it, so
   `V1Handler` (and with it the MCP server) cannot reach it.
+
+### Lyrics translation
+
+`internal/translate` translates found lyrics into English and Vietnamese with
+the Claude API (Go SDK `anthropic-sdk-go/v2`), off unless `TRANSLATE_ENABLED`
+and `ANTHROPIC_API_KEY` are set. Results are stored in `lyrics_translations`
+(migration `00015_lyrics_translations.sql`) and shown on the public
+now-playing lyrics and in the admin.
+
+- **Queue, no backfill.** A song is queued only when it plays: the tracker
+  wakes the worker with the song playing now (`Wake`), and each batch also
+  queues songs played within `TRANSLATE_RECENT_WINDOW` (30 min) that have
+  lyrics (this covers lyrics found after the song started, and plays another
+  replica saw). An admin can re-queue any track. Old songs that have not
+  played since the feature shipped are never queued on their own.
+- **Order.** The song playing now first, then re-queued songs (newest request
+  first), then by last play. The song playing now counts as queued only once
+  its row exists (it may have no lyrics yet); when LRCLIB finds its lyrics,
+  the fetcher tells the translator, which queues it then (also with
+  `TRANSLATE_RECENT_WINDOW=0`), so a new song gets lyrics and then a
+  translation within about a minute.
+- **Leases.** The worker claims one song at a time with
+  `UPDATE ... FOR UPDATE SKIP LOCKED` and a lease (`claimed_by`,
+  `claimed_until`, `TRANSLATE_LEASE`, 10 min). Results are written only while
+  the claim is held and the lyrics still match the hash they were read with
+  (`source_hash`); a crashed worker's lease expires and the song is claimed
+  again. So API replicas never translate the same song twice. A re-queue
+  never clears a live lease: the song is queued again when the current
+  worker finishes.
+- **Calls and caps.** One Claude call at a time per process, at least
+  `TRANSLATE_SPACING` (15 s) apart (no wait after a song that needed no
+  call). Before each call one call is counted in `translation_usage` (per UTC
+  day) if `TRANSLATE_DAILY_CAP` and `TRANSLATE_MONTHLY_CAP` allow it; the
+  check and the increment run in one transaction under
+  `pg_advisory_xact_lock`, so replicas cannot both take the last call. At a
+  cap the worker pauses until the next UTC day (at most 6 h) and checks
+  again. The SDK does not retry; the worker does, so every call counts once.
+  Billed tokens are recorded for every answer, also unusable ones.
+- **Request.** Model `TRANSLATE_MODEL` (`claude-opus-5-5`), effort
+  `TRANSLATE_EFFORT` (low), thinking left at its default, structured JSON
+  output (`{ source_language, en, vi }`), the fixed system prompt first with a
+  cache breakpoint, the server-side refusal fallback (`fallbacks: "default"`).
+  Synced lyrics go as numbered non-empty lines and come back as one line per
+  input line; the worker puts empty lines back, so `en_lines` / `vi_lines`
+  line up with `internal/lrc.Parse`. Plain lyrics go as one text. A language
+  the song is already in is stored as null. `<lyrics>` tags in the title,
+  artist or text are neutralized, so song text cannot leave its block. Songs
+  over 250 lines or 6 000 characters are `skipped` without a call (both
+  translations must fit one answer).
+- **Outcomes.** `done`; `refused` (terminal); `skipped` (also an answer cut
+  off at `max_tokens`: "too long", not retried); `error` retried with
+  backoff from 30 min (doubling, at most 7 days) and given up after
+  `TRANSLATE_MAX_ATTEMPTS` (5) failures in a row (`next_attempt_at` null).
+  A rate limit pauses for its Retry-After; a bad key or a spent credit pauses
+  for 6 h and logs an error (never the key). Stored errors never hold the
+  response body. When the lyrics change, the row is stale and translated again.
+- **Admin and MCP.** `GET /admin/api/lyrics/translation-queue` (MCP
+  `admin_translation_queue`) counts the queue and this month's calls;
+  `POST /admin/api/tracks/{id}/translation/requeue` (MCP
+  `admin_requeue_translation`) puts a track first.
 
 ## Top 50 playlists
 
@@ -366,15 +448,17 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   (range), `top_tracks` / `top_artists` / `top_genres` (range, limit),
   `audio_profile` (range), `recent_playlists` (limit), `top_playlists` (limit).
   None returns lyrics; the public now-playing lyrics are not reachable from MCP.
-- **Admin tools** (read-only): `admin_overview`, `admin_spotify_status`,
+- **Admin tools** (read-only unless noted): `admin_overview`, `admin_spotify_status`,
   `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
   limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),
-  `admin_search_lyrics` (q, limit), `admin_artists` (q, sort, order, limit,
+  `admin_search_lyrics` (q, limit), `admin_translation_queue`,
+  `admin_requeue_translation` (id; the one write tool: it only reorders the
+  translation queue, marked not read-only), `admin_artists` (q, sort, order, limit,
   offset), `admin_playlists` (limit, offset), `admin_top_playlists` (period,
   limit, offset), `admin_top_playlist` (period, start), `admin_backups`,
   `admin_api_analytics` / `admin_page_analytics` (range, tz). Write routes, the
   SMTP settings, the MCP settings, `/auth/me`, `/audit` and `/config` are not
-  exposed. `mcpserver.PublicTools()` / `AdminTools()` list the names and
+  exposed (except the translation re-queue). `mcpserver.PublicTools()` / `AdminTools()` list the names and
   descriptions for the dashboard.
 
 ## Brand assets
@@ -424,5 +508,9 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   stream, so streams are capped: at most 6 per client IP (429) and 256 in all
   (503); each stream closes after about 30 minutes and clients reconnect.
 - Lyrics reach the public only through `GET /api/v1/now-playing/lyrics`: the
-  track playing now, a window of at most 10 synced lines, never plain text,
-  `no-store`; it is outside `v1Routes`, so MCP cannot call it.
+  full lyrics and translation of the track playing now, `no-store`; it is
+  outside `v1Routes`, so MCP cannot call it.
+- Lyrics translation sends the lyrics of played songs (title, artist and
+  text) to the Anthropic API. The key is read once from `ANTHROPIC_API_KEY`
+  (removed from the environment), lives only in the SDK client, and is never
+  logged or stored; errors are stored without response bodies.

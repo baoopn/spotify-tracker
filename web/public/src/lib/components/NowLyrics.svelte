@@ -1,16 +1,20 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
 	import { tick } from 'svelte';
+	import LyricsLangToggle from './LyricsLangToggle.svelte';
 	import LyricsList from './LyricsList.svelte';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { artistNames } from '#lib/format.js';
 	import { live } from '#lib/live.svelte.js';
-	import { currentIndex, lineKeys } from '#lib/lyrics.js';
+	import { availableLangs, currentIndex, interleave, lineKeys, pickLang } from '#lib/lyrics.js';
+	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
 	import type { NowPlaying } from '#lib/types.js';
 
 	let { np }: { np: NowPlaying } = $props();
+	// A JS string: a leading space in markup would be dropped.
+	const CREDIT_SEP = ' · ';
 
 	const uid = $props.id();
 	const headingId = `${uid}-now-lyrics`;
@@ -26,10 +30,27 @@
 	const query = createQuery(() => nowLyricsQuery(trackId, playing));
 	const data = $derived(query.data && query.data.track_id === trackId ? query.data : null);
 
-	const lines = $derived(data?.synced ? data.lines : []);
+	const found = $derived(data?.status === 'found' ? data : null);
+	const lines = $derived(found?.synced ? found.lines : []);
 	const keys = $derived(lineKeys(lines));
-	const plain = $derived(!lines.length && data?.plain ? data.plain : null);
-	const instrumental = $derived(!lines.length && !plain && !!data?.instrumental);
+	const plain = $derived(!lines.length && found?.plain ? found.plain : null);
+	const instrumental = $derived(data?.status === 'instrumental');
+	/** The lookup is still to come: the server says so, ask again soon. */
+	const looking = $derived(data?.status === 'pending');
+	/** No answer for this song yet (first fetch, or the previous song's data). */
+	const loading = $derived(
+		playing && !data && (query.isPending || query.isFetching) && !query.isError
+	);
+	const failed = $derived(playing && !data && query.isError && !query.isFetching);
+
+	// Translation: one shared preference; a song without it shows the original.
+	const tr = $derived(found?.translation ?? null);
+	const available = $derived(availableLangs(tr));
+	const lang = $derived(pickLang(lyricsLang.value, available));
+	const trText = $derived(tr && lang !== 'orig' ? tr[lang] : null);
+	const trLines = $derived(trText && lines.length ? trText.lines : null);
+	const trPlain = $derived(trText && plain ? trText.plain : null);
+	const translating = $derived(tr?.status === 'pending');
 
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
 	// moves the highlight in between. Only needed for synced lines.
@@ -42,7 +63,7 @@
 
 	/** Something to read: synced lines or plain text (instrumental has no expand). */
 	const readable = $derived(playing && (lines.length > 0 || plain != null));
-	const shown = $derived(readable || (playing && instrumental));
+	const shown = $derived(readable || (playing && (instrumental || looking || loading || failed)));
 
 	// Expanded view: a native modal dialog (focus trap, Esc, focus return).
 	let dialog = $state<HTMLDialogElement>();
@@ -81,9 +102,13 @@
 	});
 </script>
 
-{#if shown && data}
-	<section aria-labelledby={headingId} class="mt-6 border-t border-rule pt-4">
-		<div class="mb-2 flex items-center gap-2">
+{#if shown}
+	<section
+		aria-labelledby={headingId}
+		aria-busy={loading || looking}
+		class="mt-6 border-t border-rule pt-4"
+	>
+		<div class="mb-2 flex min-h-9 flex-wrap items-center gap-2">
 			<h3 id={headingId} class="label text-ink">Lyrics</h3>
 			{#if lines.length}
 				<span class="chip label">Synced</span>
@@ -92,59 +117,94 @@
 			{:else if instrumental}
 				<span class="chip label">Instrumental</span>
 			{/if}
+			{#if translating}
+				<span class="chip label" title="The translation is on its way">Translating…</span>
+			{/if}
 			{#if readable}
-				<button
-					type="button"
-					class="ml-auto inline-flex size-9 items-center justify-center rounded-lg border border-rule text-ink-soft transition-colors hover:border-ink hover:text-ink"
-					aria-label="Expand lyrics"
-					title="Expand lyrics"
-					aria-haspopup="dialog"
-					aria-expanded={open}
-					aria-controls={dialogId}
-					onclick={expand}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="size-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.75"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
+				<div class="ml-auto flex items-center gap-2">
+					<LyricsLangToggle {available} bind:value={lyricsLang.value} compact />
+					<button
+						type="button"
+						class="inline-flex size-9 items-center justify-center rounded-lg border border-rule text-ink-soft transition-colors hover:border-ink hover:text-ink"
+						aria-label="Expand lyrics"
+						title="Expand lyrics"
+						aria-haspopup="dialog"
+						aria-expanded={open}
+						aria-controls={dialogId}
+						onclick={expand}
 					>
-						<path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" />
-					</svg>
-				</button>
+						<svg
+							viewBox="0 0 24 24"
+							class="size-4"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.75"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" />
+						</svg>
+					</button>
+				</div>
 			{/if}
 		</div>
 
-		<!-- One scroller at a time; the empty box holds the card's height. -->
-		{#if instrumental}
+		<!-- One scroller at a time; every waiting state holds the same h-64 box,
+		     so nothing jumps when the lyrics arrive. -->
+		{#if loading}
+			<div class="skeleton h-64 rounded-lg" aria-hidden="true"></div>
+			<p class="sr-only">Loading lyrics</p>
+		{:else if failed}
+			<p class="flex h-64 items-center justify-center gap-2 text-sm text-ink-soft" role="alert">
+				Couldn&rsquo;t load lyrics.
+				<button type="button" class="link font-semibold text-ink" onclick={() => query.refetch()}
+					>Retry</button
+				>
+			</p>
+		{:else if looking}
+			<p class="flex h-64 items-center justify-center text-sm text-ink-soft" role="status">
+				Looking for lyrics…
+			</p>
+		{:else if instrumental}
 			<!-- No words to show; the chip says it all. -->
 		{:else if open}
 			<div class="h-64" aria-hidden="true"></div>
 		{:else if lines.length}
-			<LyricsList {lines} {keys} {active} class="h-64" />
+			<LyricsList
+				{lines}
+				{keys}
+				{active}
+				translation={trLines}
+				translationLang={lang}
+				class="h-64"
+			/>
 		{:else if plain}
 			<!-- A new box per song, so the next song starts at the top. -->
 			{#key trackId}
-				{@render plainText(plain, 'h-64 py-2 text-base leading-relaxed')}
+				{@render plainText(plain, trPlain, 'h-64 py-2 text-base leading-relaxed')}
 			{/key}
 		{/if}
 
-		<p class="mt-2 text-xs text-ink-soft">
-			<a
-				href={data.credit.url}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="link font-semibold text-ink">{data.credit.text}</a
-			>
-		</p>
+		{#if found}
+			{@render credits('mt-3')}
+		{/if}
 	</section>
 {/if}
 
-{#snippet plainText(text: string, cls: string)}
+{#snippet credits(cls: string)}
+	<p class={['text-xs text-ink-soft', cls]}>
+		<a
+			href={found?.credit.url}
+			target="_blank"
+			rel="noopener noreferrer"
+			class="link font-semibold text-ink">{found?.credit.text}</a
+		>{#if trText && tr}{CREDIT_SEP}{tr.credit.text}{/if}
+	</p>
+{/snippet}
+
+{#snippet plainText(text: string, translated: string | null, cls: string)}
+	{@const pairs = translated ? interleave(text, translated) : null}
 	<!-- A scrollable box must be focusable so keyboard users can scroll it. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
@@ -152,9 +212,25 @@
 		aria-label="Lyrics, scrollable"
 		tabindex="0"
 		dir="auto"
-		class={['overflow-y-auto break-words whitespace-pre-line text-ink', cls]}
+		class={['overflow-y-auto break-words text-ink', cls]}
 	>
-		{text}
+		{#if pairs}
+			{#each pairs as p, i (i)}
+				<p class="min-h-[1lh]">
+					{p.text}
+					{#if p.tr}<span class="block text-[0.85em] opacity-75" {lang} dir="auto">{p.tr}</span
+						>{/if}
+				</p>
+			{/each}
+		{:else}
+			<div class="whitespace-pre-line">{text}</div>
+			{#if translated}
+				<h4 class="label mt-4 mb-1 text-ink-soft" {lang}>
+					{lang === 'vi' ? 'Bản dịch tiếng Việt' : 'English translation'}
+				</h4>
+				<div class="whitespace-pre-line opacity-80" {lang}>{translated}</div>
+			{/if}
+		{/if}
 	</div>
 {/snippet}
 
@@ -170,7 +246,7 @@
 	onpointerdown={onBackdropDown}
 	onclick={onBackdrop}
 >
-	{#if open && data && np.track}
+	{#if open && found && np.track}
 		<div class="flex h-full flex-col bg-paper text-ink">
 			<header class="flex items-start gap-3 border-b border-rule px-5 py-4">
 				<div class="min-w-0 flex-1">
@@ -179,6 +255,7 @@
 					</h2>
 					<p class="truncate text-sm text-ink-soft" dir="auto">{artistNames(np.track.artists)}</p>
 				</div>
+				<LyricsLangToggle {available} bind:value={lyricsLang.value} />
 				<button
 					type="button"
 					class="btn btn-secondary btn-icon"
@@ -201,23 +278,25 @@
 				</button>
 			</header>
 			{#if lines.length}
-				<LyricsList {lines} {keys} {active} size="lg" class="min-h-0 flex-1 px-5 sm:px-8" />
+				<LyricsList
+					{lines}
+					{keys}
+					{active}
+					size="lg"
+					translation={trLines}
+					translationLang={lang}
+					class="min-h-0 flex-1 px-5 sm:px-8"
+				/>
 			{:else if plain}
 				{#key trackId}
 					{@render plainText(
 						plain,
+						trPlain,
 						'min-h-0 flex-1 overscroll-contain px-5 py-6 text-xl leading-relaxed sm:px-8 sm:text-2xl'
 					)}
 				{/key}
 			{/if}
-			<p class="border-t border-rule px-5 py-3 text-xs text-ink-soft">
-				<a
-					href={data.credit.url}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="link font-semibold text-ink">{data.credit.text}</a
-				>
-			</p>
+			<div class="border-t border-rule px-5 py-3">{@render credits('')}</div>
 		</div>
 	{/if}
 </dialog>

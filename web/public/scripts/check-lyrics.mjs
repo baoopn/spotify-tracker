@@ -1,7 +1,7 @@
 // Now-playing lyrics helper checks, run by `pnpm check`.
 // Uses Node's built-in TypeScript type stripping to import the real helpers.
 import assert from 'node:assert/strict';
-import { currentIndex, lineKeys } from '../src/lib/lyrics.ts';
+import { availableLangs, currentIndex, interleave, lineKeys, pickLang } from '../src/lib/lyrics.ts';
 import { estimatePositionMs } from '../src/lib/playback.ts';
 
 /** @param {number[]} starts */
@@ -62,5 +62,32 @@ assert.deepEqual(
 	['1:0', '5:0', '5:1', '9:0']
 );
 assert.deepEqual(lineKeys([]), []);
+
+// Translations: only done ones, never the song's own language.
+const txt = { lines: ['a'], plain: null };
+assert.deepEqual(availableLangs(null), []);
+assert.deepEqual(
+	availableLangs({ status: 'pending', source_language: null, en: null, vi: null }),
+	[]
+);
+assert.deepEqual(availableLangs({ status: 'done', source_language: 'ko', en: txt, vi: txt }), [
+	'en',
+	'vi'
+]);
+assert.deepEqual(availableLangs({ status: 'done', source_language: 'vi', en: txt, vi: txt }), [
+	'en'
+]);
+assert.deepEqual(availableLangs({ status: 'done', source_language: 'en', en: null, vi: txt }), [
+	'vi'
+]);
+assert.equal(pickLang('vi', ['en']), 'orig', 'missing language falls back to the original');
+assert.equal(pickLang('en', ['en', 'vi']), 'en');
+assert.equal(pickLang('orig', ['en']), 'orig');
+assert.deepEqual(interleave('một\n\nhai', 'one\n\ntwo'), [
+	{ text: 'một', tr: 'one' },
+	{ text: '', tr: '' },
+	{ text: 'hai', tr: 'two' }
+]);
+assert.equal(interleave('a\nb', 'one line'), null, 'different shapes: show below');
 
 console.log('lyrics checks passed');

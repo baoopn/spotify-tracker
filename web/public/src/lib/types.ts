@@ -37,18 +37,34 @@ export type NowPlaying = {
 /** One synced lyric line; empty text marks an instrumental gap. */
 export type LyricLine = { start_ms: number; text: string };
 
+/** One language of a lyrics translation: `lines` line up with the synced
+ * lines (same length, "" for empty lines); `plain` for plain lyrics. */
+export type LyricsTranslationText = { lines: string[]; plain: string | null };
+
+/** The Claude translation of found lyrics. A null language means the song
+ * is already in that language (or there is none). */
+export type LyricsTranslation = {
+	status: 'pending' | 'done';
+	source_language: string | null;
+	en: LyricsTranslationText | null;
+	vi: LyricsTranslationText | null;
+	credit: { text: string };
+};
+
 /**
  * The lyrics of the track playing now (GET /api/v1/now-playing/lyrics).
- * `synced` lyrics come as timed `lines`; otherwise `plain` holds the text.
- * Instrumental tracks have neither.
+ * Status `found`: `synced` lyrics come as timed `lines`, otherwise `plain`
+ * holds the text. `instrumental` and `pending` (looked up soon) have neither.
  */
 export type NowLyrics = {
 	track_id: string;
+	status: 'found' | 'instrumental' | 'pending';
 	synced: boolean;
 	instrumental: boolean;
 	lines: LyricLine[];
 	plain: string | null;
 	credit: { text: string; url: string };
+	translation: LyricsTranslation | null;
 };
 
 export type HistoryEntry = {

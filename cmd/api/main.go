@@ -37,7 +37,6 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
 	"github.com/baoopn/spotify-tracker/internal/logging"
-	"github.com/baoopn/spotify-tracker/internal/lrclib"
 	"github.com/baoopn/spotify-tracker/internal/lyrics"
 	"github.com/baoopn/spotify-tracker/internal/mcpserver"
 	"github.com/baoopn/spotify-tracker/internal/notify"
@@ -52,6 +51,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/store"
 	"github.com/baoopn/spotify-tracker/internal/topplaylists"
 	"github.com/baoopn/spotify-tracker/internal/tracker"
+	"github.com/baoopn/spotify-tracker/internal/translate"
 	adminui "github.com/baoopn/spotify-tracker/web/admin"
 	publicui "github.com/baoopn/spotify-tracker/web/public"
 )
@@ -107,6 +107,9 @@ func run(ctx context.Context) error {
 	if c.lyrics != nil {
 		g.Go(func() error { return c.lyrics.Run(gctx) })
 	}
+	if c.translator != nil {
+		g.Go(func() error { return c.translator.Run(gctx) })
+	}
 	g.Go(func() error { return c.brand.Run(gctx) })
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
@@ -129,7 +132,8 @@ type components struct {
 	images    *artistimages.Refresher
 	albums    *albumdetails.Refresher
 	// lyrics is nil when LYRICS_ENABLED is false.
-	lyrics *lyrics.Refresher
+	lyrics     *lyrics.Refresher
+	translator *translate.Worker // nil when TRANSLATE_ENABLED is false
 	// brand is never nil; it is disabled when BRAND_API_URL is empty.
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
@@ -193,15 +197,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	}
 	adminAPI.TopPlaylistsConfig = topCfg
 
-	var lyricsRefresher *lyrics.Refresher
-	if cfg.Lyrics.Enabled {
-		lyricsRefresher = lyrics.New(st, lrclib.New(cfg.Lyrics.APIURL, cfg.Lyrics.Spacing, nil), log)
-		lyricsRefresher.Interval = cfg.Lyrics.Interval
-		lyricsRefresher.Batch = cfg.Lyrics.Batch
-		lyricsRefresher.NotFoundRetry = cfg.Lyrics.NotFoundRetry
-	} else {
-		log.Info("lyrics fetcher disabled (LYRICS_ENABLED=false)")
-	}
+	lyricsRefresher, translator := newLyricsQueue(cfg, st, svc, adminAPI, log)
 
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
@@ -214,6 +210,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		images:       artistimages.New(st, mgr, log),
 		albums:       albumdetails.New(st, mgr, log),
 		lyrics:       lyricsRefresher,
+		translator:   translator,
 		topPlaylists: topRunner,
 		brand:        brandCache,
 	}, nil
@@ -361,6 +358,9 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			Site:                  staticsite.New(publicui.FS(), publicSiteOptions()),
 			MCP:                   newMCP(cfg, adminAPI, log),
 			MCPRateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
+			Translation:           cfg.Translate.Enabled,
+			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
+			LyricsLookup:          cfg.Lyrics.Enabled,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

@@ -317,6 +317,53 @@ export type TrackLyrics = {
 	last_error: string;
 	fetched_at: string | null;
 	next_attempt_at: string | null;
+	/** A lookup is due soon (pending with the fetcher on, or a retry within minutes). */
+	waiting: boolean;
+	/** The Claude translation; null unless status is "found". */
+	translation: TrackTranslation | null;
+};
+
+/** not_queued: never queued (songs are queued when they play; there is no backfill). */
+export type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
+
+/**
+ * Claude translation of a track's lyrics. For synced lyrics `en` / `vi` hold
+ * one line per parsed LRC line, joined with newlines (split to line them up);
+ * for plain lyrics the text. null = the song is in that language (or none).
+ */
+export type TrackTranslation = {
+	status: TranslationStatus;
+	/** The lyrics changed since; a new translation is on its way. */
+	stale: boolean;
+	/** It will be worked on soon (leased, queued, or a retry within minutes; no cap reached). */
+	waiting: boolean;
+	kind: 'synced' | 'plain' | null;
+	source_language: string | null;
+	en: string | null;
+	vi: string | null;
+	model: string;
+	attempts: number;
+	last_error: string;
+	translated_at: string | null;
+	next_attempt_at: string | null;
+};
+
+/** GET /admin/api/lyrics/translation-queue. */
+export type TranslationQueue = {
+	enabled: boolean;
+	daily_cap: number;
+	monthly_cap: number;
+	queued: number;
+	in_progress: number;
+	done: number;
+	skipped: number;
+	refused: number;
+	error: number;
+	given_up: number;
+	next_retry_at: string | null;
+	calls_today: number;
+	calls_month: number;
+	tokens_month: { input: number; output: number };
 };
 
 /** One hit of GET /admin/api/lyrics/search. */

@@ -49,6 +49,14 @@ type Options struct {
 	MCP func(v1 http.Handler) http.Handler
 	// MCPRateLimitPerMinute limits /mcp requests per client IP (0 = off).
 	MCPRateLimitPerMinute int
+	// Translation adds the Claude translation to the public now-playing
+	// lyrics (TRANSLATE_ENABLED); TranslationCaps decide whether a queued one
+	// still counts as pending.
+	Translation     bool
+	TranslationCaps store.TranslationCaps
+	// LyricsLookup reports that the lyrics fetcher runs (LYRICS_ENABLED): only
+	// then is a song with no lyrics yet "pending" rather than null.
+	LyricsLookup bool
 }
 
 // Handler serves the public API.

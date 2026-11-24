@@ -55,6 +55,8 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			r.Get("/tracks/{id}", a.track)
 			r.Get("/tracks/{id}/lyrics", a.trackLyrics)
 			r.Get("/lyrics/search", a.searchLyrics)
+			r.Get("/lyrics/translation-queue", a.translationQueue)
+			r.Post("/tracks/{id}/translation/requeue", a.requeueTranslation)
 			r.Post("/tracks/{id}/enrich", a.enrichTrack)
 			r.Post("/enrichment/retry-failed", a.retryFailed)
 			r.Get("/artists", a.artists)
@@ -82,9 +84,11 @@ var mcpUser = User{ID: "mcp", Email: "mcp", Name: "MCP"}
 // authentication, rate limit or timeout. It is for in-process use by the MCP
 // server only, which authenticates callers itself: never mount it on a
 // public router. Lyrics (track lyrics and lyrics search) are served here, so
-// they reach admin-token MCP callers only. Write routes, /settings/email (SMTP settings), /auth/me,
-// /audit, /config and the /mcp settings (token minting) are left out on
-// purpose.
+// they reach admin-token MCP callers only. The one write route is the
+// translation re-queue (POST /tracks/{id}/translation/requeue), which only
+// reorders the translation queue. Other write routes, /settings/email (SMTP
+// settings), /auth/me, /audit, /config and the /mcp settings (token minting)
+// are left out on purpose.
 func ReadOnlyHandler(a *API) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
@@ -99,6 +103,8 @@ func ReadOnlyHandler(a *API) http.Handler {
 	r.Get("/tracks/{id}", a.track)
 	r.Get("/tracks/{id}/lyrics", a.trackLyrics)
 	r.Get("/lyrics/search", a.searchLyrics)
+	r.Get("/lyrics/translation-queue", a.translationQueue)
+	r.Post("/tracks/{id}/translation/requeue", a.requeueTranslation)
 	r.Get("/artists", a.artists)
 	r.Get("/playlists", a.playlists)
 	r.Get("/top-playlists", a.listTopPlaylists)

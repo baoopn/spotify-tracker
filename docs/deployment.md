@@ -84,12 +84,21 @@ use Coolify's rollback to redeploy an earlier deployment. Re-running an older
    certificate is issued within a minute (verified 2026-11-05).
 5. **Spotify.** Add `https://<domain>/admin/api/spotify/callback` to the
    app's Redirect URIs in the Spotify Developer Dashboard.
-6. **Backups.** The `backup` service sends an encrypted dump to a private
+6. **Lyrics translation (optional).** Create an API key in the Claude
+   Console and set `ANTHROPIC_API_KEY` and `TRANSLATE_ENABLED=true`.
+   Translations use Anthropic API credit, not a Claude subscription. Only
+   songs that play are translated (the song playing now first, plus plays in
+   the last 30 min); the existing library is never backfilled. Each song is
+   one call of roughly 1 500 to 3 000 tokens with `claude-opus-5-5`, about
+   2 to 5 US cents. The defaults cap it at 100 calls a day and 1000 a month
+   (`TRANSLATE_DAILY_CAP`, `TRANSLATE_MONTHLY_CAP`); check the real use in the
+   admin translation queue (`calls_month`, `tokens_month`) after a week.
+7. **Backups.** The `backup` service sends an encrypted dump to a private
    R2 bucket (or any S3 store) every day. Create the bucket, a bucket-scoped
    token and an age key pair, then set `BACKUP_AGE_RECIPIENT` and
    `BACKUP_S3_*`; see [backup.md](backup.md). Until then the service idles
    with a warning. Restore works on any host, not only Coolify.
-7. Copy the resource UUID into the GitHub variable `COOLIFY_RESOURCE_UUID`.
+8. Copy the resource UUID into the GitHub variable `COOLIFY_RESOURCE_UUID`.
    From now on every push to `main` deploys automatically.
 
 ## Any VPS (Docker Engine + Compose v2)

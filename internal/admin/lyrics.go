@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,8 +17,10 @@ import (
 
 // lyricsStore reads lyrics (implemented by *store.Store).
 type lyricsStore interface {
-	TrackLyrics(ctx context.Context, id string, withSynced bool) (store.TrackLyrics, error)
+	TrackLyrics(ctx context.Context, id string, withSynced bool, caps store.TranslationCaps) (store.TrackLyrics, error)
 	SearchLyrics(ctx context.Context, q string, limit int) ([]store.LyricsMatch, error)
+	TranslationQueueSummary(ctx context.Context, now time.Time) (store.TranslationQueue, error)
+	RequeueTranslation(ctx context.Context, trackID string) (bool, error)
 }
 
 func (a *API) lyricsDB() lyricsStore {
@@ -34,7 +37,8 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_synced", "synced must be true or false")
 		return
 	}
-	l, err := a.lyricsDB().TrackLyrics(r.Context(), chi.URLParam(r, "id"), withSynced)
+	caps := store.TranslationCaps{Daily: a.Translation.DailyCap, Monthly: a.Translation.MonthlyCap}
+	l, err := a.lyricsDB().TrackLyrics(r.Context(), chi.URLParam(r, "id"), withSynced, caps)
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "track not found")
 		return
@@ -42,6 +46,15 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.internal(w, r, err)
 		return
+	}
+	if l.Status == domain.LyricsPending && !a.LyricsLookup {
+		l.Waiting = false // nothing will look the lyrics up
+	}
+	if t := l.Translation; t != nil && !a.Translation.Enabled {
+		t.Waiting = false // nothing will translate it
+		if t.Status == domain.TranslationNotQueued {
+			l.Translation = nil
+		}
 	}
 	writeJSON(w, http.StatusOK, l)
 }
@@ -69,6 +82,43 @@ func (a *API) searchLyrics(w http.ResponseWriter, r *http.Request) {
 		rows = []store.LyricsMatch{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// translationQueue serves GET /lyrics/translation-queue: the queue counts,
+// the next retry, and today's and this month's Claude calls against the caps.
+func (a *API) translationQueue(w http.ResponseWriter, r *http.Request) {
+	s, err := a.lyricsDB().TranslationQueueSummary(r.Context(), a.clock())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Enabled    bool `json:"enabled"`
+		DailyCap   int  `json:"daily_cap"`
+		MonthlyCap int  `json:"monthly_cap"`
+		store.TranslationQueue
+	}{a.Translation.Enabled, a.Translation.DailyCap, a.Translation.MonthlyCap, s})
+}
+
+// requeueTranslation serves POST /tracks/{id}/translation/requeue: the
+// track's translation goes to the front of the queue (a refused, failed,
+// given-up or done one is cleared).
+func (a *API) requeueTranslation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	ok, err := a.lyricsDB().RequeueTranslation(r.Context(), id)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no_lyrics", "this track has no lyrics to translate")
+		return
+	}
+	if a.Translation.Nudge != nil {
+		a.Translation.Nudge()
+	}
+	a.audit(r, "translation.requeued", map[string]string{"track_id": id})
+	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }

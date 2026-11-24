@@ -40,7 +40,10 @@ const TOP_REFRESH_MS = 60_000;
 /** Fast poll while the enricher is still analysing the track on show. */
 const TRACK_PENDING_MS = 4_000;
 /** Re-ask for lyrics while none are shown (no lyrics yet, or a reply for another track). */
-const LYRICS_EMPTY_MS = 15_000;
+/** Re-check the song playing now while its lyrics or translation are pending. */
+const LYRICS_PENDING_MS = 10_000;
+/** No lyrics while playing: re-check slowly (a stale snapshot or a song change race). */
+const LYRICS_NONE_MS = 30_000;
 
 export const queryKeys = {
 	nowPlaying: ['now-playing'] as const,
@@ -143,12 +146,22 @@ export function nowLyricsQuery(trackId: string | null, playing: boolean) {
 			trackId && playing
 				? ({ signal }): Promise<NowLyrics | null> => fetchNowLyrics(signal)
 				: skipToken,
+		// Poll only while something is on its way (never while the tab is
+		// hidden: refetchIntervalInBackground is off). null = no lyrics: a slow
+		// re-check, in case the answer came from a stale snapshot.
 		refetchInterval: (q) => {
 			const d = q.state.data;
-			return d == null || d.track_id !== trackId ? LYRICS_EMPTY_MS : false;
+			if (d === undefined) return false;
+			if (d === null) return LYRICS_NONE_MS;
+			return lyricsPending(d) || d.track_id !== trackId ? LYRICS_PENDING_MS : false;
 		},
 		refetchOnWindowFocus: false
 	});
+}
+
+/** The lyrics or their translation are still on their way. */
+export function lyricsPending(d: NowLyrics): boolean {
+	return d.status === 'pending' || d.translation?.status === 'pending';
 }
 
 /** Loaded, but the enricher has not finished: features missing or still pending. */

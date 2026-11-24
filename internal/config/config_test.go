@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +254,68 @@ func TestLoadAPILyrics(t *testing.T) {
 			t.Errorf("%s=%s with LYRICS_ENABLED=false: %v", k, v, err)
 		}
 		t.Setenv("LYRICS_ENABLED", "true")
+	}
+}
+
+func TestLoadAPITranslate(t *testing.T) {
+	set := func() {
+		t.Setenv("DATABASE_URL", "postgres://u:p@localhost/db")
+		t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+		t.Setenv("SECRETS_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		t.Setenv("INTERNAL_API_TOKEN", "0123456789abcdef")
+	}
+	set()
+	cfg, err := Load[API]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := cfg.Translate
+	if tr.Enabled || tr.Model != "claude-opus-5-5" || tr.Effort != "low" || tr.Interval != time.Minute ||
+		tr.Batch != 5 || tr.Spacing != 15*time.Second || tr.Lease != 10*time.Minute ||
+		tr.RecentWindow != 30*time.Minute || tr.DailyCap != 100 || tr.MonthlyCap != 1000 || tr.MaxAttempts != 5 {
+		t.Errorf("defaults = %+v", tr)
+	}
+
+	// Enabled without a key fails, and the message never holds a value.
+	set()
+	t.Setenv("TRANSLATE_ENABLED", "true")
+	t.Setenv("ANTHROPIC_API_KEY", " ")
+	if _, err := Load[API](); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY is required") {
+		t.Errorf("no key: %v", err)
+	}
+
+	set()
+	t.Setenv("TRANSLATE_ENABLED", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-not-a-real-key")
+	if cfg, err = Load[API](); err != nil || cfg.Translate.APIKey != "sk-test-not-a-real-key" {
+		t.Fatalf("enabled: %v", err)
+	}
+	if _, ok := os.LookupEnv("ANTHROPIC_API_KEY"); ok {
+		t.Error("ANTHROPIC_API_KEY should be removed from the environment after load")
+	}
+
+	for k, v := range map[string]string{
+		"TRANSLATE_MODEL": "Claude Opus", "TRANSLATE_EFFORT": "max", "TRANSLATE_INTERVAL": "1s",
+		"TRANSLATE_BATCH": "51", "TRANSLATE_SPACING": "0s", "TRANSLATE_LEASE": "1m",
+		"TRANSLATE_RECENT_WINDOW": "48h", "TRANSLATE_DAILY_CAP": "-1", "TRANSLATE_MONTHLY_CAP": "100001",
+		"TRANSLATE_MAX_ATTEMPTS": "0",
+	} {
+		set()
+		t.Setenv("TRANSLATE_ENABLED", "true")
+		t.Setenv("ANTHROPIC_API_KEY", "sk-test-not-a-real-key")
+		t.Setenv(k, v)
+		if _, err := Load[API](); err == nil {
+			t.Errorf("%s=%s: expected an error", k, v)
+		} else if strings.Contains(err.Error(), "sk-test") {
+			t.Errorf("%s: error leaks the key", k)
+		}
+	}
+	set()
+	t.Setenv("TRANSLATE_ENABLED", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-not-a-real-key")
+	t.Setenv("TRANSLATE_DAILY_CAP", "0")
+	t.Setenv("TRANSLATE_MONTHLY_CAP", "0")
+	if _, err := Load[API](); err == nil {
+		t.Error("both caps 0: expected an error")
 	}
 }

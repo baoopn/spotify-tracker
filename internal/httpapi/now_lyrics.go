@@ -45,7 +45,7 @@ const (
 
 // nowLyricsStore reads one track's lyrics (implemented by *store.Store).
 type nowLyricsStore interface {
-	NowLyrics(ctx context.Context, trackID string) (store.NowLyrics, error)
+	NowLyrics(ctx context.Context, trackID string, caps store.TranslationCaps) (store.NowLyrics, error)
 }
 
 type lyricsCreditBody struct {
@@ -196,9 +196,12 @@ func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time)
 		if body, ok := h.lyricsCache.get(trackID, now); ok {
 			return body, nil
 		}
-		l, err := h.lyrics.NowLyrics(ctx, trackID)
+		l, err := h.lyrics.NowLyrics(ctx, trackID, h.opts.TranslationCaps)
 		if err != nil {
 			return nil, err
+		}
+		if l.Status == domain.LyricsPending && !h.opts.LyricsLookup {
+			l = store.NowLyrics{} // nothing will look the lyrics up
 		}
 		body := buildLyricsBody(trackID, l, h.opts.Translation)
 		h.lyricsCache.put(trackID, body, now)

@@ -17,7 +17,7 @@ import (
 
 // lyricsStore reads lyrics (implemented by *store.Store).
 type lyricsStore interface {
-	TrackLyrics(ctx context.Context, id string, withSynced bool) (store.TrackLyrics, error)
+	TrackLyrics(ctx context.Context, id string, withSynced bool, caps store.TranslationCaps) (store.TrackLyrics, error)
 	SearchLyrics(ctx context.Context, q string, limit int) ([]store.LyricsMatch, error)
 	TranslationQueueSummary(ctx context.Context, now time.Time) (store.TranslationQueue, error)
 	RequeueTranslation(ctx context.Context, trackID string) (bool, error)
@@ -37,7 +37,8 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_synced", "synced must be true or false")
 		return
 	}
-	l, err := a.lyricsDB().TrackLyrics(r.Context(), chi.URLParam(r, "id"), withSynced)
+	caps := store.TranslationCaps{Daily: a.Translation.DailyCap, Monthly: a.Translation.MonthlyCap}
+	l, err := a.lyricsDB().TrackLyrics(r.Context(), chi.URLParam(r, "id"), withSynced, caps)
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "track not found")
 		return
@@ -45,6 +46,9 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.internal(w, r, err)
 		return
+	}
+	if l.Status == domain.LyricsPending && !a.LyricsLookup {
+		l.Waiting = false // nothing will look the lyrics up
 	}
 	writeJSON(w, http.StatusOK, l)
 }

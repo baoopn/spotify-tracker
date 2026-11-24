@@ -22,6 +22,7 @@ type fakeLyrics struct {
 	err        error
 	requeued   []string
 	noLyrics   bool
+	pending    bool
 }
 
 func (f *fakeLyrics) TranslationQueueSummary(context.Context, time.Time) (store.TranslationQueue, error) {
@@ -36,10 +37,13 @@ func (f *fakeLyrics) RequeueTranslation(_ context.Context, id string) (bool, err
 	return !f.noLyrics, nil
 }
 
-func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool) (store.TrackLyrics, error) {
+func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool, _ store.TranslationCaps) (store.TrackLyrics, error) {
 	f.id, f.withSynced = id, withSynced
 	if f.err != nil {
 		return store.TrackLyrics{}, f.err
+	}
+	if f.pending {
+		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true}, nil
 	}
 	p := "line"
 	return store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}, nil
@@ -179,5 +183,21 @@ func TestRequeueTranslationHandler(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/enrich", nil))
 	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
 		t.Errorf("enrich via MCP handler = %d", rec.Code)
+	}
+}
+
+// A pending lookup is waited for only while the lyrics fetcher runs.
+func TestTrackLyricsWaitingNeedsFetcher(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := lyricsAPI(&fakeLyrics{pending: true})
+		a.LyricsLookup = on
+		rec := getLyrics(ReadOnlyHandler(a), "/tracks/x/lyrics")
+		var body struct {
+			Waiting bool `json:"waiting"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Waiting != on {
+			t.Errorf("fetcher %v: waiting = %v", on, body.Waiting)
+		}
 	}
 }

@@ -99,11 +99,12 @@ func TestDeferLyricsSQL(t *testing.T) {
 
 func TestTrackLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).TrackLyrics(context.Background(), "t1", true); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).TrackLyrics(context.Background(), "t1", true, TranslationCaps{Daily: 100}); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id", "CASE WHEN $2 THEN l.synced_lyrics END")
-	if len(db.args) != 2 || db.args[0] != "t1" || db.args[1] != true {
+	wantSQL(t, db.sql, "LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id", "AS reached) cap")
+	if len(db.args) != 4 || db.args[0] != "t1" || db.args[1] != true || db.args[2] != 100 || db.args[3] != 0 {
 		t.Errorf("args = %v", db.args)
 	}
 }
@@ -177,13 +178,13 @@ func (d *deadlineDB) Query(ctx context.Context, sql string, args ...any) (pgx.Ro
 // The public now-playing lyrics read one track's found or instrumental lyrics.
 func TestNowLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).NowLyrics(context.Background(), "t1"); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).NowLyrics(context.Background(), "t1", TranslationCaps{Daily: 5, Monthly: 50}); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "FROM tracks t", "LEFT JOIN lyrics l ON l.track_id = t.id",
 		"LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id", "t.id = $1",
 		"tr.source_hash = "+srcHashSQL)
-	if len(db.args) != 1 || db.args[0] != "t1" {
+	if len(db.args) != 3 || db.args[0] != "t1" || db.args[1] != 5 || db.args[2] != 50 {
 		t.Errorf("args = %v", db.args)
 	}
 }

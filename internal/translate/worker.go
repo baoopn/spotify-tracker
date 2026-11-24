@@ -31,10 +31,11 @@ type Store interface {
 const (
 	maxRequestLines = 2000
 	maxRequestRunes = 200 // per synced line
-	maxSendLines    = 400 // non-empty lines
-	maxSendRunes    = 15_000
-	maxTransient    = 3
-	maxErrLen       = 300
+	// Both translations must fit one answer (16k tokens, thinking included).
+	maxSendLines = 250 // non-empty lines
+	maxSendRunes = 6_000
+	maxTransient = 3
+	maxErrLen    = 300
 )
 
 // Worker translates queued songs one at a time. Songs are queued only when
@@ -91,6 +92,18 @@ func (w *Worker) Wake(trackID string) {
 	if !same {
 		w.Nudge()
 	}
+}
+
+// LyricsFound tells the worker that lyrics were just stored for trackID.
+// When it is the song playing now, it is queued again (it may have had no
+// lyrics when it started) and the next batch starts now. Never blocks.
+func (w *Worker) LyricsFound(trackID string) {
+	w.mu.Lock()
+	if trackID == w.priority {
+		w.enqueued = ""
+	}
+	w.mu.Unlock()
+	w.Nudge()
 }
 
 // Nudge starts the next batch now (for example after lyrics were found).
@@ -152,7 +165,7 @@ func (w *Worker) RunOnce(ctx context.Context) time.Duration {
 			return 0
 		}
 		pause, outcome := w.process(ctx, cands[0], &s)
-		called = called || outcome != outcomeSkipped
+		called = called || outcome.called()
 		if pause > 0 || ctx.Err() != nil {
 			return pause
 		}
@@ -178,15 +191,20 @@ func (w *Worker) enqueuePriority(ctx context.Context) string {
 	if prio == "" || done {
 		return prio
 	}
-	if _, err := w.Store.EnqueueTranslation(ctx, prio); err != nil {
+	queued, err := w.Store.EnqueueTranslation(ctx, prio)
+	if err != nil {
 		if ctx.Err() == nil {
 			w.Log.WarnContext(ctx, "enqueue translation failed", slog.String("track_id", prio), logging.Err(err))
 		}
 		return prio
 	}
-	w.mu.Lock()
-	w.enqueued = prio
-	w.mu.Unlock()
+	if queued { // no row yet (no lyrics): try again next batch or on LyricsFound
+		w.mu.Lock()
+		if w.priority == prio {
+			w.enqueued = prio
+		}
+		w.mu.Unlock()
+	}
 	return prio
 }
 
@@ -199,6 +217,11 @@ const (
 	outcomeTransient
 	outcomeNone // released without an outcome
 )
+
+// called reports whether the outcome followed a Claude call (spacing applies).
+func (o outcome) called() bool {
+	return o == outcomeDone || o == outcomeFailed || o == outcomeTransient
+}
 
 // process translates one claimed song and records the outcome. It returns a
 // pause when the worker must stop for a while (the claim is released).
@@ -223,6 +246,14 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		return w.capPause(now), outcomeNone
 	}
 	res, err := w.Translator.Translate(ctx, req)
+	// Billed tokens count even when the answer is unusable.
+	if res.InputTokens+res.OutputTokens > 0 {
+		s.tokensIn += res.InputTokens
+		s.tokensOut += res.OutputTokens
+		if terr := w.Store.AddTranslationTokens(context.WithoutCancel(ctx), now, res.InputTokens, res.OutputTokens); terr != nil {
+			w.Log.WarnContext(ctx, "record translation tokens failed", logging.Err(terr))
+		}
+	}
 	if ctx.Err() != nil {
 		w.release(c)
 		return 0, outcomeNone
@@ -238,6 +269,12 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		w.release(c)
 		w.Log.ErrorContext(ctx, "translation stopped: check the Anthropic API key and credit", slog.Int("status", ae.Status))
 		return w.MaxPause, outcomeNone
+	case errors.Is(err, ErrTruncated):
+		// The answer did not fit: trying again would not help.
+		s.skipped++
+		w.Log.WarnContext(ctx, "translation too long", slog.String("track_id", c.TrackID))
+		w.deferTrack(ctx, c, domain.TranslationSkipped, nil, "too long")
+		return 0, outcomeFailed
 	case errors.As(err, &re):
 		s.refused++
 		w.Log.WarnContext(ctx, "translation refused", slog.String("track_id", c.TrackID), slog.String("category", re.Category))
@@ -252,11 +289,6 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 			return 0, outcomeFailed
 		}
 		return 0, outcomeTransient
-	}
-	s.tokensIn += res.InputTokens
-	s.tokensOut += res.OutputTokens
-	if err := w.Store.AddTranslationTokens(ctx, now, res.InputTokens, res.OutputTokens); err != nil && ctx.Err() == nil {
-		w.Log.WarnContext(ctx, "record translation tokens failed", logging.Err(err))
 	}
 	tr := domain.Translation{Kind: req.Kind, SourceLanguage: res.SourceLanguage, EN: res.EN, VI: res.VI,
 		ENText: res.ENText, VIText: res.VIText, Model: res.Model,
@@ -281,7 +313,7 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 
 func isOutputError(err error) bool {
 	var ie *InvalidOutputError
-	return errors.Is(err, ErrTruncated) || errors.As(err, &ie)
+	return errors.As(err, &ie)
 }
 
 // buildRequest turns a candidate into a request: parsed synced lines when

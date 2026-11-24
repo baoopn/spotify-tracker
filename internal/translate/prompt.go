@@ -103,7 +103,7 @@ func userMessage(r Request, texts []string) string {
 		}
 	} else {
 		b.WriteString("Format: plain text\n\n<lyrics>\n")
-		b.WriteString(strings.TrimSpace(r.Plain))
+		b.WriteString(neutralize(strings.TrimSpace(r.Plain)))
 		b.WriteString("\n")
 	}
 	b.WriteString("</lyrics>")
@@ -111,7 +111,15 @@ func userMessage(r Request, texts []string) string {
 }
 
 func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+	return strings.Join(strings.Fields(neutralize(s)), " ")
+}
+
+// lyricsTag matches <lyrics> and </lyrics> in any case and spacing.
+var lyricsTag = regexp.MustCompile(`(?i)<\s*/?\s*lyrics\s*>`)
+
+// neutralize keeps song text from closing or opening the <lyrics> block.
+func neutralize(s string) string {
+	return lyricsTag.ReplaceAllString(s, "(lyrics)")
 }
 
 var langCode = regexp.MustCompile(`^([a-z]{2,3}|und)$`)

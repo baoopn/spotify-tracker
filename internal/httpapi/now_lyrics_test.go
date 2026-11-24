@@ -27,7 +27,7 @@ type fakeLyrics struct {
 	delay time.Duration // holds each read open, to overlap concurrent misses
 }
 
-func (f *fakeLyrics) NowLyrics(_ context.Context, id string) (store.NowLyrics, error) {
+func (f *fakeLyrics) NowLyrics(_ context.Context, id string, _ store.TranslationCaps) (store.NowLyrics, error) {
 	f.mu.Lock()
 	f.calls++
 	text := f.text[id]
@@ -74,6 +74,7 @@ func ms(v int64) *int64 { return &v }
 
 func lyricsHandler(st *fakeLyrics, snap []byte) *Handler {
 	return &Handler{
+		opts:     Options{LyricsLookup: true},
 		log:      slog.New(slog.DiscardHandler),
 		lyrics:   st,
 		playback: func(context.Context) ([]byte, error) { return snap, nil },

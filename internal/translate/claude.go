@@ -35,7 +35,8 @@ func NewClaude(apiKey, model, effort string, opts ...option.RequestOption) *Clau
 
 // Translate translates one song. Errors are *APIError, *RefusalError,
 // ErrTruncated, *InvalidOutputError, or a network/context error; none
-// carries the response body.
+// carries the response body. When the API answered (also with a refusal, a
+// cut-off or an unusable answer) the Result holds the billed tokens.
 func (c *Claude) Translate(ctx context.Context, r Request) (Result, error) {
 	var texts []string
 	var idx []int
@@ -69,11 +70,14 @@ func (c *Claude) Translate(ctx context.Context, r Request) (Result, error) {
 	if err != nil {
 		return Result{}, apiError(err)
 	}
+	u := msg.Usage
+	billed := Result{Model: msg.Model, OutputTokens: u.OutputTokens,
+		InputTokens: u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens}
 	switch msg.StopReason {
 	case anthropic.BetaStopReasonRefusal:
-		return Result{}, &RefusalError{Category: string(msg.StopDetails.Category)}
+		return billed, &RefusalError{Category: string(msg.StopDetails.Category)}
 	case anthropic.BetaStopReasonMaxTokens:
-		return Result{}, ErrTruncated
+		return billed, ErrTruncated
 	}
 	var text string
 	for _, b := range msg.Content {
@@ -84,12 +88,9 @@ func (c *Claude) Translate(ctx context.Context, r Request) (Result, error) {
 	}
 	out, err := parseAnswer(r, text, idx)
 	if err != nil {
-		return Result{}, err
+		return billed, err
 	}
-	u := msg.Usage
-	out.Model = msg.Model
-	out.InputTokens = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
-	out.OutputTokens = u.OutputTokens
+	out.Model, out.InputTokens, out.OutputTokens = billed.Model, billed.InputTokens, billed.OutputTokens
 	return out, nil
 }
 

@@ -64,6 +64,8 @@ type Deps struct {
 	// Translation describes the lyrics translator (caps for the queue
 	// summary; Nudge starts the worker after a re-queue).
 	Translation TranslationInfo
+	// LyricsLookup reports that the lyrics fetcher runs (LYRICS_ENABLED).
+	LyricsLookup bool
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.

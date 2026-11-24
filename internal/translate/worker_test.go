@@ -42,6 +42,9 @@ type fakeStore struct {
 	calls    int
 	capLeft  int // -1 = no cap
 	claimErr error
+	tokens   [2]int64 // input, output recorded
+	// enqueueCalls counts EnqueueTranslation calls.
+	enqueueCalls int
 }
 
 func cand(id, synced string) domain.TranslationCandidate {
@@ -71,8 +74,12 @@ func (f *fakeStore) find(id string) *queued {
 func (f *fakeStore) EnqueueTranslation(_ context.Context, id string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.enqueueCalls++
+	if f.find(id) != nil {
+		return true, nil
+	}
 	c, ok := f.lyrics[id]
-	if !ok || f.find(id) != nil {
+	if !ok {
 		return false, nil
 	}
 	f.queue = append(f.queue, &queued{c: c})
@@ -173,7 +180,13 @@ func (f *fakeStore) ReserveTranslationCall(context.Context, time.Time, int, int)
 	return true, nil
 }
 
-func (f *fakeStore) AddTranslationTokens(context.Context, time.Time, int64, int64) error { return nil }
+func (f *fakeStore) AddTranslationTokens(_ context.Context, _ time.Time, in, out int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tokens[0] += in
+	f.tokens[1] += out
+	return nil
+}
 
 type fakeTranslator struct {
 	errs  map[string]error
@@ -183,7 +196,11 @@ type fakeTranslator struct {
 func (f *fakeTranslator) Translate(_ context.Context, r Request) (Result, error) {
 	f.order = append(f.order, r.TrackID)
 	if err := f.errs[r.TrackID]; err != nil {
-		return Result{}, err
+		var ae *APIError
+		if errors.As(err, &ae) {
+			return Result{}, err // the API refused: nothing billed
+		}
+		return Result{InputTokens: 7, OutputTokens: 3}, err
 	}
 	en := make([]string, len(r.Lines))
 	for i, l := range r.Lines {
@@ -472,5 +489,68 @@ func TestBuildRequest(t *testing.T) {
 	}
 	if _, ok := buildRequest(domain.TranslationCandidate{Synced: "[00:01.00]\n[00:02.00]  "}); ok {
 		t.Error("only empty lines must be skipped")
+	}
+}
+
+// A cut-off answer is not retried: the song is skipped as too long, and its
+// billed tokens are recorded like those of unusable answers.
+func TestWorkerTruncated(t *testing.T) {
+	st := newFakeStore(cand("a", "[00:01.00] x"), cand("b", "[00:01.00] y"))
+	tr := &fakeTranslator{errs: map[string]error{"a": ErrTruncated, "b": &InvalidOutputError{Reason: "count"}}}
+	testWorker(st, tr, nil).RunOnce(context.Background())
+	if len(st.deferred) != 2 || st.deferred[0].status != domain.TranslationSkipped || st.deferred[0].next != nil ||
+		st.deferred[0].msg != "too long" {
+		t.Errorf("deferred = %+v", st.deferred)
+	}
+	if st.deferred[1].status != domain.TranslationError || st.deferred[1].next == nil {
+		t.Errorf("invalid output = %+v", st.deferred[1])
+	}
+	if st.tokens != [2]int64{14, 6} {
+		t.Errorf("tokens = %v", st.tokens)
+	}
+}
+
+// The song playing now is marked queued only once its row exists; when its
+// lyrics arrive mid-play it is queued then, even with no recent window.
+func TestWorkerLyricsFound(t *testing.T) {
+	st := newFakeStore()
+	tr := &fakeTranslator{}
+	w := testWorker(st, tr, nil)
+	w.RecentWindow = 0
+	w.Wake("now")
+	w.RunOnce(context.Background())
+	if len(tr.order) != 0 || w.enqueued == "now" {
+		t.Fatalf("translated %v, enqueued %q without lyrics", tr.order, w.enqueued)
+	}
+	st.lyrics["now"] = cand("now", "[00:01.00] y")
+	<-w.wake
+	w.LyricsFound("now")
+	if len(w.wake) != 1 {
+		t.Error("LyricsFound must start a batch")
+	}
+	w.RunOnce(context.Background())
+	if len(tr.order) != 1 || tr.order[0] != "now" {
+		t.Errorf("order = %v", tr.order)
+	}
+	// Once queued, the song is not enqueued on every batch.
+	n := st.enqueueCalls
+	w.RunOnce(context.Background())
+	if st.enqueueCalls != n {
+		t.Errorf("enqueued again: %d -> %d", n, st.enqueueCalls)
+	}
+}
+
+// No spacing wait follows a song that needed no call.
+func TestWorkerNoSpacingWithoutCall(t *testing.T) {
+	st := newFakeStore(domain.TranslationCandidate{TrackID: "e", SourceHash: "h"}, cand("a", "[00:01.00] x"))
+	w := testWorker(st, &fakeTranslator{}, nil)
+	var waits []time.Duration
+	w.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool {
+		waits = append(waits, d)
+		return true
+	}
+	w.RunOnce(context.Background())
+	if len(waits) != 0 || len(st.set) != 1 {
+		t.Errorf("waits = %v, set = %v", waits, st.set)
 	}
 }

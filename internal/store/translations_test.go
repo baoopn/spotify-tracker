@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/migrations"
 )
@@ -35,7 +38,9 @@ func TestEnqueueTranslationSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "INSERT INTO lyrics_translations", "'pending'", "l.track_id = $1 AND l.status = 'found'",
-		"ON CONFLICT (track_id) DO NOTHING")
+		"ON CONFLICT (track_id) DO NOTHING",
+		// true only when the row exists afterwards (no lyrics yet: false)
+		"SELECT EXISTS (SELECT 1 FROM ins) OR EXISTS (SELECT 1 FROM lyrics_translations WHERE track_id = $1)")
 	if len(db.args) != 1 || db.args[0] != "t1" {
 		t.Errorf("args = %v", db.args)
 	}
@@ -65,7 +70,7 @@ func TestClaimTranslationsSQL(t *testing.T) {
 		"tr.status = 'error' AND tr.next_attempt_at <= now()",
 		"ORDER BY (tr.track_id = $2) DESC, tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST",
 		"FOR UPDATE OF tr SKIP LOCKED",
-		"SET claimed_by = $1, claimed_until = now() + $3::interval",
+		"SET claimed_by = $1, claimed_until = now() + $3::interval,\n\t\t\trequested_at = NULL",
 		"JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'")
 	if strings.Contains(db.sql, "LEFT JOIN lyrics_translations") {
 		t.Error("the claim must read queued rows only (no backfill)")
@@ -82,7 +87,8 @@ func TestSetTranslationSQL(t *testing.T) {
 	if !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "status = 'done'", "WHERE tr.track_id = $2 AND tr.claimed_by = $1",
+	wantSQL(t, db.sql, "status = CASE WHEN tr.requested_at IS NULL THEN 'done' ELSE 'pending' END",
+		"WHERE tr.track_id = $2 AND tr.claimed_by = $1",
 		"l.status = 'found' AND "+srcHashSQL+" = $3", "claimed_by = NULL, claimed_until = NULL")
 	if db.args[0] != "w1" || db.args[1] != "t1" || db.args[2] != "h" {
 		t.Errorf("args = %v", db.args)
@@ -104,7 +110,8 @@ func TestDeferAndReleaseTranslationSQL(t *testing.T) {
 	if !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "CASE WHEN tr.status = $4 AND tr.source_hash = $3 THEN tr.attempts + 1 ELSE 1 END",
+	wantSQL(t, db.sql, "WHEN tr.status = $4 AND tr.source_hash = $3 THEN tr.attempts + 1 ELSE 1 END",
+		"status = CASE WHEN tr.requested_at IS NULL THEN $4 ELSE 'pending' END",
 		"WHERE tr.track_id = $2 AND tr.claimed_by = $1", "claimed_by = NULL, claimed_until = NULL")
 	if db.args[4] != &next || deref(strArg(db.args[5])) != "boom" {
 		t.Errorf("args = %v", db.args)
@@ -124,8 +131,12 @@ func TestRequeueTranslationSQL(t *testing.T) {
 	if _, err := (&Queries{db: db}).RequeueTranslation(context.Background(), "t1"); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "l.track_id = $1 AND l.status = 'found'", "ON CONFLICT (track_id) DO UPDATE SET status = 'pending'",
-		"attempts = 0", "next_attempt_at = NULL", "requested_at = now()", "claimed_by = NULL, claimed_until = NULL")
+	wantSQL(t, db.sql, "l.track_id = $1 AND l.status = 'found'",
+		"status = CASE WHEN lyrics_translations.claimed_until >= now() THEN lyrics_translations.status",
+		"attempts = 0", "next_attempt_at = NULL", "requested_at = now()")
+	if strings.Contains(db.sql, "claimed_by = NULL") {
+		t.Error("re-queue must not clear a live lease")
+	}
 }
 
 func TestTranslationQueueSummarySQL(t *testing.T) {
@@ -142,38 +153,71 @@ func TestTranslationQueueSummarySQL(t *testing.T) {
 	}
 }
 
+// The cap check takes a transaction-level advisory lock first, so replicas
+// cannot both take the last call.
 func TestReserveTranslationCallSQL(t *testing.T) {
-	db := &captureDB{}
-	_, err := (&Queries{db: db}).ReserveTranslationCall(context.Background(), time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC), 100, 1000)
-	if !errors.Is(err, errCaptured) {
-		t.Fatal(err)
+	db := &allSQL{}
+	_, _ = (&Queries{db: db}).reserveTranslationCall(context.Background(), time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC), 100, 1000)
+	if len(db.sqls) != 2 || db.sqls[0] != translationUsageLock {
+		t.Fatalf("statements = %q", db.sqls)
 	}
-	wantSQL(t, db.sql, "($2 = 0 OR d.n < $2) AND ($3 = 0 OR m.n < $3)", "ON CONFLICT (day) DO UPDATE SET calls = translation_usage.calls + 1")
+	wantSQL(t, db.sqls[0], "pg_advisory_xact_lock")
+	wantSQL(t, db.sqls[1], "($2 = 0 OR d.n < $2) AND ($3 = 0 OR m.n < $3)", "ON CONFLICT (day) DO UPDATE SET calls = translation_usage.calls + 1")
 	if db.args[1] != 100 || db.args[2] != 1000 {
 		t.Errorf("args = %v", db.args)
 	}
 }
 
+// allSQL records every statement; Exec succeeds, queries fail.
+type allSQL struct {
+	captureDB
+	sqls []string
+	args []any
+}
+
+func (a *allSQL) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	a.sqls = append(a.sqls, sql)
+	return pgconn.CommandTag{}, nil
+}
+
+func (a *allSQL) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	a.sqls, a.args = append(a.sqls, sql), args
+	return errRow{}
+}
+
 func TestTranslationState(t *testing.T) {
 	s := func(v string) *string { return &v }
 	for _, c := range []struct {
-		status       *string
-		fresh, retry bool
-		want         string
+		status         *string
+		fresh, waiting bool
+		want           string
 	}{
-		{nil, false, false, domain.TranslationPending},
-		{s("done"), true, false, domain.TranslationDone},
-		{s("done"), false, false, domain.TranslationPending}, // stale
-		{s("pending"), true, false, domain.TranslationPending},
-		{s("error"), true, true, domain.TranslationPending},
-		{s("error"), true, false, ""}, // given up
+		{nil, false, true, domain.TranslationPending},    // not queued yet, no cap reached
+		{nil, false, false, ""},                          // cap reached: not on its way
+		{s("done"), true, false, domain.TranslationDone}, // current
+		{s("done"), false, true, domain.TranslationPending},
+		{s("done"), false, false, ""}, // stale but capped
+		{s("pending"), true, true, domain.TranslationPending},
+		{s("error"), true, true, domain.TranslationPending}, // retry within minutes
+		{s("error"), true, false, ""},                       // retry far away, or given up
 		{s("refused"), true, false, ""},
 		{s("skipped"), true, false, ""},
 	} {
-		if got := translationState(c.status, c.fresh, c.retry); got != c.want {
-			t.Errorf("%v fresh=%v retry=%v = %q, want %q", deref(c.status), c.fresh, c.retry, got, c.want)
+		if got := translationState(c.status, c.fresh, c.waiting); got != c.want {
+			t.Errorf("%v fresh=%v waiting=%v = %q, want %q", deref(c.status), c.fresh, c.waiting, got, c.want)
 		}
 	}
+}
+
+// Pending must end: a far retry or a reached cap does not count as waiting,
+// a live lease always does.
+func TestTranslationWaitingSQL(t *testing.T) {
+	wantSQL(t, trWaitingSQL, "WHEN tr.track_id IS NULL THEN NOT cap.reached",
+		"tr.claimed_until IS NOT NULL AND tr.claimed_until >= now()",
+		"tr.status = 'error' AND tr.next_attempt_at <= now() + interval '2 minutes'",
+		"AND NOT cap.reached")
+	wantSQL(t, capReachedSQL("$3", "$4"), "($3 > 0 AND", ">= $3", "($4 > 0 AND COALESCE(SUM(u.calls), 0) >= $4)",
+		"date_trunc('month', (now() AT TIME ZONE 'UTC')::date)")
 }
 
 // Synced translations are joined with newlines, so the admin SPA splits

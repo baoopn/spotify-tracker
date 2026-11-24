@@ -197,9 +197,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	}
 	adminAPI.TopPlaylistsConfig = topCfg
 
-	lyricsRefresher := newLyricsRefresher(cfg, st, log)
-	translator := newTranslator(cfg, st, log)
-	hookLyricsQueue(svc, lyricsRefresher, translator, adminAPI, cfg)
+	lyricsRefresher, translator := newLyricsQueue(cfg, st, svc, adminAPI, log)
 
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
@@ -361,6 +359,8 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			MCP:                   newMCP(cfg, adminAPI, log),
 			MCPRateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
 			Translation:           cfg.Translate.Enabled,
+			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
+			LyricsLookup:          cfg.Lyrics.Enabled,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

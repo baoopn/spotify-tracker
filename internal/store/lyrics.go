@@ -26,6 +26,10 @@ type TrackLyrics struct {
 	LastError     string     `json:"last_error"`
 	FetchedAt     *time.Time `json:"fetched_at"`
 	NextAttemptAt *time.Time `json:"next_attempt_at"`
+	// Waiting is true while a lookup is due soon: not looked up yet, or a
+	// failed lookup retried within minutes (the admin API also needs the
+	// fetcher to be on).
+	Waiting bool `json:"waiting"`
 	// Translation is the Claude translation state; null unless status is found.
 	Translation *TrackTranslation `json:"translation"`
 }
@@ -34,8 +38,11 @@ type TrackLyrics struct {
 // Synced translations are joined into one line per parsed LRC line.
 type TrackTranslation struct {
 	// Status is done, skipped, refused, error, or pending (none yet).
-	Status         string     `json:"status"`
-	Stale          bool       `json:"stale"` // the lyrics changed since; it is being redone
+	Status string `json:"status"`
+	Stale  bool   `json:"stale"` // the lyrics changed since; it is being redone
+	// Waiting is true while the translation will be worked on soon (leased,
+	// queued, stale or a retry due within minutes, and no cap reached).
+	Waiting        bool       `json:"waiting"`
 	Kind           *string    `json:"kind"`
 	SourceLanguage *string    `json:"source_language"`
 	EN             *string    `json:"en"`
@@ -142,9 +149,10 @@ func (q *Queries) DeferLyrics(ctx context.Context, trackID, status string, next 
 }
 
 // TrackLyrics returns the lyrics record of a track. The synced LRC text is
-// included only when withSynced is set. A track with no lyrics row has status
+// included only when withSynced is set. caps decide whether a queued
+// translation is still on its way (Waiting). A track with no lyrics row has status
 // pending; an unknown track is domain.ErrNotFound.
-func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bool) (TrackLyrics, error) {
+func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bool, caps TranslationCaps) (TrackLyrics, error) {
 	var (
 		out            TrackLyrics
 		status, source *string
@@ -162,15 +170,17 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 			CASE WHEN $2 THEN l.synced_lyrics END,
 			COALESCE(l.synced_lyrics, '') <> '', COALESCE(l.attempts, 0), COALESCE(l.last_error, ''),
 			l.fetched_at, l.next_attempt_at,
+			l.track_id IS NULL OR (l.status = 'error' AND l.next_attempt_at <= now() + `+translationSoon+`),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.kind, tr.source_language,
 			tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
-			tr.translated_at, tr.next_attempt_at
+			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL+`
 		FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
-		WHERE t.id = $1`, trackID, withSynced).Scan(&out.TrackID, &status, &source, &out.LRCLibID,
+		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$3", "$4")+` AS reached) cap
+		WHERE t.id = $1`, trackID, withSynced, caps.Daily, caps.Monthly).Scan(&out.TrackID, &status, &source, &out.LRCLibID,
 		&out.Plain, &out.Synced, &out.HasSynced, &out.Attempts, &out.LastError, &out.FetchedAt, &out.NextAttemptAt,
-		&trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
-		&tr.TranslatedAt, &tr.NextAttemptAt)
+		&out.Waiting, &trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
+		&tr.TranslatedAt, &tr.NextAttemptAt, &tr.Waiting)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TrackLyrics{}, domain.ErrNotFound
 	}
@@ -190,6 +200,9 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 	if trStatus != nil {
 		tr.Status = *trStatus
 		tr.Stale = !fresh
+	}
+	if tr.Status == domain.TranslationDone && !tr.Stale {
+		tr.Waiting = false
 	}
 	tr.Model, tr.LastError = deref(model), deref(trErr)
 	if trAttempts != nil {
@@ -235,29 +248,33 @@ type NowTranslation struct {
 }
 
 // NowLyrics returns what the public now-playing lyrics show for a track:
-// found or instrumental lyrics, pending while a lookup is still to come, or
-// a zero NowLyrics when none were found. It feeds GET
-// /api/v1/now-playing/lyrics, which serves only the track playing right now.
-func (q *Queries) NowLyrics(ctx context.Context, trackID string) (NowLyrics, error) {
+// found or instrumental lyrics, pending while a lookup is due (no row yet,
+// or a failed lookup retried within minutes), or a zero NowLyrics when none
+// were found. caps decide whether a queued translation is still on its way.
+// It feeds GET /api/v1/now-playing/lyrics, which serves only the track
+// playing right now.
+func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps TranslationCaps) (NowLyrics, error) {
 	var (
 		out                  NowLyrics
 		status               *string
-		retry                bool
+		retrySoon            bool
 		trStatus, kind, lang *string
 		enText, viText       *string
-		fresh, trRetry       bool
+		fresh, waiting       bool
 		en, vi               []string
 	)
 	err := q.db.QueryRow(ctx, `
-		SELECT l.status, l.next_attempt_at IS NOT NULL, COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
-			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.next_attempt_at IS NOT NULL,
+		SELECT l.status, COALESCE(l.next_attempt_at <= now() + `+translationSoon+`, false),
+			COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
+			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL+`,
 			tr.kind, tr.source_language, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
 		FROM tracks t
 		LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
+		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$2", "$3")+` AS reached) cap
 		WHERE t.id = $1`,
-		trackID).Scan(&status, &retry, &out.Synced, &out.Plain, &trStatus, &fresh, &trRetry,
-		&kind, &lang, &en, &vi, &enText, &viText)
+		trackID, caps.Daily, caps.Monthly).Scan(&status, &retrySoon, &out.Synced, &out.Plain, &trStatus, &fresh,
+		&waiting, &kind, &lang, &en, &vi, &enText, &viText)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NowLyrics{}, nil
 	}
@@ -265,7 +282,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string) (NowLyrics, err
 		return NowLyrics{}, fmt.Errorf("now lyrics %s: %w", trackID, err)
 	}
 	switch {
-	case status == nil, *status == domain.LyricsError && retry:
+	case status == nil, *status == domain.LyricsError && retrySoon:
 		return NowLyrics{Status: domain.LyricsPending}, nil
 	case *status == domain.LyricsInstrumental:
 		return NowLyrics{Status: domain.LyricsInstrumental}, nil
@@ -273,7 +290,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string) (NowLyrics, err
 		return NowLyrics{}, nil
 	}
 	out.Status = domain.LyricsFound
-	tr := &NowTranslation{Status: translationState(trStatus, fresh, trRetry)}
+	tr := &NowTranslation{Status: translationState(trStatus, fresh, waiting)}
 	if tr.Status == domain.TranslationDone {
 		tr.Kind, tr.SourceLanguage = deref(kind), deref(lang)
 		tr.EN, tr.VI, tr.ENText, tr.VIText = en, vi, deref(enText), deref(viText)
@@ -282,19 +299,15 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string) (NowLyrics, err
 	return out, nil
 }
 
-// translationState maps a stored translation row to what the public sees:
-// done, pending (queued, stale, or a failure that is retried), or "" (not
-// queued, skipped, refused, given up). A song with no row was never queued:
-// it gets one when it plays, so a missing row also reads as pending.
-func translationState(status *string, fresh, retry bool) string {
+// translationState maps a stored translation to what the public sees: done
+// (current and finished), pending (it will be worked on soon, see
+// trWaitingSQL), or "" (skipped, refused, given up, a retry far away, or
+// held back by a reached cap).
+func translationState(status *string, fresh, waiting bool) string {
 	switch {
-	case status == nil || !fresh:
-		return domain.TranslationPending
-	case *status == domain.TranslationDone:
+	case status != nil && *status == domain.TranslationDone && fresh:
 		return domain.TranslationDone
-	case *status == domain.TranslationPending:
-		return domain.TranslationPending
-	case *status == domain.TranslationError && retry:
+	case waiting:
 		return domain.TranslationPending
 	default:
 		return ""

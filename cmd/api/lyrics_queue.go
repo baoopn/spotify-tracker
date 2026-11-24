@@ -15,6 +15,15 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/translate"
 )
 
+// newLyricsQueue builds the lyrics fetcher and the translator (either may be
+// nil when disabled) and hooks them together.
+func newLyricsQueue(cfg config.API, st *store.Store, svc *tracker.Service, adminAPI *admin.API,
+	log *slog.Logger) (*lyrics.Refresher, *translate.Worker) {
+	lr, tr := newLyricsRefresher(cfg, st, log), newTranslator(cfg, st, log)
+	hookLyricsQueue(svc, lr, tr, adminAPI, cfg)
+	return lr, tr
+}
+
 // newLyricsRefresher builds the LRCLIB lyrics fetcher, or nil when
 // LYRICS_ENABLED is false.
 func newLyricsRefresher(cfg config.API, st *store.Store, log *slog.Logger) *lyrics.Refresher {
@@ -49,13 +58,14 @@ func newTranslator(cfg config.API, st *store.Store, log *slog.Logger) *translate
 // playing now, starts a translation once lyrics are found, and lets the
 // admin re-queue nudge the translator. Either worker may be nil.
 func hookLyricsQueue(svc *tracker.Service, lr *lyrics.Refresher, tr *translate.Worker, adminAPI *admin.API, cfg config.API) {
+	adminAPI.LyricsLookup = lr != nil
 	adminAPI.Translation = admin.TranslationInfo{Enabled: tr != nil, DailyCap: cfg.Translate.DailyCap,
 		MonthlyCap: cfg.Translate.MonthlyCap}
 	if tr != nil {
 		adminAPI.Translation.Nudge = tr.Nudge
 	}
 	if lr != nil && tr != nil {
-		lr.OnFound = func(string) { tr.Nudge() }
+		lr.OnFound = tr.LyricsFound
 	}
 	if lr == nil && tr == nil {
 		return

@@ -139,3 +139,13 @@ func TestNowLyricsTranslation(t *testing.T) {
 		}
 	})
 }
+
+// With the lyrics fetcher off nothing will look the lyrics up: no pending.
+func TestNowLyricsPendingNeedsFetcher(t *testing.T) {
+	st := &fakeLyrics{rec: map[string]store.NowLyrics{"p": {Status: domain.LyricsPending}}}
+	h := lyricsHandler(st, playing("p"))
+	h.opts.LyricsLookup = false
+	if _, body := getLyrics(t, h, target); body != nil {
+		t.Errorf("body = %+v, want null", body)
+	}
+}

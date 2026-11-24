@@ -25,18 +25,52 @@ const claimableSQL = `(tr.claimed_until IS NULL OR tr.claimed_until < now())
 	AND (tr.status = 'pending' OR tr.source_hash <> ` + srcHashSQL + `
 		OR (tr.status = 'error' AND tr.next_attempt_at <= now()))`
 
+// TranslationCaps are the Claude call caps (0 = none of that kind); a
+// translation held back by a reached cap does not count as on its way.
+type TranslationCaps struct{ Daily, Monthly int }
+
+// capReachedSQL is true when a cap is reached today (UTC): daily and monthly
+// are the SQL parameters holding the caps (0 = no cap of that kind). It reads
+// translation_usage only.
+func capReachedSQL(daily, monthly string) string {
+	return `(SELECT (` + daily + ` > 0 AND COALESCE(SUM(u.calls) FILTER (WHERE u.day = (now() AT TIME ZONE 'UTC')::date), 0) >= ` + daily + `)
+		OR (` + monthly + ` > 0 AND COALESCE(SUM(u.calls), 0) >= ` + monthly + `)
+	FROM translation_usage u
+	WHERE u.day >= date_trunc('month', (now() AT TIME ZONE 'UTC')::date))`
+}
+
+// translationSoon is how far ahead a failed translation's retry may be and
+// still count as on its way.
+const translationSoon = `interval '2 minutes'`
+
+// trWaitingSQL is true when the translation of tr (alias tr, lyrics alias l,
+// capReached a boolean column) will be worked on soon: leased now, or queued,
+// stale or due for a retry within translationSoon and no cap is reached. A
+// song with no row is queued when it plays, so it counts as waiting too.
+const trWaitingSQL = `CASE WHEN tr.track_id IS NULL THEN NOT cap.reached
+	ELSE (tr.claimed_until IS NOT NULL AND tr.claimed_until >= now())
+		OR ((tr.status = 'pending' OR tr.source_hash <> ` + srcHashSQL + `
+			OR (tr.status = 'error' AND tr.next_attempt_at <= now() + ` + translationSoon + `))
+			AND NOT cap.reached) END`
+
 // EnqueueTranslation queues one track (a song playing now) when it has found
-// lyrics and no translation row yet. It reports whether a row was added.
+// lyrics and no translation row yet. It reports whether the track has a
+// translation row afterwards (false: no lyrics yet, try again later).
 func (q *Queries) EnqueueTranslation(ctx context.Context, trackID string) (bool, error) {
-	tag, err := q.db.Exec(ctx, `
-		INSERT INTO lyrics_translations (track_id, status, source_hash)
-		SELECT l.track_id, 'pending', `+srcHashSQL+` FROM lyrics l
-		WHERE l.track_id = $1 AND l.status = 'found'
-		ON CONFLICT (track_id) DO NOTHING`, trackID)
+	var queued bool
+	err := q.db.QueryRow(ctx, `
+		WITH ins AS (
+			INSERT INTO lyrics_translations (track_id, status, source_hash)
+			SELECT l.track_id, 'pending', `+srcHashSQL+` FROM lyrics l
+			WHERE l.track_id = $1 AND l.status = 'found'
+			ON CONFLICT (track_id) DO NOTHING
+			RETURNING 1)
+		SELECT EXISTS (SELECT 1 FROM ins) OR EXISTS (SELECT 1 FROM lyrics_translations WHERE track_id = $1)`,
+		trackID).Scan(&queued)
 	if err != nil {
 		return false, fmt.Errorf("enqueue translation %s: %w", trackID, err)
 	}
-	return tag.RowsAffected() > 0, nil
+	return queued, nil
 }
 
 // EnqueueRecentTranslations queues tracks played within window that have
@@ -77,7 +111,8 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 			ORDER BY (tr.track_id = $2) DESC, tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST, tr.track_id
 			LIMIT $4
 			FOR UPDATE OF tr SKIP LOCKED)
-		UPDATE lyrics_translations tr SET claimed_by = $1, claimed_until = now() + $3::interval
+		UPDATE lyrics_translations tr SET claimed_by = $1, claimed_until = now() + $3::interval,
+			requested_at = NULL
 		FROM pick WHERE tr.track_id = pick.track_id
 		RETURNING pick.track_id, pick.name, pick.artist, pick.synced, pick.plain, pick.hash,
 			CASE WHEN pick.stale THEN '' ELSE pick.status END, CASE WHEN pick.stale THEN 0 ELSE pick.attempts END,
@@ -127,16 +162,19 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 
 // SetTranslation stores a finished translation and releases the lease. It
 // writes only while owner holds the claim and the lyrics still match
-// sourceHash; it reports whether it was stored.
+// sourceHash; it reports whether it was stored. A song re-queued while it was
+// claimed (requested_at set again) stays pending, to be translated again.
 func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash string, r domain.Translation) (bool, error) {
 	if r.Kind != domain.TranslationSynced && r.Kind != domain.TranslationPlain {
 		return false, fmt.Errorf("set translation %s: invalid kind %q", trackID, r.Kind)
 	}
 	tag, err := q.db.Exec(ctx, `
-		UPDATE lyrics_translations tr SET status = 'done', source_hash = $3, kind = $4, source_language = $5,
+		UPDATE lyrics_translations tr SET
+			status = CASE WHEN tr.requested_at IS NULL THEN 'done' ELSE 'pending' END,
+			source_hash = $3, kind = $4, source_language = $5,
 			en_lines = $6, vi_lines = $7, en_text = $8, vi_text = $9, model = $10,
 			input_tokens = $11, output_tokens = $12, attempts = 0, last_error = NULL,
-			translated_at = now(), updated_at = now(), next_attempt_at = NULL, requested_at = NULL,
+			translated_at = now(), updated_at = now(), next_attempt_at = NULL,
 			claimed_by = NULL, claimed_until = NULL
 		WHERE tr.track_id = $2 AND tr.claimed_by = $1
 			AND EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = $2 AND l.status = 'found' AND `+srcHashSQL+` = $3)`,
@@ -152,7 +190,8 @@ func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash
 // DeferTranslation records a translation that was skipped, refused or failed
 // (status error, retried at next; nil next = given up) and releases the
 // lease. attempts counts outcomes in a row with the same status and lyrics.
-// It writes only while owner holds the claim.
+// It writes only while owner holds the claim. A song re-queued while it was
+// claimed stays pending instead.
 func (q *Queries) DeferTranslation(ctx context.Context, owner, trackID, sourceHash, status string, next *time.Time, lastErr string) error {
 	switch status {
 	case domain.TranslationSkipped, domain.TranslationRefused, domain.TranslationError:
@@ -161,9 +200,12 @@ func (q *Queries) DeferTranslation(ctx context.Context, owner, trackID, sourceHa
 	}
 	_, err := q.db.Exec(ctx, `
 		UPDATE lyrics_translations tr SET
-			attempts = CASE WHEN tr.status = $4 AND tr.source_hash = $3 THEN tr.attempts + 1 ELSE 1 END,
-			status = $4, source_hash = $3, last_error = $6, updated_at = now(), next_attempt_at = $5,
-			requested_at = NULL, claimed_by = NULL, claimed_until = NULL
+			attempts = CASE WHEN tr.requested_at IS NOT NULL THEN 0
+				WHEN tr.status = $4 AND tr.source_hash = $3 THEN tr.attempts + 1 ELSE 1 END,
+			status = CASE WHEN tr.requested_at IS NULL THEN $4 ELSE 'pending' END,
+			source_hash = $3, last_error = $6, updated_at = now(),
+			next_attempt_at = CASE WHEN tr.requested_at IS NULL THEN $5::timestamptz END,
+			claimed_by = NULL, claimed_until = NULL
 		WHERE tr.track_id = $2 AND tr.claimed_by = $1`,
 		owner, trackID, sourceHash, status, next, nullIfEmpty(lastErr))
 	if err != nil {
@@ -185,16 +227,21 @@ func (q *Queries) ReleaseTranslation(ctx context.Context, owner, trackID string)
 }
 
 // RequeueTranslation puts a track with found lyrics at the front of the
-// queue, clearing a refused, failed, given-up or done translation. It
-// reports false when the track has no found lyrics.
+// queue, clearing a refused, failed, given-up or done translation. A song a
+// worker is translating right now keeps its lease and is queued again when
+// that worker finishes. It reports false when the track has no found lyrics.
 func (q *Queries) RequeueTranslation(ctx context.Context, trackID string) (bool, error) {
 	tag, err := q.db.Exec(ctx, `
 		INSERT INTO lyrics_translations (track_id, status, source_hash, requested_at)
 		SELECT l.track_id, 'pending', `+srcHashSQL+`, now() FROM lyrics l
 		WHERE l.track_id = $1 AND l.status = 'found'
-		ON CONFLICT (track_id) DO UPDATE SET status = 'pending', source_hash = EXCLUDED.source_hash,
-			attempts = 0, last_error = NULL, next_attempt_at = NULL, requested_at = now(),
-			claimed_by = NULL, claimed_until = NULL, updated_at = now()`, trackID)
+		ON CONFLICT (track_id) DO UPDATE SET
+			status = CASE WHEN lyrics_translations.claimed_until >= now() THEN lyrics_translations.status
+				ELSE 'pending' END,
+			source_hash = CASE WHEN lyrics_translations.claimed_until >= now() THEN lyrics_translations.source_hash
+				ELSE EXCLUDED.source_hash END,
+			attempts = 0, last_error = NULL, next_attempt_at = NULL, requested_at = now(), updated_at = now()`,
+		trackID)
 	if err != nil {
 		return false, fmt.Errorf("requeue translation %s: %w", trackID, err)
 	}
@@ -253,9 +300,28 @@ func (q *Queries) TranslationQueueSummary(ctx context.Context, now time.Time) (T
 	return s, nil
 }
 
+// translationUsageLock serializes cap checks across API replicas.
+const translationUsageLock = `SELECT pg_advisory_xact_lock(hashtext('translation_usage'))`
+
 // ReserveTranslationCall counts one Claude call on day (UTC) if neither cap
 // is reached (0 = no cap of that kind). It reports whether the call may go.
-func (q *Queries) ReserveTranslationCall(ctx context.Context, day time.Time, dailyCap, monthlyCap int) (bool, error) {
+// The check and the increment run under a transaction-level advisory lock,
+// so replicas cannot both take the last call under a cap.
+func (s *Store) ReserveTranslationCall(ctx context.Context, day time.Time, dailyCap, monthlyCap int) (bool, error) {
+	var ok bool
+	err := s.InTx(ctx, func(q *Queries) error {
+		var err error
+		ok, err = q.reserveTranslationCall(ctx, day, dailyCap, monthlyCap)
+		return err
+	})
+	return ok, err
+}
+
+// reserveTranslationCall is ReserveTranslationCall inside a transaction.
+func (q *Queries) reserveTranslationCall(ctx context.Context, day time.Time, dailyCap, monthlyCap int) (bool, error) {
+	if _, err := q.db.Exec(ctx, translationUsageLock); err != nil {
+		return false, fmt.Errorf("lock translation usage: %w", err)
+	}
 	var calls int
 	err := q.db.QueryRow(ctx, `
 		WITH d AS (SELECT COALESCE((SELECT calls FROM translation_usage WHERE day = $1::date), 0) AS n),

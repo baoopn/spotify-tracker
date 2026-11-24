@@ -7,12 +7,14 @@
 		placeholder = 'Search…',
 		label = 'Search',
 		delay = 300,
+		maxlength,
 		onsearch
 	}: {
 		value?: string;
 		placeholder?: string;
 		label?: string;
 		delay?: number;
+		maxlength?: number;
 		onsearch: (q: string) => void;
 	} = $props();
 
@@ -44,6 +46,7 @@
 		class="input pr-9 pl-9"
 		{placeholder}
 		aria-label={label}
+		{maxlength}
 		bind:value={draft}
 		{oninput}
 		onkeydown={(e) => {

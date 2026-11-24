@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -74,6 +75,7 @@ type API struct {
 	Admin
 	TopPlaylists
 	MCP
+	Lyrics
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -182,6 +184,45 @@ type MCP struct {
 	AdminToken string `env:"MCP_ADMIN_TOKEN,unset"`
 	// RateLimitPerMinute limits /mcp requests per client IP (0 = off).
 	RateLimitPerMinute int `env:"MCP_RATE_LIMIT_PER_MINUTE" envDefault:"60"`
+}
+
+// Lyrics configures the LRCLIB lyrics fetcher in cmd/api (lyrics are shown
+// in the admin dashboard and admin MCP tools only).
+type Lyrics struct {
+	// Enabled runs the background fetcher; false makes no LRCLIB calls.
+	Enabled bool `env:"LYRICS_ENABLED" envDefault:"true"`
+	// APIURL is the LRCLIB base URL.
+	APIURL string `env:"LYRICS_API_URL" envDefault:"https://lrclib.net"`
+	// Interval is the pause between batches.
+	Interval time.Duration `env:"LYRICS_INTERVAL" envDefault:"1m"`
+	// Batch is how many tracks one batch looks up.
+	Batch int `env:"LYRICS_BATCH" envDefault:"10"`
+	// Spacing is the minimum time between two LRCLIB requests.
+	Spacing time.Duration `env:"LYRICS_SPACING" envDefault:"2s"`
+	// NotFoundRetry is when a track with no lyrics found is checked again.
+	NotFoundRetry time.Duration `env:"LYRICS_NOT_FOUND_RETRY" envDefault:"720h"`
+}
+
+func (l *Lyrics) validate() error {
+	if !l.Enabled {
+		return nil
+	}
+	l.APIURL = strings.TrimRight(strings.TrimSpace(l.APIURL), "/")
+	u, err := url.Parse(l.APIURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("LYRICS_API_URL must be an absolute http(s) URL")
+	}
+	switch {
+	case l.Interval < 10*time.Second || l.Interval > 24*time.Hour:
+		return fmt.Errorf("LYRICS_INTERVAL must be between 10s and 24h")
+	case l.Batch < 1 || l.Batch > 100:
+		return fmt.Errorf("LYRICS_BATCH must be in 1..100")
+	case l.Spacing < time.Second || l.Spacing > time.Minute:
+		return fmt.Errorf("LYRICS_SPACING must be between 1s and 1m")
+	case l.NotFoundRetry < 24*time.Hour || l.NotFoundRetry > 8760*time.Hour:
+		return fmt.Errorf("LYRICS_NOT_FOUND_RETRY must be between 24h and 8760h")
+	}
+	return nil
 }
 
 // minMCPAdminTokenLen is the shortest accepted MCP_ADMIN_TOKEN.
@@ -316,6 +357,9 @@ func (a *API) validate() error {
 	}
 	if a.MCP.RateLimitPerMinute < 0 {
 		return fmt.Errorf("MCP_RATE_LIMIT_PER_MINUTE must be >= 0")
+	}
+	if err := a.Lyrics.validate(); err != nil {
+		return err
 	}
 	// An empty BRAND_API_URL disables the brand API, so the default applies
 	// only when the variable is not set at all.

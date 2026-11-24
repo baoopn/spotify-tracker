@@ -76,7 +76,11 @@ export const qk = {
 		all: ['tracks'] as const,
 		lists: ['tracks', 'list'] as const,
 		list: (p: TracksParams) => ['tracks', 'list', p] as const,
-		detail: (id: string) => ['tracks', 'detail', id] as const
+		detail: (id: string) => ['tracks', 'detail', id] as const,
+		lyrics: (id: string) => ['tracks', 'lyrics', id] as const
+	},
+	lyrics: {
+		search: (q: string, limit: number) => ['lyrics', 'search', q, limit] as const
 	},
 	artists: {
 		all: ['artists'] as const,
@@ -217,6 +221,23 @@ export const queries = {
 			refetchInterval: REFRESH.list
 		}),
 
+	/** Lyrics change rarely and are large, so they are never polled. */
+	trackLyrics: (id: string | null) =>
+		queryOptions({
+			queryKey: qk.tracks.lyrics(id ?? ''),
+			queryFn: ({ signal }) => api.trackLyrics(id ?? '', { signal }),
+			enabled: !!id,
+			staleTime: 60_000
+		}),
+
+	searchLyrics: (q: string, limit: number) =>
+		queryOptions({
+			queryKey: qk.lyrics.search(q.trim(), limit),
+			queryFn: ({ signal }) => api.searchLyrics(q.trim(), limit, { signal }),
+			enabled: lyricsQueryOk(q),
+			placeholderData: keepPreviousData
+		}),
+
 	artists: (p: ArtistsParams) =>
 		queryOptions({
 			queryKey: qk.artists.list(p),
@@ -274,3 +295,11 @@ export const queries = {
 			refetchInterval: REFRESH.list
 		})
 };
+
+/** Mirrors the server's lyrics search check: 2–200 characters (code points)
+ * after trimming, with at least one letter or digit. */
+export function lyricsQueryOk(q: string): boolean {
+	const t = q.trim();
+	const n = [...t].length;
+	return n >= 2 && n <= 200 && /[\p{L}\p{N}]/u.test(t);
+}

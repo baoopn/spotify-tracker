@@ -129,6 +129,51 @@ transient: the album is retried in about an hour (its lookup time is set to
 transient errors in a row end the batch. Nothing is looked up while Spotify
 is not connected.
 
+## Lyrics
+
+`internal/lyrics` looks up track lyrics on [LRCLIB](https://lrclib.net)
+(`internal/lrclib`, no API key) and stores them in the `lyrics` table
+(migration `00014_lyrics.sql`). Lyrics are admin and MCP only: the public
+`/api/v1`, the public page and the shared track JSON types never carry them
+(guard tests in `internal/httpapi` and `internal/mcpserver`).
+
+- **Schedule.** Every `LYRICS_INTERVAL` (1 min) it looks up `LYRICS_BATCH`
+  (10) tracks: tracks with no lyrics row first (most recently played first),
+  then due retries. The client sends at most one request per
+  `LYRICS_SPACING` (2 s) and identifies itself with the User-Agent
+  `spotify-tracker (https://github.com/baoopn/spotify-tracker)`.
+  `LYRICS_ENABLED=false` makes no LRCLIB calls.
+- **Matching.** `GET /api/get` with the track name, first artist, album and
+  duration (rounded seconds). On a 404 (or an empty record) it falls back to
+  `GET /api/search`. A search candidate must have the same folded track name
+  (a version suffix such as "(Live)" or "- Remastered" is ignored), an artist
+  name that contains the first artist or is contained in it, and, when the
+  duration is known, a duration within 2 s. Among those it prefers the exact
+  name, then synced lyrics, then plain lyrics, then the closest duration.
+  Without an album or duration only search is used. NUL bytes are removed,
+  line breaks normalized to `\n`, and each text is capped at 200 000 bytes.
+  When only synced lyrics exist, plain text is derived by removing the
+  timestamps; a record with no lyrics text left is `instrumental`.
+- **States.** `found` and `instrumental` are final (never overwritten by a
+  later failure). `not_found` is retried after `LYRICS_NOT_FOUND_RETRY`
+  (30 days). A transient error (5xx, 408, timeout, network, decode) or a
+  failed database write is retried after 1 h, doubling per error in a row up
+  to 7 days (`attempts` restarts at 1 when the status changes, so monthly
+  not-found checks do not grow the error backoff). Three transient errors in
+  a row end the batch, and the next batch waits twice the interval, doubling
+  per such batch up to 1 h; a batch with a successful lookup resets it. A
+  permanent 4xx is retried after 7 days and does not end the batch. A 429
+  writes nothing and pauses the job for `Retry-After` (seconds or an HTTP
+  date; default 1 min, at most 1 h). A track without a row is reported as
+  `pending`.
+- **Search.** `search_tsv` is a stored generated column,
+  `to_tsvector('simple', search_fold(plain_lyrics))`, with a GIN index. The
+  `simple` configuration fits Vietnamese (space-separated syllables, no
+  stemming or stop words) and `search_fold` (migration 00010) folds accents
+  without an extension. Queries use `websearch_to_tsquery`; exact phrases
+  (`phraseto_tsquery`) rank first. A search is cut off after 5 s. A later change to `search_fold` must
+  recompute the column (`UPDATE lyrics SET plain_lyrics = plain_lyrics`).
+
 ## Top 50 playlists
 
 `internal/topplaylists` runs in the API (first tick a minute after start,
@@ -293,7 +338,8 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   `audio_profile` (range), `recent_playlists` (limit), `top_playlists` (limit).
 - **Admin tools** (read-only): `admin_overview`, `admin_spotify_status`,
   `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
-  limit, offset), `admin_track` (id), `admin_artists` (q, sort, order, limit,
+  limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),
+  `admin_search_lyrics` (q, limit), `admin_artists` (q, sort, order, limit,
   offset), `admin_playlists` (limit, offset), `admin_top_playlists` (period,
   limit, offset), `admin_top_playlist` (period, start), `admin_backups`,
   `admin_api_analytics` / `admin_page_analytics` (range, tz). Write routes, the

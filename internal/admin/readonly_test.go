@@ -33,8 +33,8 @@ func TestReadOnlyHandlerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 12 {
-		t.Errorf("got %d routes, want 12", n)
+	if n != 14 {
+		t.Errorf("got %d routes, want 14", n)
 	}
 
 	for _, tc := range []struct {

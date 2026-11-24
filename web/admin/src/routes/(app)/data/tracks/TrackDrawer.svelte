@@ -8,6 +8,7 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import AudioFeatureBars from '#lib/components/charts/AudioFeatureBars.svelte';
+	import LyricsSection from './LyricsSection.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import {
 		artistNames,
@@ -170,6 +171,8 @@
 					<p class="text-sm text-muted">No release details yet.</p>
 				{/if}
 			</section>
+
+			<LyricsSection trackId={t.id} />
 
 			<section aria-labelledby="feat-h">
 				<h3 id="feat-h" class="mb-3 text-sm font-semibold text-fg">Audio features</h3>

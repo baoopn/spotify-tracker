@@ -299,6 +299,34 @@ export type TrackAdminDetail = TrackView & {
 	enrichment: TrackEnrichment | null;
 };
 
+/** "pending" means not looked up yet (no stored row). */
+export type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';
+
+/** GET /admin/api/tracks/{id}/lyrics. Admin and MCP only. */
+export type TrackLyrics = {
+	track_id: string;
+	status: LyricsStatus;
+	source: string;
+	lrclib_id: number | null;
+	/** Null unless status is "found". */
+	plain: string | null;
+	/** Present only with ?synced=true and when stored (LRC text). */
+	synced?: string;
+	has_synced: boolean;
+	attempts: number;
+	last_error: string;
+	fetched_at: string | null;
+	next_attempt_at: string | null;
+};
+
+/** One hit of GET /admin/api/lyrics/search. */
+export type LyricsMatch = {
+	track: TrackView;
+	snippet: string;
+	phrase_match: boolean;
+	has_synced: boolean;
+};
+
 export type ArtistRow = {
 	artist: Artist;
 	plays: number;

@@ -188,6 +188,8 @@ The token is never logged or audited.
 | GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album name or Spotify ID/link search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
 | GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, created_at }` |
 | GET | `/admin/api/tracks/{id}` | – | `TrackAdminDetail = TrackView & { plays, last_played, created_at, enrichment: { status, source, attempts, last_error, next_attempt_at, enriched_at, features: AudioFeatures, genres: Genre[] } \| null }` |
+| GET | `/admin/api/tracks/{id}/lyrics` | `synced` (`true`\|`false`, default false) | `TrackLyrics` (see [Lyrics](#lyrics)) |
+| GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
 | GET | `/admin/api/artists` | `q`, `sort` (`plays`\|`name`\|`tracks`), `order`, `limit`, `offset` | `{ data: [{ artist: Artist, plays, tracks, last_played }], total }` |
@@ -215,6 +217,42 @@ runs too, so results are the union of both.
 | bare ID | any of the three above | any of the three above |
 
 Other playlist, user or show links fall back to the name search.
+
+### Lyrics
+
+Lyrics come from [LRCLIB](https://lrclib.net) and are looked up in the
+background (see [architecture](architecture.md#lyrics)). They are served only
+here and through the admin MCP tools (`admin_track_lyrics`,
+`admin_search_lyrics`); the public `/api/v1` and the public page never return
+lyrics text. Credit LRCLIB wherever lyrics are shown.
+
+```ts
+type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';
+type TrackLyrics = {
+  track_id: string;
+  status: LyricsStatus;      // pending = not looked up yet (no row)
+  source: string;            // "lrclib", "" when pending
+  lrclib_id: number | null;
+  plain: string | null;      // only when status is found
+  synced?: string;           // LRC text ("[mm:ss.xx] line"), only with synced=true and when stored
+  has_synced: boolean;
+  attempts: number;          // failed lookups since the last success
+  last_error: string;
+  fetched_at: string | null; // last lookup
+  next_attempt_at: string | null; // next retry (not_found / error)
+};
+type LyricsMatch = { track: TrackView; snippet: string; phrase_match: boolean; has_synced: boolean };
+```
+
+An unknown track is `404 not_found`; a bad `synced` value is
+`400 invalid_synced`. `GET /lyrics/search` answers `400 invalid_query` or
+`400 invalid_limit` for bad parameters. It searches stored lyrics (status
+`found`) with web-search syntax: plain words must all appear,
+`"quoted words"` is an exact phrase, `or` gives alternatives and `-word`
+excludes a word. It is case- and accent-insensitive (`search_fold`), so tones
+are not told apart (ma, má and mà match each other). Exact phrase matches
+(`phrase_match`) come first, then by rank. `snippet` is the best matching line
+and the next one, joined by ` / ` (at most 240 characters).
 
 The public read endpoints (`/api/v1/stats/*`, `/api/v1/now-playing/stream`) can be
 used by the dashboard too (same origin), e.g. for top tracks/genres charts.

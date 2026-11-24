@@ -35,7 +35,9 @@ import type {
 	TopPlaylistPeriod,
 	TopPlaylistsList,
 	TopTrack,
+	LyricsMatch,
 	TrackAdminDetail,
+	TrackLyrics,
 	TrackRow,
 	TrackSort,
 	Playlist,
@@ -254,6 +256,13 @@ export const api = {
 	) => request<OffsetList<TrackRow>>(`${ADMIN_API}/tracks`, { query: q, signal }),
 	track: (id: string, { signal }: Signal = {}) =>
 		request<TrackAdminDetail>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}`, { signal }),
+	trackLyrics: (id: string, { signal }: Signal = {}) =>
+		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics`, { signal }),
+	searchLyrics: (q: string, limit: number, { signal }: Signal = {}) =>
+		request<{ data: LyricsMatch[] }>(`${ADMIN_API}/lyrics/search`, {
+			query: { q, limit },
+			signal
+		}).then((r) => r.data),
 	enrichTrack: (id: string) =>
 		request<{ queued: boolean }>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/enrich`, {
 			method: 'POST'

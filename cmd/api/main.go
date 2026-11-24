@@ -37,6 +37,8 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
 	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/lrclib"
+	"github.com/baoopn/spotify-tracker/internal/lyrics"
 	"github.com/baoopn/spotify-tracker/internal/mcpserver"
 	"github.com/baoopn/spotify-tracker/internal/notify"
 	"github.com/baoopn/spotify-tracker/internal/platform/app"
@@ -102,6 +104,9 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
 	g.Go(func() error { return c.albums.Run(gctx) })
+	if c.lyrics != nil {
+		g.Go(func() error { return c.lyrics.Run(gctx) })
+	}
 	g.Go(func() error { return c.brand.Run(gctx) })
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
@@ -123,6 +128,8 @@ type components struct {
 	analytics *analytics.Recorder
 	images    *artistimages.Refresher
 	albums    *albumdetails.Refresher
+	// lyrics is nil when LYRICS_ENABLED is false.
+	lyrics *lyrics.Refresher
 	// brand is never nil; it is disabled when BRAND_API_URL is empty.
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
@@ -186,6 +193,16 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	}
 	adminAPI.TopPlaylistsConfig = topCfg
 
+	var lyricsRefresher *lyrics.Refresher
+	if cfg.Lyrics.Enabled {
+		lyricsRefresher = lyrics.New(st, lrclib.New(cfg.Lyrics.APIURL, cfg.Lyrics.Spacing, nil), log)
+		lyricsRefresher.Interval = cfg.Lyrics.Interval
+		lyricsRefresher.Batch = cfg.Lyrics.Batch
+		lyricsRefresher.NotFoundRetry = cfg.Lyrics.NotFoundRetry
+	} else {
+		log.Info("lyrics fetcher disabled (LYRICS_ENABLED=false)")
+	}
+
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{
 		ops:          opsSrv,
@@ -196,6 +213,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		analytics:    recorder,
 		images:       artistimages.New(st, mgr, log),
 		albums:       albumdetails.New(st, mgr, log),
+		lyrics:       lyricsRefresher,
 		topPlaylists: topRunner,
 		brand:        brandCache,
 	}, nil

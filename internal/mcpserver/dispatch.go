@@ -24,15 +24,19 @@ import (
 // after 30 s).
 const toolTimeout = 25 * time.Second
 
-// addTools registers defs on s. Each tool runs a GET request for prefix +
-// def.path through target and returns its JSON.
+// addTools registers defs on s. Each tool runs a request (GET unless the
+// def says otherwise) for prefix + def.path through target and returns its
+// JSON.
 //
 // Tools use the low-level Server.AddTool with their own argument handling:
 // the generic mcp.AddTool panics (in a goroutine, killing the process) when
 // a client sends "arguments": null to a tool whose schema has defaults.
 func addTools(s *mcp.Server, defs []toolDef, target http.Handler, prefix string, log *slog.Logger, public bool) {
 	for _, d := range defs {
-		ann := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, Title: d.title}
+		ann := &mcp.ToolAnnotations{ReadOnlyHint: d.method == "", IdempotentHint: true, Title: d.title}
+		if d.method != "" {
+			ann.DestructiveHint = new(false)
+		}
 		if public {
 			ann.OpenWorldHint = new(false)
 		}
@@ -169,17 +173,17 @@ func (d toolDef) handler(resolved *jsonschema.Resolved, target http.Handler, pre
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
-		return call(ctx, target, u, d.name, log), nil
+		return call(ctx, target, d.method, u, d.name, log), nil
 	}
 }
 
-// call runs GET u through h and turns the response into a tool result: the
+// call runs method (GET when empty) u through h and turns the response into a tool result: the
 // JSON body on 2xx, the API's error message on 4xx, "internal error" else.
 //
 // Every panic is recovered, http.ErrAbortHandler included: tool handlers
 // run on an SDK goroutine, not the net/http one, so a re-raised panic would
 // crash the process.
-func call(ctx context.Context, h http.Handler, u, tool string, log *slog.Logger) (res *mcp.CallToolResult) {
+func call(ctx context.Context, h http.Handler, method, u, tool string, log *slog.Logger) (res *mcp.CallToolResult) {
 	ctx, cancel := context.WithTimeout(ctx, toolTimeout)
 	defer cancel()
 	defer func() {
@@ -194,7 +198,10 @@ func call(ctx context.Context, h http.Handler, u, tool string, log *slog.Logger)
 	// they would route the outer method and path (405 for every tool) and
 	// append their patterns to the outer route label. Start a clean one.
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, chi.NewRouteContext())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if method == "" {
+		method = http.MethodGet
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil {
 		return toolError("invalid arguments")
 	}

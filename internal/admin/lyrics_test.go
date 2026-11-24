@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/store"
@@ -19,6 +20,20 @@ type fakeLyrics struct {
 	q          string
 	limit      int
 	err        error
+	requeued   []string
+	noLyrics   bool
+}
+
+func (f *fakeLyrics) TranslationQueueSummary(context.Context, time.Time) (store.TranslationQueue, error) {
+	return store.TranslationQueue{Queued: 2, InProgress: 1, Done: 5, GivenUp: 1, CallsToday: 3, CallsMonth: 40}, f.err
+}
+
+func (f *fakeLyrics) RequeueTranslation(_ context.Context, id string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	f.requeued = append(f.requeued, id)
+	return !f.noLyrics, nil
 }
 
 func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool) (store.TrackLyrics, error) {
@@ -111,5 +126,58 @@ func TestSearchLyricsHandler(t *testing.T) {
 	getLyrics(h, "/lyrics/search?q=ab&limit=50")
 	if f.limit != 50 {
 		t.Errorf("limit = %d", f.limit)
+	}
+}
+
+func TestTranslationQueueHandler(t *testing.T) {
+	a := lyricsAPI(&fakeLyrics{})
+	a.Translation = TranslationInfo{Enabled: true, DailyCap: 100, MonthlyCap: 1000}
+	rec := getLyrics(ReadOnlyHandler(a), "/lyrics/translation-queue")
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	for k, want := range map[string]float64{"queued": 2, "in_progress": 1, "done": 5, "given_up": 1,
+		"calls_today": 3, "calls_month": 40, "daily_cap": 100, "monthly_cap": 1000} {
+		if body[k] != want {
+			t.Errorf("%s = %v, want %v", k, body[k], want)
+		}
+	}
+	if body["enabled"] != true {
+		t.Errorf("enabled = %v", body["enabled"])
+	}
+}
+
+// Re-queue is the one write route MCP can reach: it nudges the worker and
+// is audited.
+func TestRequeueTranslationHandler(t *testing.T) {
+	f := &fakeLyrics{}
+	a := lyricsAPI(f)
+	aud := &fakeAuditor{}
+	a.auditor = aud
+	nudged := 0
+	a.Translation.Nudge = func() { nudged++ }
+	h := ReadOnlyHandler(a)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/translation/requeue", nil))
+	if rec.Code != http.StatusAccepted || len(f.requeued) != 1 || f.requeued[0] != "t9" || nudged != 1 {
+		t.Fatalf("requeue: %d %s requeued=%v nudged=%d", rec.Code, rec.Body.String(), f.requeued, nudged)
+	}
+	if len(aud.calls) != 1 || aud.calls[0].action != "translation.requeued" {
+		t.Errorf("audit = %+v", aud.calls)
+	}
+
+	f.noLyrics = true
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/translation/requeue", nil))
+	if rec.Code != http.StatusNotFound || lyricsErrCode(rec) != "no_lyrics" || nudged != 1 {
+		t.Errorf("no lyrics: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Other writes stay off the MCP handler.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/enrich", nil))
+	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
+		t.Errorf("enrich via MCP handler = %d", rec.Code)
 	}
 }

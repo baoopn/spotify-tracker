@@ -60,6 +60,18 @@ type Deps struct {
 	// OnMCPChange runs after the MCP settings are saved (it drops the MCP
 	// server's settings cache); nil does nothing.
 	OnMCPChange func()
+
+	// Translation describes the lyrics translator (caps for the queue
+	// summary; Nudge starts the worker after a re-queue).
+	Translation TranslationInfo
+}
+
+// TranslationInfo describes the lyrics translator for the admin API.
+type TranslationInfo struct {
+	Enabled    bool
+	DailyCap   int
+	MonthlyCap int
+	Nudge      func() // nil when the translator is off
 }
 
 // API serves /admin/api.

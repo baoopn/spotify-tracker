@@ -14,11 +14,13 @@ type param struct {
 	inPath     bool
 }
 
-// toolDef maps an MCP tool to one GET route of an in-process handler.
+// toolDef maps an MCP tool to one route of an in-process handler: a GET
+// (read-only) unless method says otherwise.
 type toolDef struct {
 	name, title, desc string
 	path              string
 	params            []param
+	method            string // "" = GET
 }
 
 var (
@@ -114,7 +116,10 @@ var adminTools = []toolDef{
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_track_lyrics", title: "Track lyrics (admin)", path: "/tracks/{id}/lyrics",
 		desc: "Lyrics of one track (from LRCLIB): status (found, instrumental, not_found, error, or pending = " +
-			"not looked up yet), plain lyrics, has_synced, and with synced=true the time-synced LRC text.",
+			"not looked up yet), plain lyrics, has_synced, and with synced=true the time-synced LRC text. " +
+			"translation: status (pending, done, skipped, refused, error), stale, source_language, and en / vi " +
+			"machine translations by Claude (null when the song is already in that language; for synced lyrics " +
+			"one line per LRC line, joined with newlines).",
 		params: []param{idParam("Spotify track ID."),
 			{name: "synced", enum: []string{"true", "false"}, def: "false",
 				desc: "Also return the time-synced LRC lyrics."}}},
@@ -124,6 +129,15 @@ var adminTools = []toolDef{
 			"Result data items have track, snippet (matching lines), phrase_match and has_synced.",
 		params: []param{{name: "q", maxLen: 200, required: true, desc: "Words or a phrase from the lyrics."},
 			limitParam(10, 50)}},
+	{name: "admin_translation_queue", title: "Lyrics translation queue (admin)", path: "/lyrics/translation-queue",
+		desc: "The Claude lyrics translation queue: counts of queued, in_progress, done, skipped, refused, error " +
+			"(retry scheduled) and given_up songs, next_retry_at, and calls_today / calls_month against daily_cap / " +
+			"monthly_cap. Songs are queued when they play."},
+	{name: "admin_requeue_translation", title: "Re-queue a lyrics translation (admin)",
+		path: "/tracks/{id}/translation/requeue", method: "POST",
+		desc: "Put one track's lyrics translation at the front of the queue, clearing a refused, failed, given-up " +
+			"or done translation. Fails when the track has no lyrics. Uses Claude credit when it runs.",
+		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",
 		params: []param{

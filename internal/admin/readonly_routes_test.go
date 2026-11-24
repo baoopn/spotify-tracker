@@ -16,6 +16,9 @@ var readOnlyAllowed = map[string]bool{
 	"GET /tracks/{id}": true, "GET /artists": true, "GET /playlists": true, "GET /top-playlists": true,
 	"GET /top-playlists/{period}/{start}": true, "GET /backups": true, "GET /analytics": true,
 	"GET /analytics/pages": true, "GET /tracks/{id}/lyrics": true, "GET /lyrics/search": true,
+	"GET /lyrics/translation-queue": true,
+	// The one write: it only reorders the translation queue.
+	"POST /tracks/{id}/translation/requeue": true,
 }
 
 var routeParam = regexp.MustCompile(`\{[^}]+\}`)
@@ -74,9 +77,12 @@ func TestReadOnlyHandlerExcludesEveryOtherAdminRoute(t *testing.T) {
 			}
 		}
 	}
-	// Allowed paths still refuse writes.
+	// Allowed read paths still refuse writes.
 	for k := range readOnlyAllowed {
-		_, rel, _ := strings.Cut(k, " ")
+		method, rel, _ := strings.Cut(k, " ")
+		if method != http.MethodGet {
+			continue
+		}
 		path := routeParam.ReplaceAllString(rel, "x")
 		for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			rec := httptest.NewRecorder()

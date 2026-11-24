@@ -31,13 +31,13 @@ func strArg(v any) *string {
 
 func TestTracksNeedingLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).TracksNeedingLyrics(context.Background(), 10); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).TracksNeedingLyrics(context.Background(), 10, "now"); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "COALESCE(l.status, ''), COALESCE(l.attempts, 0)", "LEFT JOIN lyrics l ON l.track_id = t.id",
 		"l.track_id IS NULL", "l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()",
-		"ORDER BY (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST", "LIMIT $1")
-	if len(db.args) != 1 || db.args[0] != 10 {
+		"ORDER BY (t.id = $2) DESC, (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST", "LIMIT $1")
+	if len(db.args) != 2 || db.args[0] != 10 || db.args[1] != "now" {
 		t.Errorf("args = %v", db.args)
 	}
 }
@@ -180,7 +180,9 @@ func TestNowLyricsSQL(t *testing.T) {
 	if _, err := (&Queries{db: db}).NowLyrics(context.Background(), "t1"); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "FROM lyrics", "track_id = $1", "status IN ('found', 'instrumental')")
+	wantSQL(t, db.sql, "FROM tracks t", "LEFT JOIN lyrics l ON l.track_id = t.id",
+		"LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id", "t.id = $1",
+		"tr.source_hash = "+srcHashSQL)
 	if len(db.args) != 1 || db.args[0] != "t1" {
 		t.Errorf("args = %v", db.args)
 	}

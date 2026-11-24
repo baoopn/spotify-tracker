@@ -282,7 +282,7 @@ func TestCallMapsMoreStatuses(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := call(t.Context(), tc.h, "/x", "t", log)
+			res := call(t.Context(), tc.h, "", "/x", "t", log)
 			if res.IsError != tc.isError || resultText(res) != tc.text {
 				t.Errorf("got %v %q; want %v %q", res.IsError, resultText(res), tc.isError, tc.text)
 			}
@@ -292,7 +292,7 @@ func TestCallMapsMoreStatuses(t *testing.T) {
 	// http.ErrAbortHandler is recovered too: tools run on an SDK goroutine,
 	// where a re-raised panic would crash the process.
 	res := call(t.Context(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }),
-		"/x", "t", log)
+		"", "/x", "t", log)
 	if !res.IsError || resultText(res) != "internal error" {
 		t.Errorf("ErrAbortHandler = %v %q; want internal error", res.IsError, resultText(res))
 	}

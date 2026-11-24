@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -76,6 +77,7 @@ type API struct {
 	TopPlaylists
 	MCP
 	Lyrics
+	Translate
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -225,6 +227,67 @@ func (l *Lyrics) validate() error {
 	return nil
 }
 
+// Translate configures the Claude lyrics translator in cmd/api. Songs are
+// queued only when they play (or an admin re-queues them).
+type Translate struct {
+	// Enabled runs the translator; false makes no Claude calls.
+	Enabled bool `env:"TRANSLATE_ENABLED" envDefault:"false"`
+	// APIKey is the Anthropic API key (required when enabled).
+	APIKey string `env:"ANTHROPIC_API_KEY,unset"`
+	Model  string `env:"TRANSLATE_MODEL" envDefault:"claude-opus-5-5"`
+	// Effort is the Claude effort level: low or medium.
+	Effort   string        `env:"TRANSLATE_EFFORT" envDefault:"low"`
+	Interval time.Duration `env:"TRANSLATE_INTERVAL" envDefault:"1m"`
+	Batch    int           `env:"TRANSLATE_BATCH" envDefault:"5"`
+	// Spacing is the minimum time between two Claude calls.
+	Spacing time.Duration `env:"TRANSLATE_SPACING" envDefault:"15s"`
+	// Lease is how long a worker holds a song; a crashed worker's claim
+	// expires after it.
+	Lease time.Duration `env:"TRANSLATE_LEASE" envDefault:"10m"`
+	// RecentWindow also queues songs played this recently (0 = only the
+	// song playing now).
+	RecentWindow time.Duration `env:"TRANSLATE_RECENT_WINDOW" envDefault:"30m"`
+	DailyCap     int           `env:"TRANSLATE_DAILY_CAP" envDefault:"100"`
+	MonthlyCap   int           `env:"TRANSLATE_MONTHLY_CAP" envDefault:"1000"`
+	MaxAttempts  int           `env:"TRANSLATE_MAX_ATTEMPTS" envDefault:"5"`
+}
+
+var modelName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
+
+func (t *Translate) validate() error {
+	if !t.Enabled {
+		return nil
+	}
+	t.APIKey = strings.TrimSpace(t.APIKey)
+	switch {
+	case t.APIKey == "":
+		return fmt.Errorf("ANTHROPIC_API_KEY is required when TRANSLATE_ENABLED=true")
+	case !modelName.MatchString(t.Model):
+		return fmt.Errorf("TRANSLATE_MODEL must be a model id such as claude-opus-5-5")
+	case t.Effort != "low" && t.Effort != "medium":
+		return fmt.Errorf("TRANSLATE_EFFORT must be low or medium")
+	case t.Interval < 10*time.Second || t.Interval > 24*time.Hour:
+		return fmt.Errorf("TRANSLATE_INTERVAL must be between 10s and 24h")
+	case t.Batch < 1 || t.Batch > 50:
+		return fmt.Errorf("TRANSLATE_BATCH must be in 1..50")
+	case t.Spacing < time.Second || t.Spacing > 10*time.Minute:
+		return fmt.Errorf("TRANSLATE_SPACING must be between 1s and 10m")
+	case t.Lease < 5*time.Minute || t.Lease > time.Hour:
+		return fmt.Errorf("TRANSLATE_LEASE must be between 5m and 1h")
+	case t.RecentWindow < 0 || t.RecentWindow > 24*time.Hour:
+		return fmt.Errorf("TRANSLATE_RECENT_WINDOW must be between 0 and 24h")
+	case t.DailyCap < 0 || t.DailyCap > 10_000:
+		return fmt.Errorf("TRANSLATE_DAILY_CAP must be in 0..10000")
+	case t.MonthlyCap < 0 || t.MonthlyCap > 100_000:
+		return fmt.Errorf("TRANSLATE_MONTHLY_CAP must be in 0..100000")
+	case t.DailyCap == 0 && t.MonthlyCap == 0:
+		return fmt.Errorf("set TRANSLATE_DAILY_CAP or TRANSLATE_MONTHLY_CAP above 0")
+	case t.MaxAttempts < 1 || t.MaxAttempts > 20:
+		return fmt.Errorf("TRANSLATE_MAX_ATTEMPTS must be in 1..20")
+	}
+	return nil
+}
+
 // minMCPAdminTokenLen is the shortest accepted MCP_ADMIN_TOKEN.
 const minMCPAdminTokenLen = 32
 
@@ -359,6 +422,9 @@ func (a *API) validate() error {
 		return fmt.Errorf("MCP_RATE_LIMIT_PER_MINUTE must be >= 0")
 	}
 	if err := a.Lyrics.validate(); err != nil {
+		return err
+	}
+	if err := a.Translate.validate(); err != nil {
 		return err
 	}
 	// An empty BRAND_API_URL disables the brand API, so the default applies

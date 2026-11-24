@@ -49,6 +49,9 @@ type Options struct {
 	MCP func(v1 http.Handler) http.Handler
 	// MCPRateLimitPerMinute limits /mcp requests per client IP (0 = off).
 	MCPRateLimitPerMinute int
+	// Translation adds the Claude translation to the public now-playing
+	// lyrics (TRANSLATE_ENABLED).
+	Translation bool
 }
 
 // Handler serves the public API.

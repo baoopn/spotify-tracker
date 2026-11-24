@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -50,5 +52,39 @@ func TestLyricsToolTargets(t *testing.T) {
 	u, _ = track.target("/admin/api", map[string]any{"id": "x", "synced": "true"})
 	if u != "/admin/api/tracks/x/lyrics?synced=true" {
 		t.Errorf("synced target = %s", u)
+	}
+}
+
+// The re-queue tool POSTs to the admin route; every other tool is a GET.
+func TestTranslationToolTargets(t *testing.T) {
+	rq := findTool(t, adminTools, "admin_requeue_translation")
+	u, err := rq.target("/admin/api", map[string]any{"id": "t 1"})
+	if err != nil || u != "/admin/api/tracks/t%201/translation/requeue" || rq.method != "POST" {
+		t.Errorf("requeue = %s %s, %v", rq.method, u, err)
+	}
+	q := findTool(t, adminTools, "admin_translation_queue")
+	if u, _ := q.target("/admin/api", map[string]any{}); u != "/admin/api/lyrics/translation-queue" || q.method != "" {
+		t.Errorf("queue = %s %s", q.method, u)
+	}
+	for _, d := range append(append([]toolDef{}, publicTools...), adminTools...) {
+		if d.method != "" && d.name != "admin_requeue_translation" {
+			t.Errorf("unexpected write tool %s", d.name)
+		}
+	}
+}
+
+// call sends the tool's method.
+func TestCallMethod(t *testing.T) {
+	var got string
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method
+		_, _ = w.Write([]byte(`{"queued":true}`))
+	})
+	log := slog.New(slog.DiscardHandler)
+	if res := call(t.Context(), h, "POST", "/x", "t", log); res.IsError || got != "POST" {
+		t.Errorf("POST: %v %s", res.IsError, got)
+	}
+	if call(t.Context(), h, "", "/x", "t", log); got != "GET" {
+		t.Errorf("default method = %s", got)
 	}
 }

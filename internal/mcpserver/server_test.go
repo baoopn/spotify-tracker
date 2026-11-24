@@ -102,8 +102,10 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) []string {
 	var names []string
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			t.Errorf("tool %s is not marked read-only", tool.Name)
+		// The translation re-queue is the one write tool.
+		if write := tool.Name == "admin_requeue_translation"; tool.Annotations == nil ||
+			tool.Annotations.ReadOnlyHint == write {
+			t.Errorf("tool %s: read-only hint wrong (write tool = %v)", tool.Name, write)
 		}
 	}
 	return names
@@ -238,16 +240,16 @@ func TestToolErrors(t *testing.T) {
 func TestCallMapsStatus(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	ctx := context.Background()
-	res := call(ctx, fakePublic(), "/api/v1/history?limit=0", "t", log)
+	res := call(ctx, fakePublic(), "", "/api/v1/history?limit=0", "t", log)
 	if !res.IsError || resultText(res) != "limit must be an integer between 1 and 100" {
 		t.Errorf("4xx = %v %q", res.IsError, resultText(res))
 	}
-	res = call(ctx, fakePublic(), "/api/v1/boom", "t", log)
+	res = call(ctx, fakePublic(), "", "/api/v1/boom", "t", log)
 	if !res.IsError || resultText(res) != "internal error" {
 		t.Errorf("5xx = %v %q", res.IsError, resultText(res))
 	}
 	panicky := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })
-	res = call(ctx, panicky, "/x", "t", log)
+	res = call(ctx, panicky, "", "/x", "t", log)
 	if !res.IsError || resultText(res) != "internal error" {
 		t.Errorf("panic = %v %q", res.IsError, resultText(res))
 	}

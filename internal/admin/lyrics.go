@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -18,6 +19,8 @@ import (
 type lyricsStore interface {
 	TrackLyrics(ctx context.Context, id string, withSynced bool) (store.TrackLyrics, error)
 	SearchLyrics(ctx context.Context, q string, limit int) ([]store.LyricsMatch, error)
+	TranslationQueueSummary(ctx context.Context, now time.Time) (store.TranslationQueue, error)
+	RequeueTranslation(ctx context.Context, trackID string) (bool, error)
 }
 
 func (a *API) lyricsDB() lyricsStore {
@@ -69,6 +72,43 @@ func (a *API) searchLyrics(w http.ResponseWriter, r *http.Request) {
 		rows = []store.LyricsMatch{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// translationQueue serves GET /lyrics/translation-queue: the queue counts,
+// the next retry, and today's and this month's Claude calls against the caps.
+func (a *API) translationQueue(w http.ResponseWriter, r *http.Request) {
+	s, err := a.lyricsDB().TranslationQueueSummary(r.Context(), a.clock())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Enabled    bool `json:"enabled"`
+		DailyCap   int  `json:"daily_cap"`
+		MonthlyCap int  `json:"monthly_cap"`
+		store.TranslationQueue
+	}{a.Translation.Enabled, a.Translation.DailyCap, a.Translation.MonthlyCap, s})
+}
+
+// requeueTranslation serves POST /tracks/{id}/translation/requeue: the
+// track's translation goes to the front of the queue (a refused, failed,
+// given-up or done one is cleared).
+func (a *API) requeueTranslation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	ok, err := a.lyricsDB().RequeueTranslation(r.Context(), id)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no_lyrics", "this track has no lyrics to translate")
+		return
+	}
+	if a.Translation.Nudge != nil {
+		a.Translation.Nudge()
+	}
+	a.audit(r, "translation.requeued", map[string]string{"track_id": id})
+	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }

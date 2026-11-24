@@ -30,6 +30,7 @@ CREATE TABLE lyrics_translations (
     updated_at      timestamptz NOT NULL DEFAULT now(),
     next_attempt_at timestamptz,                         -- only for 'error'; NULL = given up
     requested_at    timestamptz,                         -- re-queued by an admin: goes first
+    claim_requested_at timestamptz,                      -- requested_at taken by the current claim
     claimed_by      text,                                -- worker holding the lease
     claimed_until   timestamptz                          -- lease end; NULL or past = free
 );

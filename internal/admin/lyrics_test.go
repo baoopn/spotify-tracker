@@ -23,6 +23,7 @@ type fakeLyrics struct {
 	requeued   []string
 	noLyrics   bool
 	pending    bool
+	tr         *store.TrackTranslation
 }
 
 func (f *fakeLyrics) TranslationQueueSummary(context.Context, time.Time) (store.TranslationQueue, error) {
@@ -46,7 +47,12 @@ func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool, 
 		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true}, nil
 	}
 	p := "line"
-	return store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}, nil
+	out := store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}
+	if f.tr != nil {
+		c := *f.tr
+		out.Translation = &c
+	}
+	return out, nil
 }
 
 func (f *fakeLyrics) SearchLyrics(_ context.Context, q string, limit int) ([]store.LyricsMatch, error) {
@@ -199,5 +205,27 @@ func TestTrackLyricsWaitingNeedsFetcher(t *testing.T) {
 		if body.Waiting != on {
 			t.Errorf("fetcher %v: waiting = %v", on, body.Waiting)
 		}
+	}
+}
+
+// With translation off nothing is waited for, and a never-queued
+// translation is not shown.
+func TestTrackLyricsTranslationDisabled(t *testing.T) {
+	get := func(enabled bool, tr store.TrackTranslation) map[string]any {
+		a := lyricsAPI(&fakeLyrics{tr: &tr})
+		a.Translation.Enabled = enabled
+		rec := getLyrics(ReadOnlyHandler(a), "/tracks/x/lyrics")
+		var body map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body
+	}
+	if b := get(false, store.TrackTranslation{Status: "pending", Waiting: true}); b["translation"].(map[string]any)["waiting"] != false {
+		t.Errorf("disabled: %v", b["translation"])
+	}
+	if b := get(false, store.TrackTranslation{Status: "not_queued"}); b["translation"] != nil {
+		t.Errorf("disabled, not queued: %v", b["translation"])
+	}
+	if b := get(true, store.TrackTranslation{Status: "pending", Waiting: true}); b["translation"].(map[string]any)["waiting"] != true {
+		t.Errorf("enabled: %v", b["translation"])
 	}
 }

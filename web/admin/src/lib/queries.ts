@@ -236,7 +236,10 @@ export const queries = {
 			staleTime: live ? 0 : 60_000,
 			refetchInterval: (q) => {
 				const d = q.state.data;
-				return d && lyricsWaiting(d) ? (live ? 10_000 : 60_000) : false;
+				if (!d) return false;
+				if (lyricsWaiting(d)) return live ? 10_000 : 60_000;
+				// The song playing now is queued within a minute or so of starting.
+				return live && d.translation?.status === 'not_queued' ? 10_000 : false;
 			}
 		}),
 

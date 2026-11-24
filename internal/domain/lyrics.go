@@ -37,6 +37,9 @@ const (
 	TranslationRefused = "refused" // the model declined (terminal)
 	TranslationError   = "error"   // retried at next_attempt_at; NULL = given up
 	TranslationPending = "pending"
+	// TranslationNotQueued is admin-only: the track was never queued (songs
+	// are queued when they play; there is no backfill).
+	TranslationNotQueued = "not_queued"
 )
 
 // Translation kinds: synced lyrics are translated line by line, plain lyrics

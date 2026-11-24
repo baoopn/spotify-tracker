@@ -37,7 +37,8 @@ type TrackLyrics struct {
 // TrackTranslation is the translation of a track's lyrics (admin and MCP).
 // Synced translations are joined into one line per parsed LRC line.
 type TrackTranslation struct {
-	// Status is done, skipped, refused, error, or pending (none yet).
+	// Status is done, skipped, refused, error, pending (queued), or
+	// not_queued (no row: translated when it plays, or re-queue it).
 	Status string `json:"status"`
 	Stale  bool   `json:"stale"` // the lyrics changed since; it is being redone
 	// Waiting is true while the translation will be worked on soon (leased,
@@ -173,7 +174,7 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 			l.track_id IS NULL OR (l.status = 'error' AND l.next_attempt_at <= now() + `+translationSoon+`),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.kind, tr.source_language,
 			tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
-			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL+`
+			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL("false")+`
 		FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$3", "$4")+` AS reached) cap
@@ -196,7 +197,7 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 		out.Plain = nil
 		return out, nil
 	}
-	tr.Status = domain.TranslationPending
+	tr.Status = domain.TranslationNotQueued
 	if trStatus != nil {
 		tr.Status = *trStatus
 		tr.Stale = !fresh
@@ -266,7 +267,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 	err := q.db.QueryRow(ctx, `
 		SELECT l.status, COALESCE(l.next_attempt_at <= now() + `+translationSoon+`, false),
 			COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
-			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL+`,
+			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL("NOT cap.reached")+`,
 			tr.kind, tr.source_language, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
 		FROM tracks t
 		LEFT JOIN lyrics l ON l.track_id = t.id

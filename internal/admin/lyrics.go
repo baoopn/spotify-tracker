@@ -50,6 +50,12 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 	if l.Status == domain.LyricsPending && !a.LyricsLookup {
 		l.Waiting = false // nothing will look the lyrics up
 	}
+	if t := l.Translation; t != nil && !a.Translation.Enabled {
+		t.Waiting = false // nothing will translate it
+		if t.Status == domain.TranslationNotQueued {
+			l.Translation = nil
+		}
+	}
 	writeJSON(w, http.StatusOK, l)
 }
 

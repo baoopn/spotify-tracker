@@ -323,7 +323,8 @@ export type TrackLyrics = {
 	translation: TrackTranslation | null;
 };
 
-export type TranslationStatus = 'pending' | 'done' | 'skipped' | 'refused' | 'error';
+/** not_queued: never queued (songs are queued when they play; there is no backfill). */
+export type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
 
 /**
  * Claude translation of a track's lyrics. For synced lyrics `en` / `vi` hold

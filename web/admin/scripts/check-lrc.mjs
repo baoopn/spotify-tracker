@@ -139,6 +139,7 @@ check('translation: plain interleave and notes', () => {
 	assert.equal(translationNote(tr({ status: 'pending', waiting: true })), null);
 	assert.match(translationNote(tr({ status: 'pending' })), /cap/);
 	assert.match(translationNote(tr({ status: 'refused' })), /declined/);
+	assert.match(translationNote(tr({ status: 'not_queued' })), /when they play/);
 	assert.match(translationNote(tr({ status: 'error', next_attempt_at: 'x' })), /tried again later/);
 	assert.match(translationNote(tr({ status: 'error' })), /given up/);
 });

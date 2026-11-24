@@ -249,12 +249,13 @@ type TrackLyrics = {
   waiting: boolean;          // a lookup is due soon (pending with the fetcher on, or an error retried within minutes)
   translation: TrackTranslation | null; // only when status is found
 };
-type TranslationStatus = 'pending' | 'done' | 'skipped' | 'refused' | 'error';
+type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
 type TrackTranslation = {
-  status: TranslationStatus; // pending = queued or not queued yet
+  status: TranslationStatus; // not_queued = never queued (no backfill; queued when it plays or re-queued)
   stale: boolean;            // the lyrics changed since; it is being redone
-  waiting: boolean;          // it will be worked on soon: leased, queued, stale or a retry
-                             // due within minutes, and no cap reached (poll only then)
+  waiting: boolean;          // it will be worked on soon: leased, queued, re-queued, stale or a retry
+                             // due within minutes, and no cap reached (poll only then);
+                             // false when translation is off or never queued
   kind: 'synced' | 'plain' | null;
   source_language: string | null; // ISO 639-1, or "und"
   // Synced: one line per line of the parsed LRC (internal/lrc, src/lib/lrc.ts),

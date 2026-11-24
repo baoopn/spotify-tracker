@@ -46,6 +46,8 @@ export function translationNote(t: TrackTranslation | null | undefined): string 
 	if (t.status === 'pending' || t.stale)
 		return 'Queued; waiting for the daily or monthly cap, or a play.';
 	switch (t.status) {
+		case 'not_queued':
+			return 'Not translated yet: songs are translated when they play.';
 		case 'skipped':
 			return 'Not translated: nothing to translate, or too long.';
 		case 'refused':

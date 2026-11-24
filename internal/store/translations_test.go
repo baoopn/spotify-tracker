@@ -66,11 +66,11 @@ func TestClaimTranslationsSQL(t *testing.T) {
 	}
 	wantSQL(t, db.sql,
 		"(tr.claimed_until IS NULL OR tr.claimed_until < now())",
-		"tr.status = 'pending' OR tr.source_hash <> "+srcHashSQL,
+		"tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> "+srcHashSQL,
 		"tr.status = 'error' AND tr.next_attempt_at <= now()",
 		"ORDER BY (tr.track_id = $2) DESC, tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST",
 		"FOR UPDATE OF tr SKIP LOCKED",
-		"SET claimed_by = $1, claimed_until = now() + $3::interval,\n\t\t\trequested_at = NULL",
+		"claim_requested_at = tr.requested_at, requested_at = NULL",
 		"JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'")
 	if strings.Contains(db.sql, "LEFT JOIN lyrics_translations") {
 		t.Error("the claim must read queued rows only (no backfill)")
@@ -123,7 +123,8 @@ func TestDeferAndReleaseTranslationSQL(t *testing.T) {
 
 	db = &captureDB{}
 	_ = (&Queries{db: db}).ReleaseTranslation(context.Background(), "w1", "t1")
-	wantSQL(t, db.sql, "SET claimed_by = NULL, claimed_until = NULL", "track_id = $2 AND claimed_by = $1")
+	wantSQL(t, db.sql, "SET claimed_by = NULL, claimed_until = NULL",
+		"requested_at = COALESCE(requested_at, claim_requested_at)", "track_id = $2 AND claimed_by = $1")
 }
 
 func TestRequeueTranslationSQL(t *testing.T) {
@@ -212,7 +213,10 @@ func TestTranslationState(t *testing.T) {
 // Pending must end: a far retry or a reached cap does not count as waiting,
 // a live lease always does.
 func TestTranslationWaitingSQL(t *testing.T) {
-	wantSQL(t, trWaitingSQL, "WHEN tr.track_id IS NULL THEN NOT cap.reached",
+	if !strings.Contains(trWaitingSQL("false"), "WHEN tr.track_id IS NULL THEN false") {
+		t.Error("admin: a track with no row is not waiting (no backfill)")
+	}
+	wantSQL(t, trWaitingSQL("NOT cap.reached"), "WHEN tr.track_id IS NULL THEN NOT cap.reached", "tr.requested_at IS NOT NULL",
 		"tr.claimed_until IS NOT NULL AND tr.claimed_until >= now()",
 		"tr.status = 'error' AND tr.next_attempt_at <= now() + interval '2 minutes'",
 		"AND NOT cap.reached")

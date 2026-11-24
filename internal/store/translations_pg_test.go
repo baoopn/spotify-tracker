@@ -129,6 +129,40 @@ func TestPGTranslationQueue(t *testing.T) {
 		t.Fatalf("set again = %v, %v", ok, err)
 	}
 
+	// A re-queue during a lease that ends without a result (released: cap,
+	// 429, shutdown) stays first in line, even over the priority-less queue.
+	seed(t, pool, "given", 3*time.Hour)
+	exec(t, pool, `INSERT INTO lyrics_translations (track_id, status, source_hash, attempts)
+		SELECT track_id, 'error', md5(COALESCE(synced_lyrics, '') || E'\x1f' || COALESCE(plain_lyrics, '')), 5
+		FROM lyrics WHERE track_id = 'given'`) // given up: next_attempt_at NULL
+	if ok, _ := st.RequeueTranslation(ctx, "given"); !ok {
+		t.Fatal("requeue given-up")
+	}
+	gc, _ := st.ClaimTranslations(ctx, "w1", "", 10*time.Minute, 1)
+	if len(gc) != 1 || gc[0].TrackID != "given" {
+		t.Fatalf("re-queued first = %+v", gc)
+	}
+	if ok, _ := st.RequeueTranslation(ctx, "given"); !ok { // again, while leased
+		t.Fatal("requeue while leased")
+	}
+	if err := st.ReleaseTranslation(ctx, "w1", "given"); err != nil {
+		t.Fatal(err)
+	}
+	gc, _ = st.ClaimTranslations(ctx, "w2", "", 10*time.Minute, 1)
+	if len(gc) != 1 || gc[0].TrackID != "given" {
+		t.Fatalf("after release: %+v, want the re-queued song first again", gc)
+	}
+	// Released without a new re-queue: the claim's request is restored.
+	if err := st.ReleaseTranslation(ctx, "w2", "given"); err != nil {
+		t.Fatal(err)
+	}
+	var requested bool
+	_ = pool.QueryRow(ctx, `SELECT requested_at IS NOT NULL FROM lyrics_translations WHERE track_id = 'given'`).Scan(&requested)
+	if !requested {
+		t.Error("release lost the re-queue")
+	}
+	exec(t, pool, `DELETE FROM lyrics_translations WHERE track_id = 'given'`)
+
 	caps := store.TranslationCaps{Daily: 2, Monthly: 10}
 	nl, err := st.NowLyrics(ctx, "now", caps)
 	if err != nil || nl.Status != domain.LyricsFound || nl.Translation == nil || nl.Translation.Status != domain.TranslationDone ||
@@ -142,6 +176,16 @@ func TestPGTranslationQueue(t *testing.T) {
 	if err != nil || tl.Translation == nil || tl.Translation.Status != "done" || tl.Translation.Waiting ||
 		tl.Translation.EN == nil || len(strings.Split(*tl.Translation.EN, "\n")) != 3 {
 		t.Fatalf("track lyrics = %+v, %v", tl.Translation, err)
+	}
+
+	// Admin: a track never queued is "not_queued" and not waiting (no
+	// backfill); the public view of the song playing now counts it as pending.
+	tl, err = st.TrackLyrics(ctx, "old", false, caps)
+	if err != nil || tl.Translation == nil || tl.Translation.Status != domain.TranslationNotQueued || tl.Translation.Waiting {
+		t.Fatalf("never queued = %+v, %v", tl.Translation, err)
+	}
+	if nl, _ := st.NowLyrics(ctx, "old", caps); nl.Translation == nil || nl.Translation.Status != domain.TranslationPending {
+		t.Errorf("public, playing, not queued yet = %+v", nl.Translation)
 	}
 
 	// A far retry is not pending; a retry due within minutes is.

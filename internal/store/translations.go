@@ -22,7 +22,7 @@ const srcHashSQL = `md5(COALESCE(l.synced_lyrics, '') || E'\x1f' || COALESCE(l.p
 // A row is claimable when it waits (pending), is stale (the lyrics changed),
 // or failed and its retry is due, and no live lease holds it.
 const claimableSQL = `(tr.claimed_until IS NULL OR tr.claimed_until < now())
-	AND (tr.status = 'pending' OR tr.source_hash <> ` + srcHashSQL + `
+	AND (tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> ` + srcHashSQL + `
 		OR (tr.status = 'error' AND tr.next_attempt_at <= now()))`
 
 // TranslationCaps are the Claude call caps (0 = none of that kind); a
@@ -44,14 +44,18 @@ func capReachedSQL(daily, monthly string) string {
 const translationSoon = `interval '2 minutes'`
 
 // trWaitingSQL is true when the translation of tr (alias tr, lyrics alias l,
-// capReached a boolean column) will be worked on soon: leased now, or queued,
-// stale or due for a retry within translationSoon and no cap is reached. A
-// song with no row is queued when it plays, so it counts as waiting too.
-const trWaitingSQL = `CASE WHEN tr.track_id IS NULL THEN NOT cap.reached
+// cap.reached a boolean) will be worked on soon: leased now, or queued,
+// re-queued, stale or due for a retry within translationSoon and no cap is
+// reached. noRow is the answer for a track with no row: the song playing
+// now is queued when it plays ("NOT cap.reached"), any other track never is
+// ("false": there is no backfill).
+func trWaitingSQL(noRow string) string {
+	return `CASE WHEN tr.track_id IS NULL THEN ` + noRow + `
 	ELSE (tr.claimed_until IS NOT NULL AND tr.claimed_until >= now())
-		OR ((tr.status = 'pending' OR tr.source_hash <> ` + srcHashSQL + `
+		OR ((tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> ` + srcHashSQL + `
 			OR (tr.status = 'error' AND tr.next_attempt_at <= now() + ` + translationSoon + `))
 			AND NOT cap.reached) END`
+}
 
 // EnqueueTranslation queues one track (a song playing now) when it has found
 // lyrics and no translation row yet. It reports whether the track has a
@@ -112,7 +116,7 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner, priority string,
 			LIMIT $4
 			FOR UPDATE OF tr SKIP LOCKED)
 		UPDATE lyrics_translations tr SET claimed_by = $1, claimed_until = now() + $3::interval,
-			requested_at = NULL
+			claim_requested_at = tr.requested_at, requested_at = NULL
 		FROM pick WHERE tr.track_id = pick.track_id
 		RETURNING pick.track_id, pick.name, pick.artist, pick.synced, pick.plain, pick.hash,
 			CASE WHEN pick.stale THEN '' ELSE pick.status END, CASE WHEN pick.stale THEN 0 ELSE pick.attempts END,
@@ -175,7 +179,7 @@ func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash
 			en_lines = $6, vi_lines = $7, en_text = $8, vi_text = $9, model = $10,
 			input_tokens = $11, output_tokens = $12, attempts = 0, last_error = NULL,
 			translated_at = now(), updated_at = now(), next_attempt_at = NULL,
-			claimed_by = NULL, claimed_until = NULL
+			claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
 		WHERE tr.track_id = $2 AND tr.claimed_by = $1
 			AND EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = $2 AND l.status = 'found' AND `+srcHashSQL+` = $3)`,
 		owner, trackID, sourceHash, r.Kind, nullIfEmpty(r.SourceLanguage), r.EN, r.VI,
@@ -205,7 +209,7 @@ func (q *Queries) DeferTranslation(ctx context.Context, owner, trackID, sourceHa
 			status = CASE WHEN tr.requested_at IS NULL THEN $4 ELSE 'pending' END,
 			source_hash = $3, last_error = $6, updated_at = now(),
 			next_attempt_at = CASE WHEN tr.requested_at IS NULL THEN $5::timestamptz END,
-			claimed_by = NULL, claimed_until = NULL
+			claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
 		WHERE tr.track_id = $2 AND tr.claimed_by = $1`,
 		owner, trackID, sourceHash, status, next, nullIfEmpty(lastErr))
 	if err != nil {
@@ -215,10 +219,12 @@ func (q *Queries) DeferTranslation(ctx context.Context, owner, trackID, sourceHa
 }
 
 // ReleaseTranslation gives back a lease without recording an outcome (rate
-// limit, cap reached, shutdown): the song stays queued as it was.
+// limit, cap reached, shutdown): the song stays queued as it was, a
+// re-queued song still first in line.
 func (q *Queries) ReleaseTranslation(ctx context.Context, owner, trackID string) error {
 	_, err := q.db.Exec(ctx, `
-		UPDATE lyrics_translations SET claimed_by = NULL, claimed_until = NULL
+		UPDATE lyrics_translations SET claimed_by = NULL, claimed_until = NULL,
+			requested_at = COALESCE(requested_at, claim_requested_at), claim_requested_at = NULL
 		WHERE track_id = $2 AND claimed_by = $1`, owner, trackID)
 	if err != nil {
 		return fmt.Errorf("release translation %s: %w", trackID, err)

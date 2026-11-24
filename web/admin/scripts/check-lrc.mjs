@@ -94,4 +94,51 @@ check('activeIndex', () => {
 	assert.equal(activeIndex([], 5), -1);
 });
 
+// Translations (src/lib/translation.ts).
+const { availableLangs, pickLang, translatedLines, interleave, translationNote } =
+	await import('../src/lib/translation.ts');
+const tr = (over) => ({
+	status: 'done',
+	stale: false,
+	kind: 'synced',
+	source_language: 'vi',
+	en: 'one\n\nthree',
+	vi: null,
+	model: 'm',
+	attempts: 0,
+	last_error: '',
+	translated_at: null,
+	next_attempt_at: null,
+	...over
+});
+
+check('translation: languages shown', () => {
+	assert.deepEqual(availableLangs(null), []);
+	assert.deepEqual(availableLangs(tr()), ['en']);
+	assert.deepEqual(availableLangs(tr({ source_language: 'ko', vi: 'x' })), ['en', 'vi']);
+	assert.deepEqual(availableLangs(tr({ stale: true })), [], 'stale: being redone');
+	assert.deepEqual(availableLangs(tr({ status: 'pending' })), []);
+	assert.equal(pickLang('vi', ['en']), 'orig');
+	assert.equal(pickLang('en', ['en']), 'en');
+});
+
+check('translation: synced lines line up with the parsed LRC', () => {
+	const lines = parseLrc('[00:01.00] một\n[00:02.00]\n[00:03.00] ba');
+	assert.deepEqual(translatedLines(tr().en, lines.length), ['one', '', 'three']);
+	assert.equal(translatedLines('one\nthree', lines.length), null, 'count mismatch: hide');
+	assert.equal(translatedLines(null, 3), null);
+});
+
+check('translation: plain interleave and notes', () => {
+	assert.deepEqual(interleave('a\nb', 'x\ny'), [
+		{ text: 'a', tr: 'x' },
+		{ text: 'b', tr: 'y' }
+	]);
+	assert.equal(interleave('a\nb', 'x'), null);
+	assert.equal(translationNote(tr({ status: 'pending' })), null);
+	assert.match(translationNote(tr({ status: 'refused' })), /declined/);
+	assert.match(translationNote(tr({ status: 'error', next_attempt_at: 'x' })), /tried again/);
+	assert.match(translationNote(tr({ status: 'error' })), /given up/);
+});
+
 if (!process.exitCode) console.log(`${passed} lrc checks passed`);

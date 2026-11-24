@@ -3,11 +3,15 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import OutLink from '../OutLink.svelte';
 	import Skeleton from '../Skeleton.svelte';
+	import LyricsLangPicker from '../lyrics/LyricsLangPicker.svelte';
+	import TranslationStatus from '../lyrics/TranslationStatus.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import { fastClock } from '#lib/clock.svelte.js';
+	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { activeIndex, parseLrc } from '#lib/lrc.js';
 	import type { Snapshot } from '#lib/now-playing.svelte.js';
 	import { queries } from '#lib/queries.js';
+	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
 	let {
 		trackId,
@@ -19,9 +23,20 @@
 	const uid = $props.id();
 	const headingId = `${uid}-np-lyrics`;
 
-	const lyrics = createQuery(() => queries.trackLyrics(trackId, true));
+	// The song playing now: re-checked every 10 s while its lyrics or
+	// translation are on their way.
+	const lyrics = createQuery(() => queries.trackLyrics(trackId, true, true));
 	const l = $derived(lyrics.data && lyrics.data.track_id === trackId ? lyrics.data : undefined);
 	const lines = $derived(l?.status === 'found' ? parseLrc(l.synced) : []);
+	const plain = $derived(!lines.length && l?.status === 'found' && l.plain ? l.plain : null);
+
+	// Translation: one saved preference; a song without it shows the original.
+	const tr = $derived(l?.translation ?? null);
+	const available = $derived(availableLangs(tr));
+	const lang = $derived(pickLang(lyricsLang.value, available));
+	const trText = $derived(tr && lang !== 'orig' ? tr[lang] : null);
+	const trLines = $derived(lines.length ? translatedLines(trText, lines.length) : null);
+	const trPairs = $derived(plain && trText ? interleave(plain, trText) : null);
 
 	// Same estimate as the progress bar, on a faster clock so lines change on time.
 	const position = $derived.by(() => {
@@ -39,9 +54,11 @@
 		pausedUntil = Date.now() + 5000;
 	}
 
-	// Keep the active line centred inside the box only (never scroll the page).
+	// Keep the active line centred inside the box only (never scroll the page),
+	// also when translations make the lines taller.
 	$effect(() => {
 		const i = active;
+		void trLines;
 		if (!box || i < 0 || Date.now() < pausedUntil) return;
 		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
 		if (!el) return;
@@ -53,9 +70,12 @@
 </script>
 
 <section aria-labelledby={headingId} class="mt-5 border-t border-rule pt-4">
-	<div class="mb-2 flex items-center gap-2">
+	<div class="mb-2 flex flex-wrap items-center gap-2">
 		<h3 id={headingId} class="eyebrow text-ink">Lyrics</h3>
 		{#if lines.length}<span class="chip">Synced</span>{/if}
+		<div class="ml-auto">
+			<LyricsLangPicker {available} bind:value={lyricsLang.value} />
+		</div>
 	</div>
 
 	{#if lyrics.isError && !l}
@@ -95,18 +115,38 @@
 					]}
 				>
 					{#if line.text}{line.text}{:else}<span aria-hidden="true">♪</span>{/if}
+					{#if trLines?.[i]}
+						<span class="block text-[0.85em] font-normal opacity-75" {lang} dir="auto"
+							>{trLines[i]}</span
+						>
+					{/if}
 				</p>
 			{/each}
 		</div>
-	{:else if l.status === 'found' && l.plain}
+	{:else if plain}
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="max-h-80 overflow-y-auto text-sm leading-relaxed whitespace-pre-line text-ink"
+			class="max-h-80 overflow-y-auto text-sm leading-relaxed text-ink"
 		>
-			{l.plain}
+			{#if trPairs}
+				{#each trPairs as p, i (i)}
+					<p class="min-h-[1lh]" dir="auto">
+						{p.text}
+						{#if p.tr}<span class="block opacity-75" {lang}>{p.tr}</span>{/if}
+					</p>
+				{/each}
+			{:else}
+				<div class="whitespace-pre-line">{plain}</div>
+				{#if trText}
+					<p class="eyebrow mt-4 mb-1 text-ink-soft" {lang}>
+						{lang === 'vi' ? 'Bản dịch tiếng Việt' : 'English translation'}
+					</p>
+					<div class="whitespace-pre-line opacity-80" {lang}>{trText}</div>
+				{/if}
+			{/if}
 		</div>
 	{:else if l.status === 'found' || l.status === 'instrumental'}
 		<span class="chip">Instrumental</span>
@@ -115,7 +155,11 @@
 	{:else if l.status === 'error'}
 		<p class="text-sm text-ink-soft">Lyrics lookup failed. It will be tried again.</p>
 	{:else}
-		<p class="text-sm text-ink-soft">Not fetched yet. Lyrics are looked up in the background.</p>
+		<p class="text-sm text-ink-soft" role="status">Looking for lyrics…</p>
+	{/if}
+
+	{#if l?.status === 'found'}
+		<TranslationStatus {trackId} translation={tr} />
 	{/if}
 
 	{#if l && (l.status === 'found' || l.status === 'instrumental')}
@@ -124,7 +168,8 @@
 				href="https://lrclib.net"
 				class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
 				>LRCLIB</OutLink
-			>
+			>{#if trText}
+				· Translated by Claude{/if}
 		</p>
 	{/if}
 </section>

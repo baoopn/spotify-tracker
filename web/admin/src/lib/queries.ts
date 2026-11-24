@@ -17,6 +17,7 @@ import type {
 	TopArtist,
 	TopPlaylistPeriod,
 	TopTrack,
+	TrackLyrics,
 	TrackSort
 } from './types';
 
@@ -80,6 +81,7 @@ export const qk = {
 		lyrics: (id: string, synced = false) => ['tracks', 'lyrics', id, synced] as const
 	},
 	lyrics: {
+		translationQueue: ['lyrics', 'translation-queue'] as const,
 		search: (q: string, limit: number) => ['lyrics', 'search', q, limit] as const
 	},
 	artists: {
@@ -221,14 +223,28 @@ export const queries = {
 			refetchInterval: REFRESH.list
 		}),
 
-	/** Lyrics change rarely and are large: polled only while the lookup is pending. */
-	trackLyrics: (id: string | null, synced = false) =>
+	/**
+	 * Lyrics change rarely and are large: polled only while the lookup or the
+	 * translation is on its way, every 10 s for the song playing now (live)
+	 * and every minute elsewhere. Never while the tab is hidden.
+	 */
+	trackLyrics: (id: string | null, synced = false, live = false) =>
 		queryOptions({
 			queryKey: qk.tracks.lyrics(id ?? '', synced),
 			queryFn: ({ signal }) => api.trackLyrics(id ?? '', { synced, signal }),
 			enabled: !!id,
-			staleTime: 60_000,
-			refetchInterval: (q) => (q.state.data?.status === 'pending' ? 60_000 : false)
+			staleTime: live ? 0 : 60_000,
+			refetchInterval: (q) => {
+				const d = q.state.data;
+				return d && lyricsWaiting(d) ? (live ? 10_000 : 60_000) : false;
+			}
+		}),
+
+	translationQueue: () =>
+		queryOptions({
+			queryKey: qk.lyrics.translationQueue,
+			queryFn: ({ signal }) => api.translationQueue({ signal }),
+			refetchInterval: REFRESH.list
 		}),
 
 	searchLyrics: (q: string, limit: number) =>
@@ -296,6 +312,15 @@ export const queries = {
 			refetchInterval: REFRESH.list
 		})
 };
+
+/** The lookup or the translation of these lyrics is still on its way. */
+export function lyricsWaiting(l: TrackLyrics): boolean {
+	if (l.status === 'pending' || (l.status === 'error' && l.next_attempt_at)) return true;
+	const t = l.translation;
+	return (
+		!!t && (t.status === 'pending' || t.stale || (t.status === 'error' && !!t.next_attempt_at))
+	);
+}
 
 /** Mirrors the server's lyrics search check: 2–200 characters (code points)
  * after trimming, with at least one letter or digit. */

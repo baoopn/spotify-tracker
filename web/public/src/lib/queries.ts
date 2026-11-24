@@ -39,8 +39,7 @@ const TRACK_REFRESH_MS = 60_000;
 const TOP_REFRESH_MS = 60_000;
 /** Fast poll while the enricher is still analysing the track on show. */
 const TRACK_PENDING_MS = 4_000;
-/** Re-ask while a playing track has no lyrics window yet (lookup may be pending). */
-/** Re-ask for lyrics while none are shown (no synced lyrics yet, or a reply for another track). */
+/** Re-ask for lyrics while none are shown (no lyrics yet, or a reply for another track). */
 const LYRICS_EMPTY_MS = 15_000;
 
 export const queryKeys = {
@@ -133,9 +132,9 @@ export function trackDetailQuery(id: string | null) {
 }
 
 /**
- * Lyrics window for the track playing now. Keyed by track so the previous
- * song's lines never show; idle while paused or without a track. The
- * component refetches itself when the window runs out or playback seeks.
+ * The full lyrics of the track playing now, fetched once per track. Keyed
+ * by track so the previous song's lines never show; idle while paused or
+ * without a track.
  */
 export function nowLyricsQuery(trackId: string | null, playing: boolean) {
 	return queryOptions({

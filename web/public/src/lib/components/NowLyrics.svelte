@@ -1,19 +1,11 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
-	import { tick, untrack } from 'svelte';
+	import { tick } from 'svelte';
 	import LyricsList from './LyricsList.svelte';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { artistNames } from '#lib/format.js';
 	import { live } from '#lib/live.svelte.js';
-	import {
-		currentIndex,
-		lineKeys,
-		rollLines,
-		shouldRefetch,
-		windowKey,
-		type RefetchMemo,
-		type Rolling
-	} from '#lib/lyrics.js';
+	import { currentIndex, lineKeys } from '#lib/lyrics.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
 	import type { NowPlaying } from '#lib/types.js';
@@ -29,46 +21,28 @@
 	const playing = $derived(!!trackId && np.is_playing);
 	const durationMs = $derived(np.track?.duration_ms ?? 0);
 
+	// The full lyrics, fetched once per track. Only for the track on screen:
+	// a late response for the previous song shows nothing.
 	const query = createQuery(() => nowLyricsQuery(trackId, playing));
-	// Only lines for the track on screen: a late response for the previous
-	// song (or a null "no synced lyrics") shows nothing.
-	const data = $derived(
-		query.data && query.data.track_id === trackId && query.data.lines.length > 0 ? query.data : null
-	);
+	const data = $derived(query.data && query.data.track_id === trackId ? query.data : null);
+
+	const lines = $derived(data?.synced ? data.lines : []);
+	const keys = $derived(lineKeys(lines));
+	const plain = $derived(!lines.length && data?.plain ? data.plain : null);
+	const instrumental = $derived(!lines.length && !plain && !!data?.instrumental);
 
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
-	// moves the highlight in between.
+	// moves the highlight in between. Only needed for synced lines.
 	const posMs = $derived(
-		playing ? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs) : null
+		playing && lines.length
+			? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs)
+			: null
 	);
-
-	// A short rolling run: a few past lines plus the current server window,
-	// never the whole song. Folded in once per new window, not on every tick.
-	let roll = $state<Rolling | null>(null);
-	$effect.pre(() => {
-		const d = data;
-		if (!d) return;
-		roll = untrack(() => rollLines(roll, d, posMs ?? 0));
-	});
-	const lines = $derived(data && roll && roll.trackId === trackId ? roll.lines : []);
-	const keys = $derived(lineKeys(lines));
 	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);
-	const shown = $derived(playing && !!data && lines.length > 0);
 
-	// Refetch when the window runs out or playback seeks back; see shouldRefetch.
-	const memo: RefetchMemo = { key: null, at: 0 };
-	$effect(() => {
-		if (!data || posMs == null || query.isFetching) return;
-		const state = {
-			isError: query.isError,
-			hidden: document.visibilityState === 'hidden',
-			nowMs: Date.now()
-		};
-		if (!shouldRefetch(data, posMs, state, memo)) return;
-		memo.key = windowKey(data);
-		memo.at = state.nowMs;
-		void query.refetch();
-	});
+	/** Something to read: synced lines or plain text (instrumental has no expand). */
+	const readable = $derived(playing && (lines.length > 0 || plain != null));
+	const shown = $derived(readable || (playing && instrumental));
 
 	// Expanded view: a native modal dialog (focus trap, Esc, focus return).
 	let dialog = $state<HTMLDialogElement>();
@@ -80,7 +54,7 @@
 		if (!dialog || dialog.open) return;
 		open = true;
 		await tick();
-		if (dialog && !dialog.open && shown) dialog.showModal();
+		if (dialog && !dialog.open && readable) dialog.showModal();
 		else open = false;
 	}
 	function collapse() {
@@ -103,7 +77,7 @@
 
 	// Playback stopped or the lyrics went away: close cleanly.
 	$effect(() => {
-		if (!shown && open) collapse();
+		if (!readable && open) collapse();
 	});
 </script>
 
@@ -111,37 +85,52 @@
 	<section aria-labelledby={headingId} class="mt-6 border-t border-rule pt-4">
 		<div class="mb-2 flex items-center gap-2">
 			<h3 id={headingId} class="label text-ink">Lyrics</h3>
-			<span class="chip label">Synced</span>
-			<button
-				type="button"
-				class="ml-auto inline-flex size-9 items-center justify-center rounded-lg border border-rule text-ink-soft transition-colors hover:border-ink hover:text-ink"
-				aria-label="Expand lyrics"
-				title="Expand lyrics"
-				aria-haspopup="dialog"
-				aria-expanded={open}
-				aria-controls={dialogId}
-				onclick={expand}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					class="size-4"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="1.75"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
+			{#if lines.length}
+				<span class="chip label">Synced</span>
+			{:else if plain}
+				<span class="chip label">Plain</span>
+			{:else if instrumental}
+				<span class="chip label">Instrumental</span>
+			{/if}
+			{#if readable}
+				<button
+					type="button"
+					class="ml-auto inline-flex size-9 items-center justify-center rounded-lg border border-rule text-ink-soft transition-colors hover:border-ink hover:text-ink"
+					aria-label="Expand lyrics"
+					title="Expand lyrics"
+					aria-haspopup="dialog"
+					aria-expanded={open}
+					aria-controls={dialogId}
+					onclick={expand}
 				>
-					<path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" />
-				</svg>
-			</button>
+					<svg
+						viewBox="0 0 24 24"
+						class="size-4"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.75"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" />
+					</svg>
+				</button>
+			{/if}
 		</div>
 
 		<!-- One scroller at a time; the empty box holds the card's height. -->
-		{#if open}
+		{#if instrumental}
+			<!-- No words to show; the chip says it all. -->
+		{:else if open}
 			<div class="h-64" aria-hidden="true"></div>
-		{:else}
+		{:else if lines.length}
 			<LyricsList {lines} {keys} {active} class="h-64" />
+		{:else if plain}
+			<!-- A new box per song, so the next song starts at the top. -->
+			{#key trackId}
+				{@render plainText(plain, 'h-64 py-2 text-base leading-relaxed')}
+			{/key}
 		{/if}
 
 		<p class="mt-2 text-xs text-ink-soft">
@@ -154,6 +143,20 @@
 		</p>
 	</section>
 {/if}
+
+{#snippet plainText(text: string, cls: string)}
+	<!-- A scrollable box must be focusable so keyboard users can scroll it. -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div
+		role="region"
+		aria-label="Lyrics, scrollable"
+		tabindex="0"
+		dir="auto"
+		class={['overflow-y-auto break-words whitespace-pre-line text-ink', cls]}
+	>
+		{text}
+	</div>
+{/snippet}
 
 <!-- Outside the {#if} so it can close itself when the card goes away. Focus
      returns to the Expand button; if the card is gone, the browser drops it
@@ -197,7 +200,16 @@
 					</svg>
 				</button>
 			</header>
-			<LyricsList {lines} {keys} {active} size="lg" class="min-h-0 flex-1 px-5 sm:px-8" />
+			{#if lines.length}
+				<LyricsList {lines} {keys} {active} size="lg" class="min-h-0 flex-1 px-5 sm:px-8" />
+			{:else if plain}
+				{#key trackId}
+					{@render plainText(
+						plain,
+						'min-h-0 flex-1 overscroll-contain px-5 py-6 text-xl leading-relaxed sm:px-8 sm:text-2xl'
+					)}
+				{/key}
+			{/if}
 			<p class="border-t border-rule px-5 py-3 text-xs text-ink-soft">
 				<a
 					href={data.credit.url}

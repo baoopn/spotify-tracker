@@ -174,17 +174,13 @@ func (d *deadlineDB) Query(ctx context.Context, sql string, args ...any) (pgx.Ro
 	return d.captureDB.Query(ctx, sql, args...)
 }
 
-// The public now-playing window reads only synced text, never plain lyrics.
-func TestSyncedLyricsSQL(t *testing.T) {
+// The public now-playing lyrics read one track's found or instrumental lyrics.
+func TestNowLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).SyncedLyrics(context.Background(), "t1"); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).NowLyrics(context.Background(), "t1"); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "SELECT synced_lyrics FROM lyrics", "track_id = $1", "status = 'found'",
-		"COALESCE(synced_lyrics, '') <> ''")
-	if strings.Contains(db.sql, "plain_lyrics") {
-		t.Errorf("SyncedLyrics reads plain lyrics:\n%s", db.sql)
-	}
+	wantSQL(t, db.sql, "FROM lyrics", "track_id = $1", "status IN ('found', 'instrumental')")
 	if len(db.args) != 1 || db.args[0] != "t1" {
 		t.Errorf("args = %v", db.args)
 	}

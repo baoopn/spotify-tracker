@@ -153,22 +153,33 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 	return out, nil
 }
 
-// SyncedLyrics returns the synced LRC text of a track whose lyrics were found,
-// or "" when there is none. It never reads the plain lyrics: it feeds the
-// public now-playing window (GET /api/v1/now-playing/lyrics).
-func (q *Queries) SyncedLyrics(ctx context.Context, trackID string) (string, error) {
-	var synced string
+// NowLyrics is what the public now-playing lyrics show for one track.
+type NowLyrics struct {
+	Status string // domain.LyricsFound or domain.LyricsInstrumental; "" when none
+	Synced string // LRC text, "" when there is none
+	Plain  string // plain text, "" when there is none
+}
+
+// NowLyrics returns the lyrics of a track that were found or are known to be
+// instrumental, or a zero NowLyrics when there are none (yet). It feeds the
+// public now-playing lyrics (GET /api/v1/now-playing/lyrics), which serves
+// only the track playing right now.
+func (q *Queries) NowLyrics(ctx context.Context, trackID string) (NowLyrics, error) {
+	var out NowLyrics
 	err := q.db.QueryRow(ctx, `
-		SELECT synced_lyrics FROM lyrics
-		WHERE track_id = $1 AND status = 'found' AND COALESCE(synced_lyrics, '') <> ''`,
-		trackID).Scan(&synced)
+		SELECT status, COALESCE(synced_lyrics, ''), COALESCE(plain_lyrics, '') FROM lyrics
+		WHERE track_id = $1 AND status IN ('found', 'instrumental')`,
+		trackID).Scan(&out.Status, &out.Synced, &out.Plain)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return NowLyrics{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("synced lyrics %s: %w", trackID, err)
+		return NowLyrics{}, fmt.Errorf("now lyrics %s: %w", trackID, err)
 	}
-	return synced, nil
+	if out.Status == domain.LyricsInstrumental {
+		out.Synced, out.Plain = "", ""
+	}
+	return out, nil
 }
 
 // SearchLyrics finds tracks whose lyrics match query (websearch syntax over

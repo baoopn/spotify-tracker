@@ -63,9 +63,9 @@ type Handler struct {
 	// their lifetime (nil = randomStreamAge).
 	streams   *streamSlots
 	streamAge func() time.Duration
-	// lyrics feeds the public now-playing lyrics window (nil = always null);
+	// lyrics feeds the public now-playing lyrics (nil = always null);
 	// playback is a test seam for the snapshot (nil = nowPlayingJSON).
-	lyrics      syncedLyricsStore
+	lyrics      nowLyricsStore
 	playback    func(ctx context.Context) ([]byte, error)
 	lyricsCache lyricsMemo
 }

@@ -26,7 +26,8 @@
 	}
 
 	// Keep the active line centred inside the box only (never scroll the page),
-	// also when the run changes around it.
+	// also when the lines change around it. Before the first line (or after
+	// a change of song), go back to the top.
 	$effect(() => {
 		const i = active;
 		void keys;
@@ -34,12 +35,18 @@
 			placed = false;
 			return;
 		}
-		if (i < 0 || Date.now() < pausedUntil) return;
+		if (Date.now() < pausedUntil) return;
+		const behavior = !placed || reducedMotion.current ? 'auto' : 'smooth';
+		if (i < 0) {
+			box.scrollTo({ top: 0, behavior });
+			placed = true;
+			return;
+		}
 		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
 		if (!el) return;
 		box.scrollTo({
 			top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
-			behavior: !placed || reducedMotion.current ? 'auto' : 'smooth'
+			behavior
 		});
 		placed = true;
 	});

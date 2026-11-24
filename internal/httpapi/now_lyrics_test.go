@@ -12,26 +12,41 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/baoopn/spotify-tracker/internal/domain"
+	"github.com/baoopn/spotify-tracker/internal/store"
 )
 
-// fakeSynced serves synced text only; it has no way to return plain lyrics.
-type fakeSynced struct {
+// fakeLyrics serves synced text from text, or a whole record from rec.
+type fakeLyrics struct {
 	mu    sync.Mutex
 	text  map[string]string
+	rec   map[string]store.NowLyrics
 	err   error
 	calls int
 	delay time.Duration // holds each read open, to overlap concurrent misses
 }
 
-func (f *fakeSynced) SyncedLyrics(_ context.Context, id string) (string, error) {
+func (f *fakeLyrics) NowLyrics(_ context.Context, id string) (store.NowLyrics, error) {
 	f.mu.Lock()
 	f.calls++
+	text := f.text[id]
+	rec, ok := f.rec[id]
 	f.mu.Unlock()
 	time.Sleep(f.delay)
-	return f.text[id], f.err
+	if f.err != nil {
+		return store.NowLyrics{}, f.err
+	}
+	if ok {
+		return rec, nil
+	}
+	if text == "" {
+		return store.NowLyrics{}, nil
+	}
+	return store.NowLyrics{Status: domain.LyricsFound, Synced: text}, nil
 }
 
-func (f *fakeSynced) callCount() int {
+func (f *fakeLyrics) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
@@ -57,7 +72,7 @@ func snapshot(playing bool, progress *int64, fetched time.Time, trackID string, 
 
 func ms(v int64) *int64 { return &v }
 
-func lyricsHandler(st *fakeSynced, snap []byte) *Handler {
+func lyricsHandler(st *fakeLyrics, snap []byte) *Handler {
 	return &Handler{
 		log:      slog.New(slog.DiscardHandler),
 		lyrics:   st,
@@ -92,7 +107,7 @@ func manyLines(n int, step int64) string {
 }
 
 func TestNowLyricsNull(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(20, 5000), "empty": "[ar:x]\nno time tags"}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(20, 5000), "empty": "[ar:x]\nno time tags"}}
 	fresh := lyricsNow.Add(-2 * time.Second)
 	cases := map[string][]byte{
 		"null snapshot":  []byte("null"),
@@ -101,7 +116,7 @@ func TestNowLyricsNull(t *testing.T) {
 		"no progress":    snapshot(true, nil, fresh, "t1", 200_000),
 		"stale":          snapshot(true, ms(10_000), lyricsNow.Add(-2*time.Minute), "t1", 200_000),
 		"past duration":  snapshot(true, ms(199_500), fresh, "t1", 200_000),
-		"no synced":      snapshot(true, ms(10_000), fresh, "other", 200_000),
+		"no lyrics":      snapshot(true, ms(10_000), fresh, "other", 200_000),
 		"no timed lines": snapshot(true, ms(10_000), fresh, "empty", 200_000),
 	}
 	for name, snap := range cases {
@@ -117,44 +132,26 @@ func TestNowLyricsNull(t *testing.T) {
 	}
 }
 
-func TestNowLyricsWindow(t *testing.T) {
-	src := manyLines(200, 3000) // 200 lines, one every 3 s
-	st := &fakeSynced{text: map[string]string{"t1": src, "dense": manyLines(200, 400)}}
-	for _, c := range []struct {
-		track    string
-		progress int64
-	}{{"t1", 0}, {"t1", 300_000}, {"t1", 598_000}, {"t1", 700_000}, {"dense", 20_000}} {
-		t.Run(fmt.Sprintf("%s@%d", c.track, c.progress), func(t *testing.T) {
-			snap := snapshot(true, ms(c.progress), lyricsNow.Add(-2*time.Second), c.track, 900_000)
+func TestNowLyricsFull(t *testing.T) {
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(200, 3000)}}
+	for _, progress := range []int64{0, 300_000, 598_000} {
+		t.Run(fmt.Sprint(progress), func(t *testing.T) {
+			snap := snapshot(true, ms(progress), lyricsNow.Add(-2*time.Second), "t1", 900_000)
 			rec, body := getLyrics(t, lyricsHandler(st, snap), "/api/v1/now-playing/lyrics")
 			if body == nil {
-				t.Fatalf("null window: %s", rec.Body.String())
+				t.Fatalf("null: %s", rec.Body.String())
 			}
 			if rec.Header().Get("Cache-Control") != "no-store" {
 				t.Errorf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
 			}
-			if strings.Contains(rec.Body.String(), "SENTINEL") || strings.Contains(rec.Body.String(), "plain") {
-				t.Errorf("window leaks untimed text: %s", rec.Body.String())
+			if strings.Contains(rec.Body.String(), "SENTINEL") {
+				t.Errorf("untimed text served: %s", rec.Body.String())
 			}
-			if len(body.Lines) == 0 || len(body.Lines) > nowLyricsMaxLines {
-				t.Errorf("%d lines", len(body.Lines))
+			if !body.Synced || body.Instrumental || body.Plain != nil || len(body.Lines) != 200 || body.TrackID != "t1" {
+				t.Errorf("synced %v instrumental %v plain %v lines %d", body.Synced, body.Instrumental, body.Plain, len(body.Lines))
 			}
-			pos := c.progress + 2000
-			if body.PositionMS != pos || body.TrackID != c.track || !body.At.Equal(lyricsNow) {
-				t.Errorf("position %d track %s at %v", body.PositionMS, body.TrackID, body.At)
-			}
-			// Every line but the guaranteed next one starts within 30 s.
-			late := 0
-			for _, l := range body.Lines {
-				if l.StartMS > pos+nowLyricsAhead.Milliseconds() {
-					late++
-				}
-			}
-			if late > 1 {
-				t.Errorf("%d lines beyond the window", late)
-			}
-			if rec.Body.Len()*5 > len(src) {
-				t.Errorf("body %d bytes vs source %d", rec.Body.Len(), len(src))
+			if body.Lines[0].Text != "line 0" || body.Lines[199].StartMS != 1000+199*3000 {
+				t.Errorf("lines %+v ... %+v", body.Lines[0], body.Lines[199])
 			}
 			if body.Credit.Text != "Lyrics from LRCLIB" || body.Credit.URL != "https://lrclib.net" {
 				t.Errorf("credit = %+v", body.Credit)
@@ -163,9 +160,65 @@ func TestNowLyricsWindow(t *testing.T) {
 	}
 }
 
+// Without synced lines the plain text is served; instrumental tracks say so.
+func TestNowLyricsPlainAndInstrumental(t *testing.T) {
+	st := &fakeLyrics{rec: map[string]store.NowLyrics{
+		"plain": {Status: domain.LyricsFound, Synced: "[ar:x]\nno tags", Plain: "  one\ntwo\n "},
+		"blank": {Status: domain.LyricsFound, Plain: " \n\t "},
+		"inst":  {Status: domain.LyricsInstrumental},
+		"long":  {Status: domain.LyricsFound, Plain: strings.Repeat("ế", nowLyricsMaxPlain+50)},
+	}}
+	snap := func(id string) []byte { return snapshot(true, ms(6000), lyricsNow, id, 200_000) }
+
+	_, body := getLyrics(t, lyricsHandler(st, snap("plain")), "/api/v1/now-playing/lyrics")
+	if body == nil || body.Synced || body.Instrumental || body.Plain == nil || *body.Plain != "one\ntwo" || len(body.Lines) != 0 {
+		t.Errorf("plain: %+v", body)
+	}
+	rec, body := getLyrics(t, lyricsHandler(st, snap("inst")), "/api/v1/now-playing/lyrics")
+	if body == nil || !body.Instrumental || body.Synced || body.Plain != nil || len(body.Lines) != 0 {
+		t.Errorf("instrumental: %s", rec.Body.String())
+	}
+	_, body = getLyrics(t, lyricsHandler(st, snap("long")), "/api/v1/now-playing/lyrics")
+	if body == nil || body.Plain == nil || len([]rune(*body.Plain)) != nowLyricsMaxPlain {
+		t.Errorf("long plain not cut")
+	}
+	if _, body = getLyrics(t, lyricsHandler(st, snap("blank")), "/api/v1/now-playing/lyrics"); body != nil {
+		t.Errorf("blank plain: %+v", body)
+	}
+}
+
+// At most nowLyricsMaxLines lines, and at most nowLyricsMaxTotal runes in all.
+func TestNowLyricsCaps(t *testing.T) {
+	var big strings.Builder
+	for i := range 1000 {
+		fmt.Fprintf(&big, "[%02d:%02d.00] %s\n", i/60, i%60, strings.Repeat("a", 150))
+	}
+	st := &fakeLyrics{text: map[string]string{
+		"many": manyLines(nowLyricsMaxLines+500, 100),
+		"big":  big.String(),
+	}}
+	snap := func(id string) []byte { return snapshot(true, ms(6000), lyricsNow, id, 9_000_000) }
+
+	_, body := getLyrics(t, lyricsHandler(st, snap("many")), "/api/v1/now-playing/lyrics")
+	if body == nil || len(body.Lines) != nowLyricsMaxLines {
+		t.Fatalf("many: %+v", body)
+	}
+	_, body = getLyrics(t, lyricsHandler(st, snap("big")), "/api/v1/now-playing/lyrics")
+	if body == nil || len(body.Lines) != nowLyricsMaxTotal/150 {
+		t.Fatalf("big: %v", body)
+	}
+	total := 0
+	for _, l := range body.Lines {
+		total += len([]rune(l.Text))
+	}
+	if total > nowLyricsMaxTotal {
+		t.Errorf("total %d runes", total)
+	}
+}
+
 // Query parameters cannot pick another track.
 func TestNowLyricsIgnoresQuery(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000), "x": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000), "x": manyLines(10, 5000)}}
 	snap := snapshot(true, ms(6000), lyricsNow, "t1", 200_000)
 	for _, target := range []string{"/api/v1/now-playing/lyrics?track=x", "/api/v1/now-playing/lyrics?id=x&track_id=x"} {
 		_, body := getLyrics(t, lyricsHandler(st, snap), target)
@@ -176,7 +229,7 @@ func TestNowLyricsIgnoresQuery(t *testing.T) {
 }
 
 func TestNowLyricsMemo(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	getLyrics(t, h, "/api/v1/now-playing/lyrics")
 	getLyrics(t, h, "/api/v1/now-playing/lyrics")
@@ -194,7 +247,7 @@ func TestNowLyricsMemo(t *testing.T) {
 }
 
 func TestNowLyricsStoreError(t *testing.T) {
-	st := &fakeSynced{err: errors.New("db down")}
+	st := &fakeLyrics{err: errors.New("db down")}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	rec := httptest.NewRecorder()
 	h.nowPlayingLyrics(rec, httptest.NewRequest(http.MethodGet, "/api/v1/now-playing/lyrics", nil))
@@ -205,7 +258,7 @@ func TestNowLyricsStoreError(t *testing.T) {
 
 // Concurrent requests on a cache miss share one store read.
 func TestNowLyricsCoalescesMisses(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}, delay: 50 * time.Millisecond}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}, delay: 50 * time.Millisecond}
 	h := lyricsHandler(st, snapshot(true, ms(6000), lyricsNow, "t1", 200_000))
 	var wg sync.WaitGroup
 	for range 20 {
@@ -225,7 +278,7 @@ func TestNowLyricsCoalescesMisses(t *testing.T) {
 
 // A track without synced lyrics is asked again after 10 s, not a minute.
 func TestNowLyricsEmptyTTL(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{}}
+	st := &fakeLyrics{text: map[string]string{}}
 	now := lyricsNow
 	h := lyricsHandler(st, nil)
 	h.now = func() time.Time { return now }
@@ -244,18 +297,18 @@ func TestNowLyricsEmptyTTL(t *testing.T) {
 }
 
 func TestNowLyricsCutsLongLines(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": "[00:01.00] " + strings.Repeat("ế", 1000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": "[00:01.00] " + strings.Repeat("ế", 1000)}}
 	_, body := getLyrics(t, lyricsHandler(st, snapshot(true, ms(2000), lyricsNow, "t1", 200_000)), "/api/v1/now-playing/lyrics")
 	if body == nil || len(body.Lines) != 1 || len([]rune(body.Lines[0].Text)) != nowLyricsMaxRunes {
 		t.Fatalf("got %+v", body)
 	}
 }
 
-// A snapshot stamped in the future (clock skew) adds no elapsed time.
+// A snapshot stamped in the future (clock skew) still serves the lyrics.
 func TestNowLyricsFutureFetchedAt(t *testing.T) {
-	st := &fakeSynced{text: map[string]string{"t1": manyLines(10, 5000)}}
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(10, 5000)}}
 	_, body := getLyrics(t, lyricsHandler(st, snapshot(true, ms(6000), lyricsNow.Add(30*time.Second), "t1", 200_000)), "/api/v1/now-playing/lyrics")
-	if body == nil || body.PositionMS != 6000 {
-		t.Errorf("position = %+v", body)
+	if body == nil || len(body.Lines) != 10 {
+		t.Errorf("got %+v", body)
 	}
 }

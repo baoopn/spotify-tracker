@@ -1,12 +1,10 @@
 package lrc
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParse(t *testing.T) {
@@ -46,79 +44,31 @@ func TestParse(t *testing.T) {
 	}
 }
 
-func seq(n int, stepMS int64) []Line {
-	out := make([]Line, n)
-	for i := range out {
-		out[i] = Line{StartMS: int64(i+1) * stepMS, Text: fmt.Sprintf("line %d", i)}
-	}
-	return out
-}
-
-func starts(w Window) []int64 {
-	var s []int64
-	for _, l := range w.Lines {
-		s = append(s, l.StartMS)
-	}
-	return s
-}
-
-func TestCut(t *testing.T) {
-	opt := WindowOptions{Ahead: 30 * time.Second, MaxLines: 10, MaxRunes: 200}
-	lines := seq(20, 10_000) // 10 s, 20 s, ... 200 s
-
-	// Before the first line: no current line, next line included.
-	w := Cut(lines, 500, opt)
-	if w.FromMS != 0 || !reflect.DeepEqual(starts(w), []int64{10000, 20000, 30000}) || w.UntilMS == nil || *w.UntilMS != 40000 {
-		t.Errorf("before first: %+v %v", w, starts(w))
-	}
-	// Middle: previous, current, then up to pos+30 s.
-	w = Cut(lines, 55_000, opt)
-	if w.FromMS != 50000 || !reflect.DeepEqual(starts(w), []int64{40000, 50000, 60000, 70000, 80000}) || *w.UntilMS != 90000 {
-		t.Errorf("middle: %+v %v", w, starts(w))
-	}
-	// After the last line: nothing remains.
-	w = Cut(lines, 500_000, opt)
-	if w.FromMS != 200000 || !reflect.DeepEqual(starts(w), []int64{190000, 200000}) || w.UntilMS != nil {
-		t.Errorf("after last: %+v %v", w, starts(w))
-	}
-	// Dense lines: capped, UntilMS is the first dropped line.
-	dense := seq(100, 500)
-	w = Cut(dense, 5_000, opt)
-	if len(w.Lines) != 10 || w.UntilMS == nil || *w.UntilMS != w.Lines[9].StartMS+500 {
-		t.Errorf("dense: %v until %v", starts(w), w.UntilMS)
-	}
-	// The next line is included even when it is far ahead.
-	sparse := []Line{{1000, "a"}, {120_000, "b"}, {130_000, "c"}}
-	w = Cut(sparse, 2000, opt)
-	if !reflect.DeepEqual(starts(w), []int64{1000, 120000}) || *w.UntilMS != 130000 {
-		t.Errorf("far next: %v until %v", starts(w), w.UntilMS)
-	}
-	// Rune cut.
-	long := []Line{{0, strings.Repeat("ế", 300)}}
-	w = Cut(long, 0, WindowOptions{MaxLines: 3, MaxRunes: 200})
-	if got := []rune(w.Lines[0].Text); len(got) != 200 {
-		t.Errorf("rune cut = %d", len(got))
-	}
-	// Empty input.
-	if w := Cut(nil, 1000, opt); len(w.Lines) != 0 || w.UntilMS != nil {
-		t.Errorf("empty: %+v", w)
+func TestCutRunes(t *testing.T) {
+	long := strings.Repeat("ế", 300)
+	for _, c := range []struct {
+		in   string
+		n    int
+		want int
+	}{{long, 200, 200}, {long, 300, 300}, {long, 0, 300}, {"abc", 5, 3}, {"", 3, 0}} {
+		if got := len([]rune(CutRunes(c.in, c.n))); got != c.want {
+			t.Errorf("CutRunes(%d runes, %d) = %d runes, want %d", len([]rune(c.in)), c.n, got, c.want)
+		}
 	}
 }
 
-func FuzzParseCut(f *testing.F) {
-	f.Add("[00:01.00][00:30.00] a\n[offset:+100]\n[00:02] b", int64(1500))
-	f.Add("[99:99] x\n[1:2:3] y", int64(0))
-	f.Fuzz(func(t *testing.T, text string, pos int64) {
+func FuzzParse(f *testing.F) {
+	f.Add("[00:01.00][00:30.00] a" + string(rune(10)) + "[offset:+100]" + string(rune(10)) + "[00:02] b")
+	f.Add("[99:99] x" + string(rune(10)) + "[1:2:3] y")
+	f.Fuzz(func(t *testing.T, text string) {
 		lines := Parse(text)
 		if !sort.SliceIsSorted(lines, func(a, b int) bool { return lines[a].StartMS < lines[b].StartMS }) {
 			t.Fatal("unsorted")
 		}
-		w := Cut(lines, pos, WindowOptions{Ahead: 30 * time.Second, MaxLines: 10, MaxRunes: 200})
-		if len(w.Lines) > 10 {
-			t.Fatalf("%d lines", len(w.Lines))
-		}
-		if !sort.SliceIsSorted(w.Lines, func(a, b int) bool { return w.Lines[a].StartMS < w.Lines[b].StartMS }) {
-			t.Fatal("window unsorted")
+		for _, l := range lines {
+			if l.StartMS < 0 {
+				t.Fatalf("negative start %d", l.StartMS)
+			}
 		}
 	})
 }

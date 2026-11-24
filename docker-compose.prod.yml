@@ -139,6 +139,13 @@ services:
       MCP_ENABLED: ${MCP_ENABLED:-true}
       MCP_ADMIN_TOKEN: ${MCP_ADMIN_TOKEN:-}
       MCP_RATE_LIMIT_PER_MINUTE: ${MCP_RATE_LIMIT_PER_MINUTE:-60}
+      # Lyrics from LRCLIB (shown in the admin dashboard and admin MCP tools only).
+      LYRICS_ENABLED: ${LYRICS_ENABLED:-true}
+      LYRICS_API_URL: ${LYRICS_API_URL:-https://lrclib.net}
+      LYRICS_INTERVAL: ${LYRICS_INTERVAL:-1m}
+      LYRICS_BATCH: ${LYRICS_BATCH:-10}
+      LYRICS_SPACING: ${LYRICS_SPACING:-2s}
+      LYRICS_NOT_FOUND_RETRY: ${LYRICS_NOT_FOUND_RETRY:-720h}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

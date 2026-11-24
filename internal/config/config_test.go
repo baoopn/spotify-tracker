@@ -211,3 +211,47 @@ func TestLoadAPIMCP(t *testing.T) {
 		t.Error("expected an error for a negative MCP_RATE_LIMIT_PER_MINUTE")
 	}
 }
+
+func TestLoadAPILyrics(t *testing.T) {
+	set := func() {
+		t.Setenv("DATABASE_URL", "postgres://u:p@localhost/db")
+		t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+		t.Setenv("SECRETS_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		t.Setenv("INTERNAL_API_TOKEN", "0123456789abcdef")
+	}
+	set()
+	cfg, err := Load[API]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := cfg.Lyrics
+	if !l.Enabled || l.APIURL != "https://lrclib.net" || l.Interval != time.Minute || l.Batch != 10 ||
+		l.Spacing != 2*time.Second || l.NotFoundRetry != 720*time.Hour {
+		t.Errorf("defaults = %+v", l)
+	}
+
+	set()
+	t.Setenv("LYRICS_API_URL", " http://lrclib.local:3000/ ")
+	if cfg, err = Load[API](); err != nil || cfg.Lyrics.APIURL != "http://lrclib.local:3000" {
+		t.Errorf("trimmed URL = %q, %v", cfg.Lyrics.APIURL, err)
+	}
+
+	for k, v := range map[string]string{
+		"LYRICS_API_URL": "lrclib.net", "LYRICS_INTERVAL": "5s", "LYRICS_BATCH": "101",
+		"LYRICS_SPACING": "500ms", "LYRICS_NOT_FOUND_RETRY": "1h",
+	} {
+		set()
+		t.Setenv(k, v)
+		if _, err := Load[API](); err == nil {
+			t.Errorf("%s=%s: expected an error", k, v)
+		}
+		// Disabled skips validation.
+		set()
+		t.Setenv(k, v)
+		t.Setenv("LYRICS_ENABLED", "false")
+		if _, err := Load[API](); err != nil {
+			t.Errorf("%s=%s with LYRICS_ENABLED=false: %v", k, v, err)
+		}
+		t.Setenv("LYRICS_ENABLED", "true")
+	}
+}

@@ -53,6 +53,8 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			r.Get("/history", a.history)
 			r.Get("/tracks", a.tracks)
 			r.Get("/tracks/{id}", a.track)
+			r.Get("/tracks/{id}/lyrics", a.trackLyrics)
+			r.Get("/lyrics/search", a.searchLyrics)
 			r.Post("/tracks/{id}/enrich", a.enrichTrack)
 			r.Post("/enrichment/retry-failed", a.retryFailed)
 			r.Get("/artists", a.artists)
@@ -79,7 +81,8 @@ var mcpUser = User{ID: "mcp", Email: "mcp", Name: "MCP"}
 // same paths relative to /admin/api (e.g. /overview), with no Clerk
 // authentication, rate limit or timeout. It is for in-process use by the MCP
 // server only, which authenticates callers itself: never mount it on a
-// public router. Write routes, /settings/email (SMTP settings), /auth/me,
+// public router. Lyrics (track lyrics and lyrics search) are served here, so
+// they reach admin-token MCP callers only. Write routes, /settings/email (SMTP settings), /auth/me,
 // /audit, /config and the /mcp settings (token minting) are left out on
 // purpose.
 func ReadOnlyHandler(a *API) http.Handler {
@@ -94,6 +97,8 @@ func ReadOnlyHandler(a *API) http.Handler {
 	r.Get("/history", a.history)
 	r.Get("/tracks", a.tracks)
 	r.Get("/tracks/{id}", a.track)
+	r.Get("/tracks/{id}/lyrics", a.trackLyrics)
+	r.Get("/lyrics/search", a.searchLyrics)
 	r.Get("/artists", a.artists)
 	r.Get("/playlists", a.playlists)
 	r.Get("/top-playlists", a.listTopPlaylists)

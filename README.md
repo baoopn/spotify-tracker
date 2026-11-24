@@ -138,6 +138,9 @@ once; the page also has the filled-in commands), then pass it as
 `--header "Authorization: Bearer <token>"` to `claude mcp add`, or set it for
 `.mcp.json` (PowerShell: `setx SPOTIFY_TRACKER_MCP_TOKEN "<token>"`). Rotate or
 revoke it on the same page. The server's `MCP_ADMIN_TOKEN`, if set, also works.
+The admin tools include track lyrics and a lyrics search ("which song says
+…"). Lyrics come from [LRCLIB](https://lrclib.net) and are never served by the
+public API.
 claude.ai and Claude desktop custom connectors send no custom headers, so they
 get the public tools only.
 

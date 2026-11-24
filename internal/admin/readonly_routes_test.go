@@ -15,7 +15,7 @@ var readOnlyAllowed = map[string]bool{
 	"GET /overview": true, "GET /spotify": true, "GET /history": true, "GET /tracks": true,
 	"GET /tracks/{id}": true, "GET /artists": true, "GET /playlists": true, "GET /top-playlists": true,
 	"GET /top-playlists/{period}/{start}": true, "GET /backups": true, "GET /analytics": true,
-	"GET /analytics/pages": true,
+	"GET /analytics/pages": true, "GET /tracks/{id}/lyrics": true, "GET /lyrics/search": true,
 }
 
 var routeParam = regexp.MustCompile(`\{[^}]+\}`)

@@ -71,6 +71,7 @@ type API struct {
 	backups        backupStore
 	backupSettings backupSettingsStore
 	mcpSettings    mcpSettingsStore
+	lyrics         lyricsStore
 	spotifyAuth    func(context.Context) (settings.Spotify, error)
 	auditor        auditor
 	invalidate     func(context.Context)

@@ -112,6 +112,18 @@ var adminTools = []toolDef{
 		desc: "One track with its track and disc number, album (type, size, release date precision, UPC, " +
 			"copyrights), artists with Spotify genres, audio features, enrichment status and play stats.",
 		params: []param{idParam("Spotify track ID.")}},
+	{name: "admin_track_lyrics", title: "Track lyrics (admin)", path: "/tracks/{id}/lyrics",
+		desc: "Lyrics of one track (from LRCLIB): status (found, instrumental, not_found, error, or pending = " +
+			"not looked up yet), plain lyrics, has_synced, and with synced=true the time-synced LRC text.",
+		params: []param{idParam("Spotify track ID."),
+			{name: "synced", enum: []string{"true", "false"}, def: "false",
+				desc: "Also return the time-synced LRC lyrics."}}},
+	{name: "admin_search_lyrics", title: "Search lyrics (admin)", path: "/lyrics/search",
+		desc: "Find tracks whose lyrics contain words or a phrase, e.g. to answer \"which song says ...\". " +
+			"Accent- and case-insensitive; exact phrase matches come first. Supports \"quoted phrases\", or, -word. " +
+			"Result data items have track, snippet (matching lines), phrase_match and has_synced.",
+		params: []param{{name: "q", maxLen: 200, required: true, desc: "Words or a phrase from the lyrics."},
+			limitParam(10, 50)}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",
 		params: []param{

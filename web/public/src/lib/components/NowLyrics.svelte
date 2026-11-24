@@ -13,6 +13,8 @@
 	import type { NowPlaying } from '#lib/types.js';
 
 	let { np }: { np: NowPlaying } = $props();
+	// A JS string: a leading space in markup would be dropped.
+	const CREDIT_SEP = ' · ';
 
 	const uid = $props.id();
 	const headingId = `${uid}-now-lyrics`;
@@ -197,7 +199,7 @@
 			target="_blank"
 			rel="noopener noreferrer"
 			class="link font-semibold text-ink">{found?.credit.text}</a
-		>{#if trText && tr}&#32;·&#32;{tr.credit.text}{/if}
+		>{#if trText && tr}{CREDIT_SEP}{tr.credit.text}{/if}
 	</p>
 {/snippet}
 

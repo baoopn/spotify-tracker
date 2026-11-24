@@ -19,6 +19,8 @@
 		playing,
 		durationMs
 	}: { trackId: string; snap: Snapshot; playing: boolean; durationMs: number } = $props();
+	// A JS string: a leading space in markup would be dropped.
+	const CREDIT_SEP = ' · ';
 
 	const uid = $props.id();
 	const headingId = `${uid}-np-lyrics`;
@@ -168,7 +170,7 @@
 				href="https://lrclib.net"
 				class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
 				>LRCLIB</OutLink
-			>{#if trText}&#32;· Translated by Claude{/if}
+			>{#if trText}{CREDIT_SEP}Translated by Claude{/if}
 		</p>
 	{/if}
 </section>

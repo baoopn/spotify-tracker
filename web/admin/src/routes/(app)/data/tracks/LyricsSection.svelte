@@ -12,6 +12,8 @@
 	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
 	let { trackId }: { trackId: string } = $props();
+	// A JS string: a leading space in markup would be dropped.
+	const CREDIT_SEP = ' · ';
 	const uid = $props.id();
 	const headingId = `${uid}-lyrics`;
 
@@ -113,7 +115,7 @@
 			Lyrics from <OutLink
 				href="https://lrclib.net"
 				class="font-medium text-primary hover:underline">LRCLIB</OutLink
-			>{#if trText}&#32;· Translated by Claude{/if}
+			>{#if trText}{CREDIT_SEP}Translated by Claude{/if}
 		</p>
 	{/if}
 </section>

@@ -244,8 +244,8 @@ func TestFullListenCountsAtMaxFraction(t *testing.T) {
 }
 
 func TestThresholdBoundary(t *testing.T) {
-	need := needMS(song, 0.3) // 60 s less the 5 s tolerance
-	if need != 55_000 {
+	need := needMS(song, 0.3) // 60 s less the 3 s tolerance
+	if need != 57_000 {
 		t.Fatalf("need = %d", need)
 	}
 	l := Listen{TrackID: "a", StartedAt: t0, ProgressMS: ptr(0), ListenedMS: need - 1_000, LastSeen: t0}
@@ -277,7 +277,7 @@ func TestNilProgressAcrossRestart(t *testing.T) {
 	if d != (Decision{}) || l.ListenedMS != 40_000 || *l.ProgressMS != 45_000 {
 		t.Fatalf("listen = %+v, decision %+v", l, d)
 	}
-	l, d = Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(60_000), DurationMS: song, IsPlaying: true, At: t0.Add(18 * time.Second)}, rules)
+	l, d = Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(65_000), DurationMS: song, IsPlaying: true, At: t0.Add(23 * time.Second)}, rules)
 	if !d.NewHistory {
 		t.Fatalf("did not count after progress returned: %+v (listened %d)", d, l.ListenedMS)
 	}
@@ -326,4 +326,21 @@ func TestRetriedSnapshotDoesNotCountTwice(t *testing.T) {
 	if _, d = Step(l, s, rules); d != (Decision{}) {
 		t.Fatalf("already-applied listen decided %+v", d)
 	}
+}
+
+func TestNoTimestampCountsNearThreshold(t *testing.T) {
+	var l Listen
+	now := t0
+	for p := int32(1_000); p < song; p += 3_000 {
+		var d Decision
+		l, d = Step(l, Snapshot{TrackID: "a", ProgressMS: ptr(p), DurationMS: song, IsPlaying: true, At: now}, rules)
+		if d.NewHistory {
+			if p < 55_000 || p > 61_000 {
+				t.Fatalf("counted at %d ms of progress, want about 55-60 s", p)
+			}
+			return
+		}
+		now = now.Add(3 * time.Second)
+	}
+	t.Fatal("never counted without a Spotify timestamp")
 }

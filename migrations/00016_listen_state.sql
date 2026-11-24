@@ -4,7 +4,9 @@
 -- The listen in progress, used to count plays (tracker.Step). A single row,
 -- read with SELECT ... FOR UPDATE in the same transaction that writes
 -- history and current_playback, so load, decide and save are atomic.
--- track_id '' means no listen yet. 00015 is taken by lyrics translation.
+-- track_id '' means no listen yet.
+-- Numbered 00016 on purpose: 00015 is the lyrics translation migration,
+-- which merges and deploys first. goose applies them in order.
 CREATE TABLE listen_state (
     id           boolean     PRIMARY KEY DEFAULT true CHECK (id),
     track_id     text        NOT NULL DEFAULT '',

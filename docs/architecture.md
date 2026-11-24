@@ -61,8 +61,9 @@ decide and save are atomic: a database error writes nothing, and concurrent
 or retried snapshots are decided one at a time.
 
 1. **A listen counts once**, when at least `PLAY_COUNT_MIN_FRACTION` (30%,
-   at most 90%) of the song has been heard, less up to 5 s for the unseen
-   end of the song, or 30 s when the duration is unknown. The history row's
+   at most 90%) of the song has been heard, less up to 3 s for the unseen
+   end of the song (so a play counts slightly before the exact fraction),
+   or 30 s when the duration is unknown. The history row's
    `played_at` is when the listen started (Spotify's timestamp), not when it
    crossed the threshold. Skips below the threshold are not counted.
 2. **Time heard** grows only by forward progress while playing, capped by the
@@ -71,7 +72,9 @@ or retried snapshots are decided one at a time.
    it (plus 2 s, at most 30 s per snapshot). Seeking forward, or seeking
    while paused, adds nothing. A new listen starts with what was heard
    before its first snapshot: its progress, at most the time since Spotify's
-   last playback change. Snapshots older than the last one are ignored.
+   last playback change. Without a Spotify timestamp these timestamp caps
+   are skipped. Snapshots older than the last one are ignored and never
+   move `current_playback` back.
 3. **Pause and resume** continue the same listen. "Nothing playing" keeps the
    listen for `PLAY_RESUME_WINDOW` (24 h), so resuming the song later is not a
    new play, and a song already counted is never counted again for it.

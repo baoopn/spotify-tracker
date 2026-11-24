@@ -39,9 +39,19 @@ func recordListen(ctx context.Context, q playbackTx, legacy legacyLoader, pb dom
 		prev = legacy(ctx, pb.FetchedAt)
 		usedLegacy = prev.TrackID != ""
 	}
+	if prev.TrackID != "" && pb.FetchedAt.Before(prev.LastSeen) {
+		// Older than the last snapshot: never move current_playback back.
+		return prev, usedLegacy, nil
+	}
+	// normalizePlayback fills a missing Spotify timestamp with the fetch
+	// time; the rules must see it as unknown.
+	playedAt := pb.PlayedAt
+	if playedAt.Equal(pb.FetchedAt) {
+		playedAt = time.Time{}
+	}
 	listen, d := Step(prev, Snapshot{
 		TrackID: pb.Track.ID, ProgressMS: pb.ProgressMS, DurationMS: pb.Track.DurationMS,
-		IsPlaying: pb.IsPlaying, PlayedAt: pb.PlayedAt, At: pb.FetchedAt,
+		IsPlaying: pb.IsPlaying, PlayedAt: playedAt, At: pb.FetchedAt,
 	}, rules)
 	if err := q.SetCurrentPlayback(ctx, pb.Track.ID, pb.IsPlaying, pb.ProgressMS, pb.FetchedAt); err != nil {
 		return Listen{}, false, err

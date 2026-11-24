@@ -16,7 +16,8 @@ const (
 	// needToleranceMS is taken off the required time (at most half of it):
 	// the last seconds before a track change are never observed (one poll
 	// interval), so a full listen always counts at any allowed fraction.
-	needToleranceMS = 5_000
+	// Plays therefore count slightly before the exact fraction.
+	needToleranceMS = 3_000
 	// stepSlackMS lets a progress step run slightly ahead of the wall clock
 	// (Spotify's progress and our fetch times are not exact).
 	stepSlackMS = 2_000
@@ -92,7 +93,8 @@ type Snapshot struct {
 	DurationMS int32
 	IsPlaying  bool
 	// PlayedAt is Spotify's timestamp of the last playback change (play,
-	// pause, seek, new track); At is when the snapshot was fetched.
+	// pause, seek, new track), zero when unknown; At is when the snapshot
+	// was fetched.
 	PlayedAt time.Time
 	At       time.Time
 }
@@ -113,8 +115,8 @@ type Decision struct {
 // listen and what to write:
 //
 //   - A listen counts once, when at least MinFraction of the duration (30 s
-//     when unknown), less a few seconds, has been heard. Its played_at is
-//     when it started.
+//     when unknown), less up to 3 s, has been heard. Its played_at is when
+//     it started.
 //   - Listening time grows only by forward progress while playing, capped by
 //     the wall-clock time since the last snapshot and since Spotify's last
 //     playback change, so seeking forward adds nothing.
@@ -236,7 +238,7 @@ func heard(prev Listen, s Snapshot) int64 {
 		return 0
 	}
 	limit := s.At.Sub(prev.LastSeen).Milliseconds() + stepSlackMS
-	if s.PlayedAt.After(prev.LastSeen) {
+	if !s.PlayedAt.IsZero() && s.PlayedAt.After(prev.LastSeen) {
 		limit = min(limit, max(s.At.Sub(s.PlayedAt).Milliseconds(), 0)+stepSlackMS)
 	}
 	return max(min(delta, limit, maxStepMS), 0)

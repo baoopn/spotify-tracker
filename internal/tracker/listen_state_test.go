@@ -243,3 +243,36 @@ func TestListenStateConversionRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }
+
+// normalizePlayback sets PlayedAt to FetchedAt when Spotify sent no
+// timestamp: recordListen must treat it as unknown, not as a seek.
+func TestRecordListenWithoutTimestamp(t *testing.T) {
+	f := newFakeTx()
+	now := t0
+	for p := int32(1_000); p < 70_000; p += 3_000 {
+		now = now.Add(3 * time.Second)
+		if _, err := f.tx(t, nil, "a", p, now, now); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.rows) == 1 {
+			if p < 55_000 || p > 61_000 {
+				t.Fatalf("counted at %d ms", p)
+			}
+			return
+		}
+	}
+	t.Fatalf("never counted: listened %d ms", f.state.ListenedMS)
+}
+
+func TestOutOfOrderSnapshotKeepsCurrentPlayback(t *testing.T) {
+	f := newFakeTx()
+	now := t0
+	f.listenTo(t, &now, "a", 0, 30, t0)
+	before := f.state
+	if _, err := f.tx(t, nil, "b", 1_000, now.Add(-time.Second), t0); err != nil {
+		t.Fatal(err)
+	}
+	if f.current != "a" || f.state != before {
+		t.Fatalf("an older snapshot moved current_playback to %q or changed the state", f.current)
+	}
+}

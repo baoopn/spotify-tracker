@@ -9,7 +9,7 @@
   gRPC (`api/proto/tracker/v1/tracker.proto`). They can be restarted or scaled
   without coordination.
 - **PostgreSQL** is the source of truth. **Redis** holds derived and ephemeral
-  state: caches, playback state for replay detection, the enrichment stream,
+  state: caches, the enrichment stream,
   Spotify access tokens, OAuth state, heartbeats and analytics counters.
 
 ## gRPC services (internal, port 9000)
@@ -33,6 +33,7 @@ artists ─┐                 ┌─ albums
                            tracks ──┬── listening_history   (track_id, played_at) unique
                                     ├── track_features      1:1, enrichment status + backoff
                                     └── current_playback    singleton row
+listen_state (singleton: the listen in progress, for play counting)
 settings (encrypted secrets) · admin_audit · api_request_stats (hourly aggregates)
 tracks.track_number / disc_number · albums.album_type / total_tracks / release_date_precision
 albums.upc / copyrights / details_fetched_at · artists.genres / genres_fetched_at
@@ -51,14 +52,53 @@ looked up.
 
 ## Playback → history rules
 
-Same semantics as the original Deno poller:
+Each snapshot updates the *listen* in progress (`tracker.Step`): the track,
+its progress, the time heard so far and whether it was counted. The listen
+lives in the single-row `listen_state` table. It is read with
+`SELECT ... FOR UPDATE` in the same transaction that writes
+`current_playback` and the history change, and saved there too, so load,
+decide and save are atomic: a database error writes nothing, and concurrent
+or retried snapshots are decided one at a time.
 
-1. A different track than the last snapshot starts a new history row (`played_at` = Spotify's snapshot timestamp).
-2. The same track whose progress jumps back by more than `REPLAY_RESET_THRESHOLD` (10 s) increments `replay_count`.
-3. "Nothing playing" forgets the last track, so resuming later starts a new row.
+1. **A listen counts once**, when at least `PLAY_COUNT_MIN_FRACTION` (30%,
+   at most 90%) of the song has been heard, less up to 3 s for the unseen
+   end of the song (so a play counts slightly before the exact fraction),
+   or 30 s when the duration is unknown. The history row's
+   `played_at` is when the listen started (Spotify's timestamp), not when it
+   crossed the threshold. Skips below the threshold are not counted.
+2. **Time heard** grows only by forward progress while playing, capped by the
+   wall-clock time since the previous snapshot and, when Spotify's last
+   playback change (a seek or resume) falls in that gap, by the time since
+   it (plus 2 s, at most 30 s per snapshot). Seeking forward, or seeking
+   while paused, adds nothing. A new listen starts with what was heard
+   before its first snapshot: its progress, at most the time since Spotify's
+   last playback change. Without a Spotify timestamp these timestamp caps
+   are skipped. Snapshots older than the last one are ignored and never
+   move `current_playback` back.
+3. **Pause and resume** continue the same listen. "Nothing playing" keeps the
+   listen for `PLAY_RESUME_WINDOW` (24 h), so resuming the song later is not a
+   new play, and a song already counted is never counted again for it.
+4. **A new listen of the same song** starts when the progress goes back to
+   the start (under 10 s or 5%) from past `REPLAY_RESET_THRESHOLD` (10 s),
+   jumps back by more than that on a counted listen, or loops from the last
+   15% of the song to the start (repeat-one, even for very short songs).
+   When it reaches the threshold it increments `replay_count` of the history
+   row it repeats (`listen_state.row_played_at`; the latest row of the track
+   when unknown). A listen is never applied twice (`applied_at`). A smaller
+   seek back stays in the same listen.
+5. **A different track**, or the same one after the resume window, starts a
+   new listen (a later return to a song is a new row). An uncounted listen is
+   dropped.
 
-The last state is kept in Redis, so restarts don't create duplicates, and the
-`(track_id, played_at)` unique key makes ingestion and imports idempotent.
+These rules apply from the release that introduced them (November 2026);
+earlier history, counted on the first snapshot of every track, is not
+rewritten. When `listen_state` is still empty, the old Redis hash
+(`playback:state`) is read once as an already counted listen, so the song
+playing during the upgrade is not counted twice, and then deleted. Nothing
+writes that Redis key any more.
+
+The `(track_id, played_at)` unique key keeps ingestion and imports
+idempotent.
 
 ## Enrichment
 

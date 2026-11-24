@@ -16,8 +16,9 @@ import (
 const (
 	prefix = "spotify-tracker:"
 
-	// KeyPlaybackState is a hash {track_id, progress_ms} used for
-	// history/replay detection across restarts.
+	// KeyPlaybackState is the legacy hash {track_id, progress_ms} of the
+	// play-count rules before the listen_state table. It is only read once
+	// (when listen_state is empty) and then deleted; nothing writes it.
 	KeyPlaybackState = prefix + "playback:state"
 	// KeyNowPlaying caches the JSON body of GET /api/v1/now-playing.
 	KeyNowPlaying = prefix + "playback:now"

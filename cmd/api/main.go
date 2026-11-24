@@ -148,7 +148,11 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		return nil, err
 	}
 
-	svc := tracker.NewService(st, rdb, log, cfg.ReplayResetThreshold, cfg.EnrichMaxAttempts)
+	svc := tracker.NewService(st, rdb, log, tracker.PlayRules{
+		MinFraction:     cfg.PlayCountMinFraction,
+		ResumeWindow:    cfg.PlayResumeWindow,
+		ReplayThreshold: cfg.ReplayResetThreshold,
+	}, cfg.EnrichMaxAttempts)
 	mgr := spotify.NewManager(&spotify.OAuth{ClientID: cfg.Spotify.ClientID, ClientSecret: cfg.Spotify.ClientSecret},
 		settingsStore, rdb, log)
 	brand, err := notify.NewBrand(cfg.PublicURL, cfg.Email.LogoURL)

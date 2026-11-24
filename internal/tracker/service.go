@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -21,10 +20,9 @@ import (
 )
 
 const (
-	catalogSeenTTL   = 6 * time.Hour
-	playbackStateTTL = 30 * time.Minute
-	nowPlayingTTL    = 10 * time.Minute
-	enrichStreamMax  = 10_000
+	catalogSeenTTL  = 6 * time.Hour
+	nowPlayingTTL   = 10 * time.Minute
+	enrichStreamMax = 10_000
 )
 
 // PlaylistFetcher looks up playlist metadata (implemented by *spotify.Manager).
@@ -37,7 +35,7 @@ type Service struct {
 	store       *store.Store
 	rdb         *redis.Client
 	log         *slog.Logger
-	threshold   time.Duration
+	rules       PlayRules
 	maxAttempts int
 	playlists   PlaylistFetcher
 	onPlaying   func(trackID string)
@@ -51,9 +49,9 @@ func (s *Service) SetPlaylistFetcher(f PlaylistFetcher) { s.playlists = f }
 // not block.
 func (s *Service) OnPlaying(f func(trackID string)) { s.onPlaying = f }
 
-// NewService creates a Service.
-func NewService(st *store.Store, rdb *redis.Client, log *slog.Logger, replayThreshold time.Duration, maxAttempts int) *Service {
-	return &Service{store: st, rdb: rdb, log: log, threshold: replayThreshold, maxAttempts: maxAttempts}
+// NewService creates a Service. rules decide when a listen counts as a play.
+func NewService(st *store.Store, rdb *redis.Client, log *slog.Logger, rules PlayRules, maxAttempts int) *Service {
+	return &Service{store: st, rdb: rdb, log: log, rules: rules.withDefaults(), maxAttempts: maxAttempts}
 }
 
 // RecordResult reports the side effects of RecordPlayback.
@@ -72,15 +70,13 @@ func (s *Service) RecordPlayback(ctx context.Context, pb domain.Playback) (Recor
 	}
 	pb = normalizePlayback(pb)
 
-	prev, err := s.loadState(ctx)
-	if err != nil {
-		s.log.WarnContext(ctx, "load playback state failed; assuming none", logging.Err(err))
-	}
-	decision := Decide(prev, pb.Track.ID, pb.ProgressMS, s.threshold)
 	catalogKnown := s.catalogKnown(ctx, pb.Track.ID)
 
-	var res RecordResult
-	err = s.store.InTx(ctx, func(q *store.Queries) error {
+	var (
+		res        RecordResult
+		usedLegacy bool
+	)
+	err := s.store.InTx(ctx, func(q *store.Queries) error {
 		if !catalogKnown {
 			queued, err := upsertCatalog(ctx, q, pb)
 			if err != nil {
@@ -88,15 +84,20 @@ func (s *Service) RecordPlayback(ctx context.Context, pb domain.Playback) (Recor
 			}
 			res.EnrichmentQueued = queued
 		}
-		if err := q.SetCurrentPlayback(ctx, pb.Track.ID, pb.IsPlaying, pb.ProgressMS, pb.FetchedAt); err != nil {
-			return err
-		}
-		return applyHistory(ctx, q, pb, decision, &res)
+		var err error
+		_, usedLegacy, err = recordListen(ctx, q, s.loadLegacyListen, pb, s.rules, &res)
+		return err
 	})
 	if err != nil {
 		return res, fmt.Errorf("record playback: %w", err)
 	}
 
+	if usedLegacy {
+		// listen_state has the listen now; the Redis copy is never read again.
+		if err := s.rdb.Del(ctx, redisx.KeyPlaybackState).Err(); err != nil {
+			s.log.WarnContext(ctx, "delete legacy playback state failed", logging.Err(err))
+		}
+	}
 	s.afterRecord(ctx, pb, res, catalogKnown)
 	return res, nil
 }
@@ -141,9 +142,18 @@ func upsertCatalog(ctx context.Context, q *store.Queries, pb domain.Playback) (b
 	return q.EnsureTrackFeatures(ctx, pb.Track.ID, pb.Track.ISRC)
 }
 
-// applyHistory appends a history row or counts a replay, per decision.
-func applyHistory(ctx context.Context, q *store.Queries, pb domain.Playback, d Decision, res *RecordResult) error {
-	if d.Replay {
+// applyHistory appends a history row or counts a replay, per decision. A
+// replay goes to the row of the listen it repeats (d.RowAt), or to the
+// latest row of the track when that row is unknown.
+func applyHistory(ctx context.Context, q playbackTx, pb domain.Playback, d Decision, res *RecordResult) error {
+	if d.Replay && !d.RowAt.IsZero() {
+		incremented, err := q.IncrementReplayAt(ctx, pb.Track.ID, d.RowAt, pb.FetchedAt)
+		if err != nil {
+			return err
+		}
+		res.ReplayIncremented = incremented
+	}
+	if d.Replay && d.RowAt.IsZero() {
 		incremented, err := incrementReplayIfLatest(ctx, q, pb)
 		if err != nil {
 			return err
@@ -151,7 +161,7 @@ func applyHistory(ctx context.Context, q *store.Queries, pb domain.Playback, d D
 		res.ReplayIncremented = incremented
 	}
 	if d.NewHistory {
-		created, err := q.InsertHistory(ctx, pb.Track.ID, pb.PlayedAt, pb.FetchedAt, pb.Track.DurationMS, 1, pb.Context)
+		created, err := q.InsertHistory(ctx, pb.Track.ID, d.PlayedAt, pb.FetchedAt, pb.Track.DurationMS, 1, pb.Context)
 		if err != nil {
 			return err
 		}
@@ -162,7 +172,7 @@ func applyHistory(ctx context.Context, q *store.Queries, pb domain.Playback, d D
 
 // incrementReplayIfLatest bumps the replay count when the newest history
 // row is the same track.
-func incrementReplayIfLatest(ctx context.Context, q *store.Queries, pb domain.Playback) (bool, error) {
+func incrementReplayIfLatest(ctx context.Context, q playbackTx, pb domain.Playback) (bool, error) {
 	id, trackID, err := q.LatestHistory(ctx)
 	if errors.Is(err, domain.ErrNotFound) || (err == nil && trackID != pb.Track.ID) {
 		return false, nil
@@ -181,9 +191,6 @@ func incrementReplayIfLatest(ctx context.Context, q *store.Queries, pb domain.Pl
 func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, res RecordResult, catalogKnown bool) {
 	if !catalogKnown {
 		_ = s.rdb.Set(ctx, redisx.KeyCatalogSeen(pb.Track.ID), 1, catalogSeenTTL).Err()
-	}
-	if err := s.saveState(ctx, State{TrackID: pb.Track.ID, ProgressMS: pb.ProgressMS}); err != nil {
-		s.log.WarnContext(ctx, "save playback state failed", logging.Err(err))
 	}
 	if res.EnrichmentQueued {
 		s.queueEnrichment(ctx, pb.Track.ID, pb.Track.ISRC)
@@ -210,8 +217,9 @@ func (s *Service) afterRecord(ctx context.Context, pb domain.Playback, res Recor
 	}
 }
 
-// ClearPlayback records that nothing is playing. Like the original poller it
-// forgets the last track, so resuming later starts a new history entry.
+// ClearPlayback records that nothing is playing. The listen in progress is
+// kept (for PlayRules.ResumeWindow), so resuming the same song later
+// continues it instead of counting another play.
 func (s *Service) ClearPlayback(ctx context.Context, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -219,9 +227,6 @@ func (s *Service) ClearPlayback(ctx context.Context, at time.Time) error {
 	changed, err := s.store.MarkNotPlaying(ctx, at)
 	if err != nil {
 		return err
-	}
-	if err := s.rdb.Del(ctx, redisx.KeyPlaybackState).Err(); err != nil {
-		s.log.WarnContext(ctx, "clear playback state failed", logging.Err(err))
 	}
 	if changed {
 		s.publishNowPlaying(ctx)
@@ -276,33 +281,6 @@ func (s *Service) ReportFailure(ctx context.Context, trackID, msg string, retrya
 		s.InvalidateCache(ctx)
 	}
 	return exhausted, nil
-}
-
-func (s *Service) loadState(ctx context.Context) (State, error) {
-	m, err := s.rdb.HGetAll(ctx, redisx.KeyPlaybackState).Result()
-	if err != nil {
-		return State{}, err
-	}
-	st := State{TrackID: m["track_id"]}
-	if v, ok := m["progress_ms"]; ok && v != "" {
-		if n, err := strconv.ParseInt(v, 10, 32); err == nil {
-			p := int32(n)
-			st.ProgressMS = &p
-		}
-	}
-	return st, nil
-}
-
-func (s *Service) saveState(ctx context.Context, st State) error {
-	progress := ""
-	if st.ProgressMS != nil {
-		progress = strconv.FormatInt(int64(*st.ProgressMS), 10)
-	}
-	pipe := s.rdb.TxPipeline()
-	pipe.HSet(ctx, redisx.KeyPlaybackState, "track_id", st.TrackID, "progress_ms", progress)
-	pipe.Expire(ctx, redisx.KeyPlaybackState, playbackStateTTL)
-	_, err := pipe.Exec(ctx)
-	return err
 }
 
 // QueueEnrichment asks the enricher to process a track now.

@@ -134,7 +134,7 @@ is not connected.
 `internal/lyrics` looks up track lyrics on [LRCLIB](https://lrclib.net)
 (`internal/lrclib`, no API key) and stores them in the `lyrics` table
 (migration `00014_lyrics.sql`). Lyrics are admin and MCP only, with one
-public exception: the [now-playing window](#public-now-playing-lyrics-window).
+public exception: the [lyrics of the song playing now](#public-now-playing-lyrics).
 No other `/api/v1` route, no public MCP tool and none of the shared track JSON
 types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
 
@@ -175,36 +175,31 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   (`phraseto_tsquery`) rank first. A search is cut off after 5 s. A later change to `search_fold` must
   recompute the column (`UPDATE lyrics SET plain_lyrics = plain_lyrics`).
 
-### Public now-playing lyrics window
+### Public now-playing lyrics
 
 `GET /api/v1/now-playing/lyrics` (`internal/httpapi/now_lyrics.go`) serves the
-public page a karaoke-style view of the song playing now, built so it never
-exposes a song's full text:
+public page the full lyrics of the song playing now, and of no other song:
 
 - **Current track only.** It takes no parameters (a query string is ignored)
   and reads the now-playing snapshot. It answers `{"data":null}` when nothing
   plays, playback is paused, the snapshot is older than 60 s (poller down),
-  the estimated position is past the track's end, or the track has no synced
-  lyrics.
-- **A short window.** The synced LRC text (`store.SyncedLyrics`, which never
-  reads `plain_lyrics`) is parsed by `internal/lrc` (several time tags per
-  line, `[offset:]`, metadata and untimed lines dropped). From the position
-  (`progress_ms` plus the time since `fetched_at`) it returns the previous
-  line, the current line, the next line and further lines starting within
-  30 s, at most 10 lines of at most 200 runes each, with their start times,
-  `from_ms`, `until_ms` (start of the first line not sent) and the position
-  and instant it was computed for. Plain lyrics and the full synced text are
-  never sent.
-- **Credit and caching.** Every window carries `credit` ("Lyrics from
+  the estimated position is past the track's end, or the track has no lyrics
+  (yet).
+- **Full lyrics.** `store.NowLyrics` reads the track's found or instrumental
+  lyrics. Synced LRC text is parsed by `internal/lrc` (several time tags per
+  line, `[offset:]`, metadata and untimed lines dropped) and sent as
+  `lines: [{ start_ms, text }]` with `synced: true` (at most 2000 lines of at
+  most 200 runes each). Without synced lines the plain text is sent as
+  `plain` (at most 20 000 runes). Instrumental tracks get
+  `instrumental: true` and no text. The page highlights the current line
+  from its own position estimate.
+- **Credit and caching.** Every answer carries `credit` ("Lyrics from
   LRCLIB", <https://lrclib.net>). `Cache-Control: no-store`, so Cloudflare
-  never caches a window. Parsed lines of the current track are kept in memory
-  for 1 min (empty results too), so the database is read at most once a
-  minute per replica.
+  never caches it. The current track's answer is kept in memory for 1 min
+  (10 s when there are no lyrics yet), and concurrent misses share one store
+  read, so the database is read at most about once a minute per replica.
 - **Not in MCP.** The route is registered next to `v1Routes`, not in it, so
   `V1Handler` (and with it the MCP server) cannot reach it.
-- **Limits.** Someone polling for a whole song can still collect it line by
-  line; the window, the current-track rule and the per-IP rate limit only
-  make that slow.
 
 ## Top 50 playlists
 
@@ -368,7 +363,7 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   `recent_plays` (limit, cursor), `track_details` (id), `listening_summary`
   (range), `top_tracks` / `top_artists` / `top_genres` (range, limit),
   `audio_profile` (range), `recent_playlists` (limit), `top_playlists` (limit).
-  None returns lyrics; the public lyrics window is not reachable from MCP.
+  None returns lyrics; the public now-playing lyrics are not reachable from MCP.
 - **Admin tools** (read-only): `admin_overview`, `admin_spotify_status`,
   `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
   limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),

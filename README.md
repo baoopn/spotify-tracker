@@ -68,7 +68,7 @@ make test lint # quality gates (same as CI)
 |---|---|
 | `GET /api/v1/now-playing` | Current playback (track, album, artists, progress). |
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
-| `GET /api/v1/now-playing/lyrics` | A short window of synced lyrics of the track playing now: `{ track_id, position_ms, at, from_ms, until_ms, lines: [{ start_ms, text }], credit }`, at most 10 lines, never the full text; `null` when nothing plays or there are no synced lyrics. |
+| `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, synced, instrumental, lines: [{ start_ms, text }], plain, credit }`, synced lines when there are any, else the plain text; `null` when nothing plays or there are no lyrics. |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |
 | `GET /api/v1/tracks/{id}` | Track with audio features, genres and play count, plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
 | `GET /api/v1/stats/summary?range=` | Totals: plays, unique tracks/artists, listening time. |

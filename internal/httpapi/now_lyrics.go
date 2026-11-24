@@ -7,59 +7,32 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/lrc"
+	"github.com/baoopn/spotify-tracker/internal/store"
 )
 
-// The public lyrics window: lyrics stay admin and MCP only, except for this
-// short run of synced lines of the track playing right now. It never carries
-// plain lyrics or the full synced text.
+// The public now-playing lyrics: lyrics stay admin and MCP only, except for
+// the full lyrics of the track playing right now (synced lines when there
+// are any, else the plain text). No other track can be asked for.
 const (
-	nowLyricsAhead       = 30 * time.Second
-	nowLyricsMaxLines    = 10
-	nowLyricsMaxRunes    = 200
+	nowLyricsMaxLines    = 2000
+	nowLyricsMaxRunes    = 200              // per synced line
+	nowLyricsMaxPlain    = 20_000           // runes of plain text
 	nowLyricsMaxAge      = 60 * time.Second // an older snapshot counts as not playing (poller down)
-	nowLyricsMemoTTL     = time.Minute      // found lines
-	nowLyricsEmptyTTL    = 10 * time.Second // no synced lyrics yet (the lookup may still run)
+	nowLyricsMemoTTL     = time.Minute      // found lyrics
+	nowLyricsEmptyTTL    = 10 * time.Second // no lyrics yet (the lookup may still run)
 	lyricsAttribution    = "Lyrics from LRCLIB"
 	lyricsAttributionURL = "https://lrclib.net"
 )
 
-// syncedLyricsStore reads synced LRC text (implemented by *store.Store).
-type syncedLyricsStore interface {
-	SyncedLyrics(ctx context.Context, trackID string) (string, error)
-}
-
-// lyricsMemo caches the parsed lines of one track, so the database stays off
-// the hot path of a poll every few seconds. Empty results are cached for a
-// shorter time. Concurrent misses share one store read (flight).
-type lyricsMemo struct {
-	mu      sync.Mutex
-	trackID string
-	lines   []lrc.Line
-	at      time.Time
-	flight  singleflight.Group
-}
-
-func (m *lyricsMemo) get(trackID string, now time.Time) ([]lrc.Line, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	ttl := nowLyricsMemoTTL
-	if len(m.lines) == 0 {
-		ttl = nowLyricsEmptyTTL
-	}
-	if m.trackID == trackID && !m.at.IsZero() && now.Sub(m.at) < ttl {
-		return m.lines, true
-	}
-	return nil, false
-}
-
-func (m *lyricsMemo) put(trackID string, lines []lrc.Line, now time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.trackID, m.lines, m.at = trackID, lines, now
+// nowLyricsStore reads one track's lyrics (implemented by *store.Store).
+type nowLyricsStore interface {
+	NowLyrics(ctx context.Context, trackID string) (store.NowLyrics, error)
 }
 
 type lyricsCreditBody struct {
@@ -67,22 +40,54 @@ type lyricsCreditBody struct {
 	URL  string `json:"url"`
 }
 
-type lyricsWindowLine struct {
+type lyricsLine struct {
 	StartMS int64  `json:"start_ms"`
 	Text    string `json:"text"`
 }
 
+// nowLyricsBody is the public lyrics of the track playing now. Synced is
+// true when Lines holds timed lines; otherwise Plain holds the text.
+// Instrumental tracks have neither.
 type nowLyricsBody struct {
-	TrackID    string             `json:"track_id"`
-	PositionMS int64              `json:"position_ms"`
-	At         time.Time          `json:"at"`
-	FromMS     int64              `json:"from_ms"`
-	UntilMS    *int64             `json:"until_ms"`
-	Lines      []lyricsWindowLine `json:"lines"`
-	Credit     lyricsCreditBody   `json:"credit"`
+	TrackID      string           `json:"track_id"`
+	Synced       bool             `json:"synced"`
+	Instrumental bool             `json:"instrumental"`
+	Lines        []lyricsLine     `json:"lines"`
+	Plain        *string          `json:"plain"`
+	Credit       lyricsCreditBody `json:"credit"`
 }
 
-// playbackSnapshot is the part of the now-playing snapshot the window needs.
+// lyricsMemo caches the built body of one track, so the database stays off
+// the hot path. Empty results are cached for a shorter time. Concurrent
+// misses share one store read (flight).
+type lyricsMemo struct {
+	mu      sync.Mutex
+	trackID string
+	body    *nowLyricsBody // nil = no lyrics
+	at      time.Time
+	flight  singleflight.Group
+}
+
+func (m *lyricsMemo) get(trackID string, now time.Time) (*nowLyricsBody, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ttl := nowLyricsMemoTTL
+	if m.body == nil {
+		ttl = nowLyricsEmptyTTL
+	}
+	if m.trackID == trackID && !m.at.IsZero() && now.Sub(m.at) < ttl {
+		return m.body, true
+	}
+	return nil, false
+}
+
+func (m *lyricsMemo) put(trackID string, body *nowLyricsBody, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trackID, m.body, m.at = trackID, body, now
+}
+
+// playbackSnapshot is the part of the now-playing snapshot the endpoint needs.
 type playbackSnapshot struct {
 	IsPlaying  bool      `json:"is_playing"`
 	ProgressMS *int64    `json:"progress_ms"`
@@ -93,11 +98,12 @@ type playbackSnapshot struct {
 	} `json:"track"`
 }
 
-// GET /api/v1/now-playing/lyrics — a short window of synced lines of the
-// track playing now. Takes no parameters; {"data":null} when nothing fits.
+// GET /api/v1/now-playing/lyrics — the lyrics of the track playing now.
+// Takes no parameters; {"data":null} when nothing is playing or there are
+// no lyrics.
 func (h *Handler) nowPlayingLyrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	body, err := h.nowLyricsWindow(r.Context())
+	body, err := h.nowLyrics(r.Context())
 	if err != nil {
 		h.internalError(w, r, err)
 		return
@@ -105,7 +111,7 @@ func (h *Handler) nowPlayingLyrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, itemResponse[*nowLyricsBody]{Data: body})
 }
 
-func (h *Handler) nowLyricsWindow(ctx context.Context) (*nowLyricsBody, error) {
+func (h *Handler) nowLyrics(ctx context.Context) (*nowLyricsBody, error) {
 	if h.lyrics == nil {
 		return nil, nil
 	}
@@ -128,56 +134,72 @@ func (h *Handler) nowLyricsWindow(ctx context.Context) (*nowLyricsBody, error) {
 	if now.Sub(np.FetchedAt) > nowLyricsMaxAge {
 		return nil, nil
 	}
-	pos := *np.ProgressMS + max(0, now.Sub(np.FetchedAt).Milliseconds())
-	pos = max(0, pos)
+	pos := max(0, *np.ProgressMS+max(0, now.Sub(np.FetchedAt).Milliseconds()))
 	if d := np.Track.DurationMS; d > 0 && pos > d {
 		return nil, nil // the track has ended; the next snapshot names the new one
 	}
-
-	lines, err := h.lyricLines(ctx, np.Track.ID, now)
-	if err != nil {
-		return nil, err
-	}
-	if len(lines) == 0 {
-		return nil, nil
-	}
-
-	win := lrc.Cut(lines, pos, lrc.WindowOptions{
-		Ahead: nowLyricsAhead, MaxLines: nowLyricsMaxLines, MaxRunes: nowLyricsMaxRunes,
-	})
-	out := &nowLyricsBody{
-		TrackID: np.Track.ID, PositionMS: pos, At: now.UTC(),
-		FromMS: win.FromMS, UntilMS: win.UntilMS,
-		Lines:  make([]lyricsWindowLine, len(win.Lines)),
-		Credit: lyricsCreditBody{Text: lyricsAttribution, URL: lyricsAttributionURL},
-	}
-	for i, l := range win.Lines {
-		out.Lines[i] = lyricsWindowLine{StartMS: l.StartMS, Text: l.Text}
-	}
-	return out, nil
+	return h.lyricsBody(ctx, np.Track.ID, now)
 }
 
-// lyricLines returns the parsed synced lines of trackID from the memo, or
-// reads them once for all concurrent callers.
-func (h *Handler) lyricLines(ctx context.Context, trackID string, now time.Time) ([]lrc.Line, error) {
-	if lines, ok := h.lyricsCache.get(trackID, now); ok {
-		return lines, nil
+// lyricsBody returns the body for trackID from the memo, or builds it once
+// for all concurrent callers.
+func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time) (*nowLyricsBody, error) {
+	if body, ok := h.lyricsCache.get(trackID, now); ok {
+		return body, nil
 	}
 	v, err, _ := h.lyricsCache.flight.Do(trackID, func() (any, error) {
-		if lines, ok := h.lyricsCache.get(trackID, now); ok {
-			return lines, nil
+		if body, ok := h.lyricsCache.get(trackID, now); ok {
+			return body, nil
 		}
-		synced, err := h.lyrics.SyncedLyrics(ctx, trackID)
+		l, err := h.lyrics.NowLyrics(ctx, trackID)
 		if err != nil {
 			return nil, err
 		}
-		lines := lrc.Parse(synced)
-		h.lyricsCache.put(trackID, lines, now)
-		return lines, nil
+		body := buildLyricsBody(trackID, l)
+		h.lyricsCache.put(trackID, body, now)
+		return body, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	lines, _ := v.([]lrc.Line)
-	return lines, nil
+	body, _ := v.(*nowLyricsBody)
+	return body, nil
+}
+
+func buildLyricsBody(trackID string, l store.NowLyrics) *nowLyricsBody {
+	out := &nowLyricsBody{
+		TrackID: trackID,
+		Lines:   []lyricsLine{},
+		Credit:  lyricsCreditBody{Text: lyricsAttribution, URL: lyricsAttributionURL},
+	}
+	switch l.Status {
+	case domain.LyricsInstrumental:
+		out.Instrumental = true
+		return out
+	case domain.LyricsFound:
+	default:
+		return nil
+	}
+	if lines := lrc.Parse(l.Synced); len(lines) > 0 {
+		lines = lines[:min(len(lines), nowLyricsMaxLines)]
+		out.Synced = true
+		out.Lines = make([]lyricsLine, len(lines))
+		for i, ln := range lines {
+			out.Lines[i] = lyricsLine{StartMS: ln.StartMS, Text: cutRunes(ln.Text, nowLyricsMaxRunes)}
+		}
+		return out
+	}
+	if l.Plain == "" {
+		return nil
+	}
+	plain := cutRunes(l.Plain, nowLyricsMaxPlain)
+	out.Plain = &plain
+	return out
+}
+
+func cutRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

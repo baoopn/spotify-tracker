@@ -38,18 +38,16 @@ export type NowPlaying = {
 export type LyricLine = { start_ms: number; text: string };
 
 /**
- * A short window of synced lyrics for the track playing now
- * (GET /api/v1/now-playing/lyrics). Never the full text.
+ * The lyrics of the track playing now (GET /api/v1/now-playing/lyrics).
+ * `synced` lyrics come as timed `lines`; otherwise `plain` holds the text.
+ * Instrumental tracks have neither.
  */
 export type NowLyrics = {
 	track_id: string;
-	/** Playback position the window was cut at, valid at `at`. */
-	position_ms: number;
-	at: string;
-	from_ms: number;
-	/** Start of the first line not included; null when no lines remain. */
-	until_ms: number | null;
+	synced: boolean;
+	instrumental: boolean;
 	lines: LyricLine[];
+	plain: string | null;
 	credit: { text: string; url: string };
 };
 

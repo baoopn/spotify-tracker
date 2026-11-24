@@ -4,6 +4,7 @@ import type {
 	ItemResponse,
 	ListResponse,
 	AudioProfile,
+	NowLyrics,
 	NowPlaying,
 	RecentPlaylist,
 	StatsRange,
@@ -60,6 +61,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 export const API = {
 	nowPlaying: '/api/v1/now-playing',
 	stream: '/api/v1/now-playing/stream',
+	nowLyrics: '/api/v1/now-playing/lyrics',
 	history: (limit: number) => `/api/v1/history?limit=${limit}`,
 	recentPlaylists: (limit: number) => `/api/v1/playlists/recent?limit=${limit}`,
 	topPlaylists: (limit: number) => `/api/v1/playlists/top?limit=${limit}`,
@@ -73,6 +75,11 @@ export const API = {
 
 export async function fetchNowPlaying(signal?: AbortSignal): Promise<NowPlaying | null> {
 	return (await getJson<ItemResponse<NowPlaying | null>>(API.nowPlaying, signal)).data;
+}
+
+/** Synced lines around the current position, or null (paused, none, no synced lyrics). */
+export async function fetchNowLyrics(signal?: AbortSignal): Promise<NowLyrics | null> {
+	return (await getJson<ItemResponse<NowLyrics | null>>(API.nowLyrics, signal)).data;
 }
 
 export async function fetchHistory(limit: number, signal?: AbortSignal): Promise<HistoryEntry[]> {

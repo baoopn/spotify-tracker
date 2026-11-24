@@ -256,8 +256,11 @@ export const api = {
 	) => request<OffsetList<TrackRow>>(`${ADMIN_API}/tracks`, { query: q, signal }),
 	track: (id: string, { signal }: Signal = {}) =>
 		request<TrackAdminDetail>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}`, { signal }),
-	trackLyrics: (id: string, { signal }: Signal = {}) =>
-		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics`, { signal }),
+	trackLyrics: (id: string, { synced = false, signal }: Signal & { synced?: boolean } = {}) =>
+		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics`, {
+			query: synced ? { synced: 'true' } : undefined,
+			signal
+		}),
 	searchLyrics: (q: string, limit: number, { signal }: Signal = {}) =>
 		request<{ data: LyricsMatch[] }>(`${ADMIN_API}/lyrics/search`, {
 			query: { q, limit },

@@ -44,5 +44,7 @@ class FrameClock {
 export const secondClock = new Clock(1000);
 /** Per-frame ticks, for a smoothly moving progress bar. */
 export const frameClock = new FrameClock();
+/** 250 ms ticks, for following synced lyric lines. */
+export const lyricClock = new Clock(250);
 /** 20 s ticks, for relative timestamps. */
 export const relativeClock = new Clock(20_000);

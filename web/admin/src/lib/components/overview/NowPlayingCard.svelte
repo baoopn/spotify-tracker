@@ -5,6 +5,7 @@
 	import ListeningIcon from '../ListeningIcon.svelte';
 	import AlbumArt from '../AlbumArt.svelte';
 	import RelTime from '../RelTime.svelte';
+	import NowPlayingLyrics from './NowPlayingLyrics.svelte';
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear } from '#lib/format.js';
 	import { NowPlayingStream, snapshot } from '#lib/now-playing.svelte.js';
@@ -96,6 +97,7 @@
 				</div>
 			</div>
 		</div>
+		<NowPlayingLyrics trackId={track.id} {snap} {playing} {durationMs} />
 		<div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-3">
 			{#if snap.np?.fetched_at}
 				<p class="font-mono text-xs text-ink-soft">

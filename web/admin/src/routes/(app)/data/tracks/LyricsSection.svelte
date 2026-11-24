@@ -10,7 +10,8 @@
 	const uid = $props.id();
 	const headingId = `${uid}-lyrics`;
 
-	// Fetched once per open drawer; lyrics are large and never polled.
+	// Lyrics are large: kept fresh for a minute, and re-asked every minute only
+	// while the lookup is still pending.
 	const lyrics = createQuery(() => queries.trackLyrics(trackId));
 	const l = $derived(lyrics.data && lyrics.data.track_id === trackId ? lyrics.data : undefined);
 </script>

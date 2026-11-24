@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import LyricsList from './LyricsList.svelte';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { artistNames } from '#lib/format.js';
@@ -74,17 +74,31 @@
 	let dialog = $state<HTMLDialogElement>();
 	let open = $state(false);
 
-	function expand() {
+	// Render the content first so the close button gets focus and
+	// aria-labelledby resolves when the dialog opens.
+	async function expand() {
 		if (!dialog || dialog.open) return;
-		dialog.showModal();
 		open = true;
+		await tick();
+		if (dialog && !dialog.open && shown) dialog.showModal();
+		else open = false;
 	}
 	function collapse() {
-		dialog?.close();
+		// close() fires onclose, which clears `open`; clear it directly if the
+		// dialog never opened (e.g. lyrics vanished during the tick).
+		if (dialog?.open) dialog.close();
+		else open = false;
+	}
+	// Clicks on the panel land on its children; only the backdrop hits the
+	// dialog itself. Both ends must be on it, so a text selection dragged
+	// out of the panel does not close it.
+	let downOnBackdrop = false;
+	function onBackdropDown(e: PointerEvent) {
+		downOnBackdrop = e.target === dialog;
 	}
 	function onBackdrop(e: MouseEvent) {
-		// Clicks on the panel land on its children; only the backdrop hits the dialog.
-		if (e.target === dialog) collapse();
+		if (downOnBackdrop && e.target === dialog) collapse();
+		downOnBackdrop = false;
 	}
 
 	// Playback stopped or the lyrics went away: close cleanly.
@@ -141,14 +155,16 @@
 	</section>
 {/if}
 
-<!-- Outside the {#if} so it can close itself (and hand focus back) before
-     the card goes away. Content renders only while open. -->
+<!-- Outside the {#if} so it can close itself when the card goes away. Focus
+     returns to the Expand button; if the card is gone, the browser drops it
+     back to the page. Content renders only while open. -->
 <dialog
 	bind:this={dialog}
 	id={dialogId}
 	aria-labelledby={dialogTitleId}
 	class="lyrics-dialog"
 	onclose={() => (open = false)}
+	onpointerdown={onBackdropDown}
 	onclick={onBackdrop}
 >
 	{#if open && data && np.track}
@@ -214,16 +230,19 @@
 			width: calc(100% - 3rem);
 			max-width: 42rem;
 			height: 80vh;
+			height: 80dvh;
 			border: 1px solid var(--ink);
 			border-radius: 12px;
-			box-shadow: 4px 4px 0 var(--print, var(--ink));
+			box-shadow: 4px 4px 0 var(--print-color, var(--ink));
 		}
 	}
 	.lyrics-dialog::backdrop {
-		background: color-mix(in oklab, var(--ink) 45%, transparent);
+		/* A literal scrim: --ink turns light in dark mode. */
+		background: rgb(10 8 20 / 0.55);
 	}
 	/* A modal dialog does not stop the page behind it from scrolling. */
 	:global(html:has(dialog.lyrics-dialog[open])) {
 		overflow: hidden;
+		scrollbar-gutter: stable;
 	}
 </style>

@@ -7,12 +7,17 @@
 		keys,
 		active,
 		size = 'sm',
+		translation = null,
+		translationLang,
 		class: className = ''
 	}: {
 		lines: readonly LyricLine[];
 		keys: readonly string[];
 		active: number;
 		size?: 'sm' | 'lg';
+		/** One translated line per line ("" = none), shown under each one. */
+		translation?: readonly string[] | null;
+		translationLang?: string;
 		class?: string;
 	} = $props();
 
@@ -31,6 +36,7 @@
 	$effect(() => {
 		const i = active;
 		void keys;
+		void translation; // lines grow taller when a translation shows
 		if (!box) {
 			placed = false;
 			return;
@@ -87,6 +93,16 @@
 			]}
 		>
 			{#if line.text}{line.text}{:else}<span aria-hidden="true">♪</span>{/if}
+			{#if translation?.[i]}
+				<span
+					class={[
+						'block font-normal opacity-75',
+						size === 'lg' ? 'font-sans text-lg sm:text-xl' : 'text-[0.85em]'
+					]}
+					lang={translationLang}
+					dir="auto">{translation[i]}</span
+				>
+			{/if}
 		</p>
 	{/each}
 </div>

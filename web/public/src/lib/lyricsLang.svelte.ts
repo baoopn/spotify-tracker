@@ -1,0 +1,41 @@
+// Which lyrics translation to show (original, English or Vietnamese). One
+// preference for the card and the expanded view, kept across songs and
+// visits; a song that lacks the chosen language shows the original.
+
+import type { LyricsLang } from './lyrics';
+
+const KEY = 'st-public:lyrics-lang';
+
+function load(): LyricsLang {
+	try {
+		const v = localStorage.getItem(KEY);
+		return v === 'en' || v === 'vi' ? v : 'orig';
+	} catch {
+		return 'orig';
+	}
+}
+
+class LyricsLangState {
+	#value = $state<LyricsLang>('orig');
+	#loaded = false;
+
+	get value(): LyricsLang {
+		if (!this.#loaded && typeof window !== 'undefined') {
+			this.#loaded = true;
+			this.#value = load();
+		}
+		return this.#value;
+	}
+
+	set value(v: LyricsLang) {
+		this.#loaded = true;
+		this.#value = v;
+		try {
+			localStorage.setItem(KEY, v);
+		} catch {
+			// storage unavailable: keep the in-memory choice
+		}
+	}
+}
+
+export const lyricsLang = new LyricsLangState();

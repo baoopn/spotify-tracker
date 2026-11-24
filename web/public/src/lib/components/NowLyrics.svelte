@@ -1,13 +1,23 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
+	import { MediaQuery } from 'svelte/reactivity';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { live } from '#lib/live.svelte.js';
-	import { currentIndex, shouldRefetch, windowKey, type RefetchMemo } from '#lib/lyrics.js';
+	import {
+		currentIndex,
+		mergeLines,
+		shouldRefetch,
+		windowKey,
+		type RefetchMemo
+	} from '#lib/lyrics.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
-	import type { NowPlaying } from '#lib/types.js';
+	import type { LyricLine, NowPlaying } from '#lib/types.js';
 
 	let { np }: { np: NowPlaying } = $props();
+
+	const uid = $props.id();
+	const headingId = `${uid}-now-lyrics`;
 
 	const trackId = $derived(np.track?.id ?? null);
 	const playing = $derived(!!trackId && np.is_playing);
@@ -20,16 +30,24 @@
 		query.data && query.data.track_id === trackId && query.data.lines.length > 0 ? query.data : null
 	);
 
+	// The server sends a short window at a time; keep every line seen for
+	// this track so the list grows as the song plays. `seen` is a plain
+	// (non-reactive) cache; `lines` recomputes only when a new window arrives,
+	// and a new track starts from an empty list.
+	let seen: { trackId: string | null; lines: LyricLine[] } = { trackId: null, lines: [] };
+	const lines = $derived.by(() => {
+		if (!data) return [];
+		const prev = seen.trackId === data.track_id ? seen.lines : [];
+		seen = { trackId: data.track_id, lines: mergeLines(prev, data.lines) };
+		return seen.lines;
+	});
+
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
 	// moves the highlight in between.
 	const posMs = $derived(
 		playing ? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs) : null
 	);
-
-	const idx = $derived(data && posMs != null ? currentIndex(data.lines, posMs) : -1);
-	const prev = $derived(data && idx > 0 ? data.lines[idx - 1].text : null);
-	const current = $derived(data && idx >= 0 ? data.lines[idx].text : '');
-	const next = $derived(data && idx + 1 < data.lines.length ? data.lines[idx + 1].text : null);
+	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);
 
 	// Refetch when the window runs out or playback seeks back; see shouldRefetch.
 	const memo: RefetchMemo = { key: null, at: 0 };
@@ -45,63 +63,82 @@
 		memo.at = state.nowMs;
 		void query.refetch();
 	});
+
+	const reducedMotion = new MediaQuery('prefers-reduced-motion: reduce');
+	let box = $state<HTMLDivElement>();
+	let pausedUntil = 0;
+
+	function userScrolled() {
+		pausedUntil = Date.now() + 5000;
+	}
+
+	// Keep the active line centred inside the box only (never scroll the page).
+	$effect(() => {
+		const i = active;
+		if (!box || i < 0 || Date.now() < pausedUntil) return;
+		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
+		if (!el) return;
+		box.scrollTo({
+			top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
+			behavior: reducedMotion.current ? 'auto' : 'smooth'
+		});
+	});
 </script>
 
-{#if playing && data}
-	<section aria-label="Lyrics" class="mt-6 border-t border-rule pt-4">
-		<!-- aria-live off: a line that changes every few seconds is too noisy to
-		     announce; the current line can still be read on demand. -->
-		<div class="lines" aria-live="off">
-			<p class="row text-sm text-ink-soft" dir="auto">{prev ?? ''}</p>
-			{#key idx}
-				<p
-					class="row current enter font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl"
-					dir="auto"
-				>
-					{#if current}{current}{:else}<span aria-hidden="true">♪</span>{/if}
-				</p>
-			{/key}
-			<p class="row text-sm text-ink-soft" dir="auto">{next ?? ''}</p>
+{#if playing && data && lines.length}
+	<section aria-labelledby={headingId} class="mt-6 border-t border-rule pt-4">
+		<div class="mb-2 flex items-center gap-2">
+			<h3 id={headingId} class="label text-ink">Lyrics</h3>
+			<span class="chip label">Synced</span>
 		</div>
-		<p class="mt-3 text-xs text-ink-soft">
-			<a href={data.credit.url} target="_blank" rel="noopener noreferrer" class="link"
-				>{data.credit.text}</a
+
+		<!-- A scrollable box must be focusable so keyboard users can scroll it; the
+		     listeners only pause auto-scroll while the user scrolls by hand.
+		     No aria-live: a line that changes every few seconds is too noisy. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+		<div
+			bind:this={box}
+			role="region"
+			aria-label="Lyrics"
+			tabindex="0"
+			class="relative max-h-80 overflow-y-auto py-2 text-base leading-relaxed"
+			onwheel={userScrolled}
+			onpointerdown={userScrolled}
+			ontouchmove={userScrolled}
+			onkeydown={userScrolled}
+		>
+			{#each lines as line, i (i)}
+				<p
+					data-i={i}
+					dir="auto"
+					aria-current={i === active ? 'true' : undefined}
+					class={[
+						'lyric-line py-0.5',
+						i === active ? 'font-semibold text-ink' : 'text-ink-soft opacity-70'
+					]}
+				>
+					{#if line.text}{line.text}{:else}<span aria-hidden="true">♪</span>{/if}
+				</p>
+			{/each}
+		</div>
+
+		<p class="mt-2 text-xs text-ink-soft">
+			<a
+				href={data.credit.url}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="link font-semibold text-ink">{data.credit.text}</a
 			>
 		</p>
 	</section>
 {/if}
 
 <style>
-	/* Fixed row heights so a line change never shifts the layout. */
-	.row {
-		display: -webkit-box;
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 1;
-		line-clamp: 1;
-		overflow: hidden;
-		min-height: 1.5em;
-		overflow-wrap: anywhere;
-	}
-	.current {
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		min-height: 2.5em;
-		line-height: 1.25;
-		margin-block: 0.25rem;
-	}
 	@media (prefers-reduced-motion: no-preference) {
-		.enter {
-			animation: line-in 220ms ease-out;
-		}
-	}
-	@keyframes line-in {
-		from {
-			opacity: 0;
-			transform: translateY(0.35em);
-		}
-		to {
-			opacity: 1;
-			transform: none;
+		.lyric-line {
+			transition:
+				color 200ms ease,
+				opacity 200ms ease;
 		}
 	}
 </style>

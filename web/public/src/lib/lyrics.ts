@@ -70,3 +70,22 @@ export function shouldRefetch(
 	if (since < REFETCH_THROTTLE_MS) return false;
 	return memo.key !== windowKey(data) || since >= SAME_WINDOW_RETRY_MS;
 }
+
+/** Most lines kept per track while windows pile up on the client. */
+export const MAX_LINES = 500;
+
+/**
+ * Merge a new window into the lines seen so far for the same track: keyed
+ * by start_ms, sorted, the newer window winning on the same start. Keeps
+ * at most MAX_LINES, dropping the earliest first.
+ */
+export function mergeLines(prev: readonly LyricLine[], next: readonly LyricLine[]): LyricLine[] {
+	const byStart = new Map<number, LyricLine[]>();
+	for (const l of prev) byStart.set(l.start_ms, [...(byStart.get(l.start_ms) ?? []), l]);
+	// A new window replaces every line it has at that start (keeps duplicates in order).
+	const fresh = new Map<number, LyricLine[]>();
+	for (const l of next) fresh.set(l.start_ms, [...(fresh.get(l.start_ms) ?? []), l]);
+	for (const [k, v] of fresh) byStart.set(k, v);
+	const out = [...byStart.keys()].sort((a, b) => a - b).flatMap((k) => byStart.get(k)!);
+	return out.length > MAX_LINES ? out.slice(out.length - MAX_LINES) : out;
+}

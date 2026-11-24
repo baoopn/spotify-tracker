@@ -6,7 +6,9 @@ import {
 	REFETCH_THROTTLE_MS,
 	SAME_WINDOW_RETRY_MS,
 	SEEK_BACK_MS,
+	MAX_LINES,
 	currentIndex,
+	mergeLines,
 	needsRefetch,
 	shouldRefetch,
 	windowKey
@@ -110,6 +112,48 @@ assert.equal(
 	);
 	assert.notEqual(windowKey(w), windowKey({ ...w, track_id: 't2' }), 'key includes the track');
 	assert.equal(windowKey({ ...w, until_ms: null }), 't1:10000:');
+}
+
+// mergeLines: union by start_ms, sorted, newer window wins, capped.
+{
+	const a = [
+		{ start_ms: 1000, text: 'a' },
+		{ start_ms: 2000, text: 'b' }
+	];
+	const b = [
+		{ start_ms: 2000, text: 'B' },
+		{ start_ms: 3000, text: 'c' }
+	];
+	assert.deepEqual(mergeLines([], []), []);
+	assert.deepEqual(mergeLines(a, []), a);
+	assert.deepEqual(
+		mergeLines(a, b).map((l) => l.text),
+		['a', 'B', 'c'],
+		'newer window wins on the same start'
+	);
+	assert.deepEqual(
+		mergeLines(b, a).map((l) => l.text),
+		['a', 'b', 'c'],
+		'out-of-order window still sorts'
+	);
+	const dup = [
+		{ start_ms: 5000, text: 'x' },
+		{ start_ms: 5000, text: 'y' }
+	];
+	assert.deepEqual(
+		mergeLines(a, dup).map((l) => l.text),
+		['a', 'b', 'x', 'y'],
+		'same-start lines in one window stay in order'
+	);
+	assert.deepEqual(
+		mergeLines(mergeLines(a, b), b).map((l) => l.text),
+		['a', 'B', 'c'],
+		'idempotent'
+	);
+	const big = Array.from({ length: MAX_LINES + 20 }, (_, i) => ({ start_ms: i, text: `${i}` }));
+	const capped = mergeLines([], big);
+	assert.equal(capped.length, MAX_LINES);
+	assert.equal(capped[0].start_ms, 20, 'drops the earliest');
 }
 
 console.log('lyrics checks passed');

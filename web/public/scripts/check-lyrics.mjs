@@ -6,10 +6,12 @@ import {
 	REFETCH_THROTTLE_MS,
 	SAME_WINDOW_RETRY_MS,
 	SEEK_BACK_MS,
-	MAX_LINES,
+	KEEP_BEFORE,
 	currentIndex,
+	lineKeys,
 	mergeLines,
 	needsRefetch,
+	rollLines,
 	shouldRefetch,
 	windowKey
 } from '../src/lib/lyrics.ts';
@@ -114,46 +116,159 @@ assert.equal(
 	assert.equal(windowKey({ ...w, until_ms: null }), 't1:10000:');
 }
 
-// mergeLines: union by start_ms, sorted, newer window wins, capped.
+/** @param {[number, string][]} pairs */
+const ln = (pairs) => pairs.map(([start_ms, text]) => ({ start_ms, text }));
+/** @param {{ lines: { text: string }[] }} r */
+const texts = (r) => r.lines.map((l) => l.text);
+
+// mergeLines: sorted union; the larger same-start group wins, newer on a tie.
+assert.deepEqual(mergeLines([], []), []);
+assert.deepEqual(
+	mergeLines(
+		ln([
+			[1, 'a'],
+			[2, 'b']
+		]),
+		ln([
+			[2, 'B'],
+			[3, 'c']
+		])
+	).map((l) => l.text),
+	['a', 'B', 'c'],
+	'newer wins a tie'
+);
+assert.deepEqual(
+	mergeLines(
+		ln([
+			[2, 'b'],
+			[3, 'c']
+		]),
+		ln([
+			[1, 'a'],
+			[2, 'b']
+		])
+	).map((l) => l.text),
+	['a', 'b', 'c'],
+	'sorted'
+);
 {
-	const a = [
-		{ start_ms: 1000, text: 'a' },
-		{ start_ms: 2000, text: 'b' }
-	];
-	const b = [
-		{ start_ms: 2000, text: 'B' },
-		{ start_ms: 3000, text: 'c' }
-	];
-	assert.deepEqual(mergeLines([], []), []);
-	assert.deepEqual(mergeLines(a, []), a);
+	const full = ln([
+		[1, 'a'],
+		[5, 'x'],
+		[5, 'y'],
+		[5, 'z']
+	]);
+	const cut = ln([
+		[5, 'y'],
+		[5, 'z'],
+		[9, 'n']
+	]);
 	assert.deepEqual(
-		mergeLines(a, b).map((l) => l.text),
-		['a', 'B', 'c'],
-		'newer window wins on the same start'
+		mergeLines(full, cut).map((l) => l.text),
+		['a', 'x', 'y', 'z', 'n'],
+		'a window cut mid-group keeps the whole group'
 	);
-	assert.deepEqual(
-		mergeLines(b, a).map((l) => l.text),
-		['a', 'b', 'c'],
-		'out-of-order window still sorts'
-	);
-	const dup = [
-		{ start_ms: 5000, text: 'x' },
-		{ start_ms: 5000, text: 'y' }
-	];
-	assert.deepEqual(
-		mergeLines(a, dup).map((l) => l.text),
-		['a', 'b', 'x', 'y'],
-		'same-start lines in one window stay in order'
-	);
-	assert.deepEqual(
-		mergeLines(mergeLines(a, b), b).map((l) => l.text),
-		['a', 'B', 'c'],
-		'idempotent'
-	);
-	const big = Array.from({ length: MAX_LINES + 20 }, (_, i) => ({ start_ms: i, text: `${i}` }));
-	const capped = mergeLines([], big);
-	assert.equal(capped.length, MAX_LINES);
-	assert.equal(capped[0].start_ms, 20, 'drops the earliest');
 }
+
+// rollLines: rolling run, never the whole song.
+{
+	const w1 = {
+		track_id: 't',
+		until_ms: 5000,
+		lines: ln([
+			[1000, 'l1'],
+			[2000, 'l2'],
+			[3000, 'l3'],
+			[4000, 'l4']
+		])
+	};
+	let r = rollLines(null, w1, 1500);
+	assert.deepEqual(texts(r), ['l1', 'l2', 'l3', 'l4']);
+	assert.equal(r.until_ms, 5000);
+
+	// Adjacent window (starts at prev until_ms): merges, past lines trimmed.
+	const w2 = {
+		track_id: 't',
+		until_ms: 10_000,
+		lines: ln([
+			[5000, 'l5'],
+			[6000, 'l6'],
+			[7000, 'l7'],
+			[8000, 'l8'],
+			[9000, 'l9']
+		])
+	};
+	r = rollLines(r, w2, 7500);
+	assert.deepEqual(
+		texts(r),
+		['l3', 'l4', 'l5', 'l6', 'l7', 'l8', 'l9'],
+		`${KEEP_BEFORE} lines kept before l7`
+	);
+
+	// Overlapping window: merges.
+	const w3 = {
+		track_id: 't',
+		until_ms: 11_000,
+		lines: ln([
+			[9000, 'l9'],
+			[10_000, 'l10']
+		])
+	};
+	r = rollLines(r, w3, 9500);
+	assert.deepEqual(texts(r), ['l5', 'l6', 'l7', 'l8', 'l9', 'l10']);
+
+	// Gap ahead (seek forward): replaced, no hole.
+	const far = {
+		track_id: 't',
+		until_ms: 61_000,
+		lines: ln([
+			[59_000, 'f1'],
+			[60_000, 'f2']
+		])
+	};
+	assert.deepEqual(texts(rollLines(r, far, 60_500)), ['f1', 'f2']);
+
+	// Seek back before the kept lines: replaced.
+	const back = {
+		track_id: 't',
+		until_ms: 3000,
+		lines: ln([
+			[1000, 'l1'],
+			[2000, 'l2']
+		])
+	};
+	assert.deepEqual(texts(rollLines(r, back, 1200)), ['l1', 'l2']);
+
+	// New track: replaced.
+	const other = { track_id: 'u', until_ms: null, lines: ln([[9000, 'o1']]) };
+	assert.deepEqual(texts(rollLines(r, other, 9500)), ['o1']);
+
+	// Before the first line: nothing trimmed.
+	assert.deepEqual(texts(rollLines(null, w1, 0)), ['l1', 'l2', 'l3', 'l4']);
+
+	// Long play stays short: never more than KEEP_BEFORE past lines.
+	/** @type {import("../src/lib/lyrics.ts").Rolling | null} */
+	let run = null;
+	for (let s = 0; s < 200; s++) {
+		const lines = ln(Array.from({ length: 8 }, (_, i) => [(s + i) * 1000, `L${s + i}`]));
+		run = rollLines(run, { track_id: 't', until_ms: (s + 8) * 1000, lines }, s * 1000 + 500);
+		assert.ok(currentIndex(run.lines, s * 1000 + 500) <= KEEP_BEFORE, `trimmed at step ${s}`);
+	}
+	assert.ok(run && run.lines.length <= KEEP_BEFORE + 8);
+}
+
+// lineKeys: start plus place in the same-start group.
+assert.deepEqual(
+	lineKeys(
+		ln([
+			[1, 'a'],
+			[5, 'x'],
+			[5, 'y'],
+			[9, 'n']
+		])
+	),
+	['1:0', '5:0', '5:1', '9:0']
+);
+assert.deepEqual(lineKeys([]), []);
 
 console.log('lyrics checks passed');

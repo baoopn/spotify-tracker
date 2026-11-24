@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
+	import { untrack } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { live } from '#lib/live.svelte.js';
 	import {
 		currentIndex,
-		mergeLines,
+		lineKeys,
+		rollLines,
 		shouldRefetch,
 		windowKey,
-		type RefetchMemo
+		type RefetchMemo,
+		type Rolling
 	} from '#lib/lyrics.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
-	import type { LyricLine, NowPlaying } from '#lib/types.js';
+	import type { NowPlaying } from '#lib/types.js';
 
 	let { np }: { np: NowPlaying } = $props();
 
@@ -30,23 +33,22 @@
 		query.data && query.data.track_id === trackId && query.data.lines.length > 0 ? query.data : null
 	);
 
-	// The server sends a short window at a time; keep every line seen for
-	// this track so the list grows as the song plays. `seen` is a plain
-	// (non-reactive) cache; `lines` recomputes only when a new window arrives,
-	// and a new track starts from an empty list.
-	let seen: { trackId: string | null; lines: LyricLine[] } = { trackId: null, lines: [] };
-	const lines = $derived.by(() => {
-		if (!data) return [];
-		const prev = seen.trackId === data.track_id ? seen.lines : [];
-		seen = { trackId: data.track_id, lines: mergeLines(prev, data.lines) };
-		return seen.lines;
-	});
-
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
 	// moves the highlight in between.
 	const posMs = $derived(
 		playing ? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs) : null
 	);
+
+	// A short rolling run: a few past lines plus the current server window,
+	// never the whole song. Folded in once per new window, not on every tick.
+	let roll = $state<Rolling | null>(null);
+	$effect.pre(() => {
+		const d = data;
+		if (!d) return;
+		roll = untrack(() => rollLines(roll, d, posMs ?? 0));
+	});
+	const lines = $derived(data && roll && roll.trackId === trackId ? roll.lines : []);
+	const keys = $derived(lineKeys(lines));
 	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);
 
 	// Refetch when the window runs out or playback seeks back; see shouldRefetch.
@@ -67,21 +69,29 @@
 	const reducedMotion = new MediaQuery('prefers-reduced-motion: reduce');
 	let box = $state<HTMLDivElement>();
 	let pausedUntil = 0;
+	let placed = false; // the first scroll after mount jumps; later ones glide
 
 	function userScrolled() {
 		pausedUntil = Date.now() + 5000;
 	}
 
-	// Keep the active line centred inside the box only (never scroll the page).
+	// Keep the active line centred inside the box only (never scroll the page),
+	// also when the run changes around it.
 	$effect(() => {
 		const i = active;
-		if (!box || i < 0 || Date.now() < pausedUntil) return;
+		void keys;
+		if (!box) {
+			placed = false;
+			return;
+		}
+		if (i < 0 || Date.now() < pausedUntil) return;
 		const el = box.querySelector<HTMLElement>(`[data-i="${i}"]`);
 		if (!el) return;
 		box.scrollTo({
 			top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
-			behavior: reducedMotion.current ? 'auto' : 'smooth'
+			behavior: !placed || reducedMotion.current ? 'auto' : 'smooth'
 		});
+		placed = true;
 	});
 </script>
 
@@ -94,26 +104,27 @@
 
 		<!-- A scrollable box must be focusable so keyboard users can scroll it; the
 		     listeners only pause auto-scroll while the user scrolls by hand.
+		     Fixed height so merging windows never shifts the page.
 		     No aria-live: a line that changes every few seconds is too noisy. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 		<div
 			bind:this={box}
 			role="region"
-			aria-label="Lyrics"
+			aria-label="Lyrics, scrollable"
 			tabindex="0"
-			class="relative max-h-80 overflow-y-auto py-2 text-base leading-relaxed"
+			class="relative h-64 overflow-y-auto py-2 text-base leading-relaxed"
 			onwheel={userScrolled}
 			onpointerdown={userScrolled}
 			ontouchmove={userScrolled}
 			onkeydown={userScrolled}
 		>
-			{#each lines as line, i (i)}
+			{#each lines as line, i (keys[i])}
 				<p
 					data-i={i}
 					dir="auto"
 					aria-current={i === active ? 'true' : undefined}
 					class={[
-						'lyric-line py-0.5',
+						'lyric-line py-0.5 break-words',
 						i === active ? 'font-semibold text-ink' : 'text-ink-soft opacity-70'
 					]}
 				>

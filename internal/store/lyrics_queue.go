@@ -29,7 +29,7 @@ const lyricsRequestedSQL = `(l.requested_at IS NOT NULL OR l.claim_requested_at 
 
 // lyricsHeldSQL is true when the lyrics row l holds manual lyrics that no
 // lookup may replace: source 'manual' without an explicit re-queue with
-// replace_manual (00018). Automatic lookups (backfill, retries, now-playing
+// replace_manual (00019). Automatic lookups (backfill, retries, now-playing
 // and prefetch wakes) never claim such a row, and a lookup that claimed it
 // before the manual lyrics were set only gives its lease back.
 const lyricsHeldSQL = `(l.source = 'manual' AND NOT l.replace_manual)`

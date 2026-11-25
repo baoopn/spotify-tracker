@@ -86,7 +86,7 @@ func TestClearManualLyricsSQL(t *testing.T) {
 }
 
 func TestManualLyricsMigration(t *testing.T) {
-	b, err := fs.ReadFile(migrations.FS, "00018_manual_lyrics.sql")
+	b, err := fs.ReadFile(migrations.FS, "00019_manual_lyrics.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/domain"
 )
 
-// Manual lyrics (source 'manual', 00018) are lyrics the admin adds by hand.
+// Manual lyrics (source 'manual', 00019) are lyrics the admin adds by hand.
 // They win over LRCLIB: automatic lookups never claim or overwrite them
 // (lyricsHeldSQL); only an explicit re-queue with replace_manual lets the
 // next LRCLIB result replace them.

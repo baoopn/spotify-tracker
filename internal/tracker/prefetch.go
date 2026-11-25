@@ -181,13 +181,18 @@ func (d serviceDeps) UpsertEntry(ctx context.Context, e domain.CatalogEntry, enr
 			return err
 		})
 	}
-	err := run()
-	// A RecordPlayback upserting the same rows at the same moment can
-	// deadlock with this transaction; Postgres aborts one, so retry once.
+	return queue, retryDeadlock(run)
+}
+
+// retryDeadlock runs f and runs it once more when Postgres aborted it: a
+// RecordPlayback upserting the same rows at the same moment can deadlock
+// with the prefetch transaction (or fail serialization).
+func retryDeadlock(f func() error) error {
+	err := f()
 	if isDeadlock(err) {
-		err = run()
+		err = f()
 	}
-	return queue, err
+	return err
 }
 
 func isDeadlock(err error) bool {

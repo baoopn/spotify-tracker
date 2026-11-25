@@ -3,10 +3,14 @@ package tracker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
 )
@@ -137,6 +141,40 @@ func TestPrefetchUpcomingEmptyClears(t *testing.T) {
 		}
 		if d.cleared != 1 || d.upNext != nil || calls != 1 || got != nil {
 			t.Errorf("%s: cleared %d up next %s hook calls %d ids %v", name, d.cleared, d.upNext, calls, got)
+		}
+	}
+}
+
+// A deadlock or serialization failure is retried once; other errors and a
+// second abort are returned.
+func TestRetryDeadlock(t *testing.T) {
+	deadlock := fmt.Errorf("upsert: %w", &pgconn.PgError{Code: "40P01"})
+	serial := &pgconn.PgError{Code: "40001"}
+	other := errors.New("boom")
+	unique := &pgconn.PgError{Code: "23505"}
+	for name, tc := range map[string]struct {
+		errs  []error
+		calls int
+		want  error
+	}{
+		"ok":            {errs: []error{nil}, calls: 1},
+		"deadlock":      {errs: []error{deadlock, nil}, calls: 2},
+		"serialization": {errs: []error{serial, nil}, calls: 2},
+		"twice":         {errs: []error{deadlock, deadlock}, calls: 2, want: deadlock},
+		"other":         {errs: []error{other}, calls: 1, want: other},
+		"unique":        {errs: []error{unique}, calls: 1, want: unique},
+	} {
+		calls := 0
+		err := retryDeadlock(func() error {
+			e := tc.errs[calls]
+			calls++
+			return e
+		})
+		if calls != tc.calls {
+			t.Errorf("%s: calls = %d, want %d", name, calls, tc.calls)
+		}
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
 		}
 	}
 }

@@ -381,6 +381,8 @@ export type TranslationQueue = {
 	enabled: boolean;
 	daily_cap: number;
 	monthly_cap: number;
+	/** TRANSLATE_MODEL; older APIs omit it. */
+	model?: string;
 	queued: number;
 	in_progress: number;
 	done: number;

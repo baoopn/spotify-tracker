@@ -335,8 +335,14 @@ export type TrackLyrics = {
 	last_error: string;
 	fetched_at: string | null;
 	next_attempt_at: string | null;
-	/** A lookup is due soon (pending with the fetcher on, or a retry within minutes). */
+	/** A lookup is due soon (pending, queued, being looked up, or a retry within minutes; fetcher on). */
 	waiting: boolean;
+	/** Waiting for a lookup worker (pending, re-queued, or a retry that is due). */
+	queued: boolean;
+	/** A lookup worker holds the track now. */
+	looking_up: boolean;
+	/** An admin re-queue that has not finished yet. */
+	requested_at: string | null;
 	/** The Claude translation; null unless status is "found". */
 	translation: TrackTranslation | null;
 };
@@ -382,6 +388,24 @@ export type TranslationQueue = {
 	calls_today: number;
 	calls_month: number;
 	tokens_month: { input: number; output: number };
+};
+
+/** GET /admin/api/lyrics/queue: the LRCLIB lookup queue (exclusive counts). */
+export type LyricsQueue = {
+	enabled: boolean;
+	/** Waiting for a worker; includes requested and backlog. */
+	queued: number;
+	/** Of queued: re-queued by an admin. */
+	requested: number;
+	/** Of queued: never looked up yet. */
+	backlog: number;
+	in_progress: number;
+	found: number;
+	instrumental: number;
+	not_found: number;
+	error: number;
+	next_retry_at: string | null;
+	last_lookup_at: string | null;
 };
 
 /** One hit of GET /admin/api/lyrics/search. */

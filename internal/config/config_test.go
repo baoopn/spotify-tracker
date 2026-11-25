@@ -229,7 +229,7 @@ func TestLoadAPILyrics(t *testing.T) {
 	}
 	l := cfg.Lyrics
 	if !l.Enabled || l.APIURL != "https://lrclib.net" || l.Interval != time.Minute || l.Batch != 10 ||
-		l.Spacing != 2*time.Second || l.NotFoundRetry != 720*time.Hour || l.Lease != 15*time.Minute {
+		l.Spacing != 2*time.Second || l.NotFoundRetry != 720*time.Hour || l.Lease != 20*time.Minute {
 		t.Errorf("defaults = %+v", l)
 	}
 
@@ -258,8 +258,8 @@ func TestLoadAPILyrics(t *testing.T) {
 		t.Setenv("LYRICS_ENABLED", "true")
 	}
 
-	// The lease must cover one batch at 3 requests a track, each with the
-	// spacing and the request timeout (3 × 20 × (10s + 20s) = 30m).
+	// The lease must cover one batch at 5 requests a track, each with the
+	// spacing and the request timeout (5 × 20 × (10s + 20s) = 50m).
 	long := func(lease string) error {
 		set()
 		for k, v := range map[string]string{"LYRICS_API_URL": "https://lrclib.net", "LYRICS_INTERVAL": "1m",
@@ -269,11 +269,11 @@ func TestLoadAPILyrics(t *testing.T) {
 		_, err := Load[API]()
 		return err
 	}
-	if err := long("29m"); err == nil || !strings.Contains(err.Error(), "LYRICS_LEASE") {
+	if err := long("49m"); err == nil || !strings.Contains(err.Error(), "LYRICS_LEASE") {
 		t.Errorf("short lease = %v, want a LYRICS_LEASE error", err)
 	}
-	if err := long("30m"); err != nil {
-		t.Errorf("30m lease: %v", err)
+	if err := long("50m"); err != nil {
+		t.Errorf("50m lease: %v", err)
 	}
 }
 
@@ -350,12 +350,16 @@ func TestLyricsLeaseMatchesClient(t *testing.T) {
 		t.Errorf("lyricsRequestTimeout = %s, lrclib.DefaultTimeout = %s", lyricsRequestTimeout, lrclib.DefaultTimeout)
 	}
 	l := Lyrics{Enabled: true, APIURL: "https://lrclib.net", Interval: time.Minute, Batch: 10, Spacing: 2 * time.Second,
-		NotFoundRetry: 720 * time.Hour, Lease: 15 * time.Minute}
+		NotFoundRetry: 720 * time.Hour, Lease: 20 * time.Minute}
 	if err := l.validate(); err != nil {
 		t.Errorf("defaults: %v", err)
 	}
-	l.Lease = 10 * time.Minute // 3 × 10 × 22s = 11m
+	l.Lease = 18 * time.Minute // 5 × 10 × 22s = 18m20s
 	if err := l.validate(); err == nil {
-		t.Error("10m lease with the default batch passed")
+		t.Error("18m lease with the default batch passed")
+	}
+	l.Lease = 15 * time.Minute // the old default
+	if err := l.validate(); err == nil {
+		t.Error("15m lease with the default batch passed")
 	}
 }

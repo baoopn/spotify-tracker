@@ -49,38 +49,72 @@ type currentlyPlayingResponse struct {
 		URI          string       `json:"uri"`
 		ExternalURLs externalURLs `json:"external_urls"`
 	} `json:"context"`
-	Item *struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		URI         string `json:"uri"`
-		DurationMS  int32  `json:"duration_ms"`
-		Explicit    bool   `json:"explicit"`
-		TrackNumber int32  `json:"track_number"`
-		DiscNumber  int32  `json:"disc_number"`
-		ExternalIDs struct {
-			ISRC string `json:"isrc"`
-		} `json:"external_ids"`
+	Item *trackObject `json:"item"`
+}
+
+// trackObject is a Spotify track object (currently-playing item, queue entry).
+type trackObject struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	DurationMS  int32  `json:"duration_ms"`
+	Explicit    bool   `json:"explicit"`
+	TrackNumber int32  `json:"track_number"`
+	DiscNumber  int32  `json:"disc_number"`
+	ExternalIDs struct {
+		ISRC string `json:"isrc"`
+	} `json:"external_ids"`
+	ExternalURLs externalURLs `json:"external_urls"`
+	Album        struct {
+		ID           string       `json:"id"`
+		Name         string       `json:"name"`
+		ReleaseDate  string       `json:"release_date"`
+		URI          string       `json:"uri"`
 		ExternalURLs externalURLs `json:"external_urls"`
-		Album        struct {
-			ID           string       `json:"id"`
-			Name         string       `json:"name"`
-			ReleaseDate  string       `json:"release_date"`
-			URI          string       `json:"uri"`
-			ExternalURLs externalURLs `json:"external_urls"`
-			AlbumType    string       `json:"album_type"`
-			TotalTracks  int32        `json:"total_tracks"`
-			Precision    string       `json:"release_date_precision"`
-			Images       []struct {
-				URL string `json:"url"`
-			} `json:"images"`
-		} `json:"album"`
-		Artists []struct {
-			ID           string       `json:"id"`
-			Name         string       `json:"name"`
-			URI          string       `json:"uri"`
-			ExternalURLs externalURLs `json:"external_urls"`
-		} `json:"artists"`
-	} `json:"item"`
+		AlbumType    string       `json:"album_type"`
+		TotalTracks  int32        `json:"total_tracks"`
+		Precision    string       `json:"release_date_precision"`
+		Images       []struct {
+			URL string `json:"url"`
+		} `json:"images"`
+	} `json:"album"`
+	Artists []struct {
+		ID           string       `json:"id"`
+		Name         string       `json:"name"`
+		URI          string       `json:"uri"`
+		ExternalURLs externalURLs `json:"external_urls"`
+	} `json:"artists"`
+}
+
+// entry converts the track object to the domain catalog entry.
+func (it *trackObject) entry() domain.CatalogEntry {
+	e := domain.CatalogEntry{
+		Track: domain.Track{
+			ID: it.ID, Name: it.Name, URI: it.URI, ISRC: it.ExternalIDs.ISRC,
+			DurationMS: it.DurationMS, Explicit: it.Explicit, ExternalURL: it.ExternalURLs.Spotify,
+			AlbumID:     it.Album.ID,
+			TrackNumber: domain.PositiveInt32(it.TrackNumber), DiscNumber: domain.PositiveInt32(it.DiscNumber),
+		},
+		Album: domain.Album{
+			ID: it.Album.ID, Name: it.Album.Name, ReleaseDate: it.Album.ReleaseDate,
+			URI: it.Album.URI, ExternalURL: it.Album.ExternalURLs.Spotify,
+			AlbumType:            domain.NormalizeAlbumType(it.Album.AlbumType),
+			TotalTracks:          domain.PositiveInt32(it.Album.TotalTracks),
+			ReleaseDatePrecision: domain.NormalizeReleaseDatePrecision(it.Album.Precision),
+		},
+	}
+	if len(it.Album.Images) > 0 {
+		e.Album.CoverImageURL = it.Album.Images[0].URL
+	}
+	for _, a := range it.Artists {
+		if a.ID == "" {
+			continue
+		}
+		e.Artists = append(e.Artists, domain.Artist{
+			ID: a.ID, Name: a.Name, URI: a.URI, ExternalURL: a.ExternalURLs.Spotify,
+		})
+	}
+	return e
 }
 
 type externalURLs struct {
@@ -139,42 +173,19 @@ func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Play
 	if cp.Item == nil || cp.Item.ID == "" || (cp.Type != "" && cp.Type != "track") {
 		return nil, false, nil
 	}
-	it := cp.Item
+	e := cp.Item.entry()
 	pb := &domain.Playback{
-		Track: domain.Track{
-			ID: it.ID, Name: it.Name, URI: it.URI, ISRC: it.ExternalIDs.ISRC,
-			DurationMS: it.DurationMS, Explicit: it.Explicit, ExternalURL: it.ExternalURLs.Spotify,
-			AlbumID:     it.Album.ID,
-			TrackNumber: domain.PositiveInt32(it.TrackNumber), DiscNumber: domain.PositiveInt32(it.DiscNumber),
-		},
-		Album: domain.Album{
-			ID: it.Album.ID, Name: it.Album.Name, ReleaseDate: it.Album.ReleaseDate,
-			URI: it.Album.URI, ExternalURL: it.Album.ExternalURLs.Spotify,
-			AlbumType:            domain.NormalizeAlbumType(it.Album.AlbumType),
-			TotalTracks:          domain.PositiveInt32(it.Album.TotalTracks),
-			ReleaseDatePrecision: domain.NormalizeReleaseDatePrecision(it.Album.Precision),
-		},
+		Track: e.Track, Album: e.Album, Artists: e.Artists,
 		IsPlaying:  cp.IsPlaying,
 		ProgressMS: cp.ProgressMS,
 		FetchedAt:  fetchedAt,
 		PlayedAt:   fetchedAt,
-	}
-	if len(it.Album.Images) > 0 {
-		pb.Album.CoverImageURL = it.Album.Images[0].URL
 	}
 	if c := cp.Context; c != nil && c.URI != "" {
 		pb.Context = &domain.PlaybackContext{Type: c.Type, URI: c.URI, ExternalURL: c.ExternalURLs.Spotify}
 	}
 	if cp.Timestamp > 0 {
 		pb.PlayedAt = time.UnixMilli(cp.Timestamp).UTC()
-	}
-	for _, a := range it.Artists {
-		if a.ID == "" {
-			continue
-		}
-		pb.Artists = append(pb.Artists, domain.Artist{
-			ID: a.ID, Name: a.Name, URI: a.URI, ExternalURL: a.ExternalURLs.Spotify,
-		})
 	}
 	return pb, false, nil
 }

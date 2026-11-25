@@ -51,6 +51,10 @@ func run(ctx context.Context) error {
 	player := spotify.NewPlayer(tokens, "", nil)
 	p := poller.New(player, trackerv1.NewIngestServiceClient(conn), cfg.PollInterval(),
 		heartbeat.NewReporter(rdb, "poller"), log)
+	if q := cfg.QueuePrefetch; q.Enabled {
+		p.EnablePrefetch(player, poller.PrefetchConfig{Depth: q.Depth, Recheck: q.Recheck, TTL: q.TTL})
+		log.Info("queue prefetch enabled", slog.Int("depth", q.Depth))
+	}
 
 	opsSrv := ops.NewServer(cfg.OpsAddr, log)
 	opsSrv.AddCheck("poll", p.Ready)

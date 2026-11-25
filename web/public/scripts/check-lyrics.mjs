@@ -1,7 +1,14 @@
 // Now-playing lyrics helper checks, run by `pnpm check`.
 // Uses Node's built-in TypeScript type stripping to import the real helpers.
 import assert from 'node:assert/strict';
-import { availableLangs, currentIndex, interleave, lineKeys, pickLang } from '../src/lib/lyrics.ts';
+import {
+	availableLangs,
+	currentIndex,
+	interleave,
+	lineKeys,
+	lyricsState,
+	pickLang
+} from '../src/lib/lyrics.ts';
 import { estimatePositionMs } from '../src/lib/playback.ts';
 
 /** @param {number[]} starts */
@@ -89,5 +96,51 @@ assert.deepEqual(interleave('một\n\nhai', 'one\n\ntwo'), [
 	{ text: 'hai', tr: 'two' }
 ]);
 assert.equal(interleave('a\nb', 'one line'), null, 'different shapes: show below');
+
+// lyricsState: one answer for the hero's layout toggle and the lyrics panel.
+const idle = { isPending: false, isFetching: false, isError: false };
+const first = { isPending: true, isFetching: true, isError: false };
+const refetching = { isPending: false, isFetching: true, isError: false };
+const failedQ = { isPending: false, isFetching: false, isError: true };
+const retrying = { isPending: false, isFetching: true, isError: true };
+/**
+ * @param {Partial<import('../src/lib/types.ts').NowLyrics>} over
+ * @returns {import('../src/lib/types.ts').NowLyrics}
+ */
+const nl = (over) => ({
+	track_id: 't1',
+	status: 'found',
+	synced: true,
+	instrumental: false,
+	lines: lines([1000]),
+	plain: null,
+	credit: { text: 'c', url: 'u' },
+	translation: null,
+	...over
+});
+assert.equal(lyricsState(undefined, first, 't1'), 'loading', 'first fetch');
+assert.equal(lyricsState(undefined, idle, null), 'none', 'no track');
+assert.equal(lyricsState(nl({}), idle, 't1'), 'readable', 'synced lines');
+assert.equal(
+	lyricsState(nl({ synced: false, lines: [], plain: 'a\nb' }), idle, 't1'),
+	'readable',
+	'plain text'
+);
+assert.equal(
+	lyricsState(nl({ synced: true, lines: [], plain: 'a\nb' }), idle, 't1'),
+	'readable',
+	'synced but no lines: the plain text is readable'
+);
+assert.equal(lyricsState(nl({ lines: [], plain: null }), idle, 't1'), 'none', 'found, nothing');
+assert.equal(lyricsState(nl({ status: 'pending', lines: [] }), idle, 't1'), 'looking');
+assert.equal(lyricsState(nl({ status: 'instrumental', lines: [] }), idle, 't1'), 'instrumental');
+assert.equal(lyricsState(null, idle, 't1'), 'none', 'server has no lyrics');
+// Song change: the server still answers for the previous song between polls.
+assert.equal(lyricsState(nl({ track_id: 't0' }), idle, 't1'), 'loading', 'old song, between polls');
+assert.equal(lyricsState(nl({ track_id: 't0' }), refetching, 't1'), 'loading', 'old song, polling');
+assert.equal(lyricsState(undefined, failedQ, 't1'), 'failed');
+assert.equal(lyricsState(nl({ track_id: 't0' }), failedQ, 't1'), 'failed', 'old song, then error');
+assert.equal(lyricsState(undefined, retrying, 't1'), 'loading', 'retry running');
+assert.equal(lyricsState(nl({}), failedQ, 't1'), 'readable', 'a failed refetch keeps the lyrics');
 
 console.log('lyrics checks passed');

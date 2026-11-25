@@ -134,3 +134,27 @@ func TestRunOnceStopsAfterRepeatedTransientErrors(t *testing.T) {
 		t.Error("kept fetching after three failures in a row")
 	}
 }
+
+// Wake cuts the wait between batches short, never blocks, and does not
+// shorten a rate-limit pause (Run passes a nil wake channel then).
+func TestRefresherWakeCutsWait(t *testing.T) {
+	r := New(nil, nil, nil)
+	r.Wake()
+	r.Wake() // buffered once: must not block
+	done := make(chan bool, 1)
+	go func() { done <- r.waitWake(context.Background(), time.Hour, r.wake) }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("waitWake returned false")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("wake did not cut the wait short")
+	}
+	r.Wake()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if r.waitWake(ctx, time.Hour, nil) {
+		t.Fatal("a nil wake channel must not end the pause")
+	}
+}

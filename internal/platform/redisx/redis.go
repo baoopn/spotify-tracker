@@ -20,6 +20,9 @@ const (
 	// play-count rules before the listen_state table. It is only read once
 	// (when listen_state is empty) and then deleted; nothing writes it.
 	KeyPlaybackState = prefix + "playback:state"
+	// KeyUpNext holds the private "up next" list (domain.UpNext JSON) for the
+	// admin overview: the next tracks of the user's Spotify queue.
+	KeyUpNext = prefix + "playback:upnext"
 	// KeyNowPlaying caches the JSON body of GET /api/v1/now-playing.
 	KeyNowPlaying = prefix + "playback:now"
 	// ChannelPlayback is the pub/sub channel for live now-playing updates.

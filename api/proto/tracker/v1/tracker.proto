@@ -17,6 +17,12 @@ service IngestService {
 
   // ClearPlayback marks that nothing is currently playing.
   rpc ClearPlayback(ClearPlaybackRequest) returns (ClearPlaybackResponse);
+
+  // PrefetchUpcoming stores the next tracks of the user's Spotify queue
+  // (catalog only: never a play, history row, replay or play count) and
+  // starts lyrics, translation and metadata lookups for them. It also
+  // replaces the private "up next" list shown in the admin overview.
+  rpc PrefetchUpcoming(PrefetchUpcomingRequest) returns (PrefetchUpcomingResponse);
 }
 
 // EnrichmentService is called by the enricher worker.
@@ -126,6 +132,33 @@ message ClearPlaybackRequest {
 }
 
 message ClearPlaybackResponse {}
+
+// UpcomingTrack is one track of the user's Spotify queue.
+message UpcomingTrack {
+  // 0 = plays next.
+  int32 position = 1;
+  Track track = 2;
+  Album album = 3;
+  // Artists in Spotify credit order.
+  repeated Artist artists = 4;
+  // False: already prefetched recently, listed only.
+  bool prefetch = 5;
+}
+
+message PrefetchUpcomingRequest {
+  // The track playing now (excluded from the list).
+  string current_track_id = 1;
+  // At most 20; empty means the queue is empty.
+  repeated UpcomingTrack tracks = 2;
+  google.protobuf.Timestamp fetched_at = 3;
+}
+
+message PrefetchUpcomingResponse {
+  // Tracks whose catalog rows were stored and lookups started.
+  repeated string prefetched_track_ids = 1;
+  // Invalid entries dropped (no id or name).
+  int32 skipped = 2;
+}
 
 message PendingTrack {
   string track_id = 1;

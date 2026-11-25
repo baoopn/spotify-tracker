@@ -147,6 +147,10 @@ services:
       TRANSLATE_DAILY_CAP: ${TRANSLATE_DAILY_CAP:-100}
       TRANSLATE_MONTHLY_CAP: ${TRANSLATE_MONTHLY_CAP:-1000}
       TRANSLATE_MAX_ATTEMPTS: ${TRANSLATE_MAX_ATTEMPTS:-5}
+      # Queue prefetch: what the API does for upcoming queue tracks.
+      QUEUE_PREFETCH_TRANSLATE: ${QUEUE_PREFETCH_TRANSLATE:-true}
+      QUEUE_PREFETCH_ENRICH: ${QUEUE_PREFETCH_ENRICH:-false}
+      QUEUE_PREFETCH_DETAILS: ${QUEUE_PREFETCH_DETAILS:-true}
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
       - "127.0.0.1:9000:9000"
@@ -166,6 +170,11 @@ services:
     command: ["/usr/local/bin/poller"]
     environment:
       <<: *app-env
+      # Queue prefetch: read the Spotify queue and prefetch the next tracks.
+      QUEUE_PREFETCH_ENABLED: ${QUEUE_PREFETCH_ENABLED:-true}
+      QUEUE_PREFETCH_DEPTH: ${QUEUE_PREFETCH_DEPTH:-1}
+      QUEUE_PREFETCH_RECHECK: ${QUEUE_PREFETCH_RECHECK:-60s}
+      QUEUE_PREFETCH_TTL: ${QUEUE_PREFETCH_TTL:-6h}
     depends_on:
       api: { condition: service_healthy }
     healthcheck:

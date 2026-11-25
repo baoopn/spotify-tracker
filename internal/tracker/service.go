@@ -39,6 +39,8 @@ type Service struct {
 	maxAttempts int
 	playlists   PlaylistFetcher
 	onPlaying   func(trackID string)
+	onUpcoming  func(trackIDs []string)
+	prefetch    PrefetchOptions
 }
 
 // SetPlaylistFetcher enables playlist metadata lookups for played contexts.
@@ -124,22 +126,29 @@ func (s *Service) catalogKnown(ctx context.Context, trackID string) bool {
 // upsertCatalog writes artists, album and track, and ensures an enrichment
 // row. It returns true when the track should be queued for enrichment.
 func upsertCatalog(ctx context.Context, q *store.Queries, pb domain.Playback) (bool, error) {
-	ids := make([]string, 0, len(pb.Artists))
-	for _, a := range pb.Artists {
-		if err := q.UpsertArtist(ctx, a); err != nil {
-			return false, err
-		}
-		ids = append(ids, a.ID)
-	}
-	if pb.Album.ID != "" {
-		if err := q.UpsertAlbum(ctx, pb.Album); err != nil {
-			return false, err
-		}
-	}
-	if err := q.UpsertTrack(ctx, pb.Track, ids); err != nil {
+	if err := upsertCatalogEntry(ctx, q, domain.CatalogEntry{Track: pb.Track, Album: pb.Album, Artists: pb.Artists}); err != nil {
 		return false, err
 	}
 	return q.EnsureTrackFeatures(ctx, pb.Track.ID, pb.Track.ISRC)
+}
+
+// upsertCatalogEntry writes artists, album and track (catalog rows only).
+// An empty value never overwrites a stored one.
+func upsertCatalogEntry(ctx context.Context, q *store.Queries, e domain.CatalogEntry) error {
+	ids := make([]string, 0, len(e.Artists))
+	for _, a := range e.Artists {
+		if err := q.UpsertArtist(ctx, a); err != nil {
+			return err
+		}
+		ids = append(ids, a.ID)
+	}
+	if e.Album.ID != "" {
+		if err := q.UpsertAlbum(ctx, e.Album); err != nil {
+			return err
+		}
+	}
+	e.Track.AlbumID = e.Album.ID
+	return q.UpsertTrack(ctx, e.Track, ids)
 }
 
 // applyHistory appends a history row or counts a replay, per decision. A
@@ -228,6 +237,7 @@ func (s *Service) ClearPlayback(ctx context.Context, at time.Time) error {
 	if err != nil {
 		return err
 	}
+	s.clearUpcoming(ctx)
 	if changed {
 		s.publishNowPlaying(ctx)
 	}

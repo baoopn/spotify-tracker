@@ -1,5 +1,5 @@
 // Which lyrics translation to show (original, English or Vietnamese). One
-// preference for the card and the expanded view, kept across songs and
+// preference for both layouts (standard and lyrics focus), kept across songs and
 // visits; a song that lacks the chosen language shows the original.
 
 import type { LyricsLang } from './lyrics';

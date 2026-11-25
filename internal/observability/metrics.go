@@ -52,6 +52,19 @@ var (
 		Help: "Poller cycles by outcome (playing, idle, error, rate_limited).",
 	}, []string{"outcome"})
 
+	// QueueFetches counts Spotify queue reads by result (ok, empty,
+	// rate_limited, forbidden, error).
+	QueueFetches = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "queue_fetches_total",
+		Help: "Spotify queue reads for prefetch, by result.",
+	}, []string{"result"})
+
+	// PrefetchedTracks counts upcoming tracks the API prefetched.
+	PrefetchedTracks = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace, Name: "prefetched_tracks_total",
+		Help: "Upcoming queue tracks prefetched (catalog rows, lookups).",
+	})
+
 	// UpstreamRequests counts calls to third-party APIs.
 	UpstreamRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace, Name: "upstream_requests_total",

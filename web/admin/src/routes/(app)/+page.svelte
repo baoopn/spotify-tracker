@@ -5,6 +5,7 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import NowPlayingCard from '#lib/components/overview/NowPlayingCard.svelte';
+	import UpNextCard from '#lib/components/overview/UpNextCard.svelte';
 	import SpotifyTokenCard from '#lib/components/overview/SpotifyTokenCard.svelte';
 	import BackupsCard from '#lib/components/overview/BackupsCard.svelte';
 	import ServiceList from '#lib/components/overview/ServiceList.svelte';
@@ -50,9 +51,10 @@
 	</div>
 {:else}
 	<div class="grid items-start gap-8 lg:grid-cols-3">
-		<div class="lg:col-span-2">
+		<div class="min-w-0 lg:col-span-2">
 			{#if d}
 				<NowPlayingCard initial={d.now_playing} />
+				<UpNextCard upNext={d.up_next} currentTrackId={d.now_playing?.track?.id ?? null} />
 			{:else}
 				<div class="card-print flex gap-5 p-5">
 					<Skeleton class="size-32" />

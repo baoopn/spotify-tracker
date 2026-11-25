@@ -3,6 +3,7 @@
 	import ArtistLinks from './ArtistLinks.svelte';
 	import BrandIcon from './BrandIcon.svelte';
 	import ExplicitBadge from './ExplicitBadge.svelte';
+	import LayoutToggle from './LayoutToggle.svelte';
 	import NowLyrics from './NowLyrics.svelte';
 	import RelTime from './RelTime.svelte';
 	import { estimatePositionMs } from '#lib/playback.js';
@@ -12,7 +13,9 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
-	import { historyQuery, loadStatus, nowPlayingQuery } from '#lib/queries.js';
+	import { lyricsLayout } from '#lib/lyricsLayout.svelte.js';
+	import { lyricsState } from '#lib/lyrics.js';
+	import { historyQuery, loadStatus, nowLyricsQuery, nowPlayingQuery } from '#lib/queries.js';
 
 	/** A paused track this old counts as "not listening". */
 	const PAUSED_STALE_MS = 15 * 60_000;
@@ -47,6 +50,23 @@
 	const year = $derived(releaseYear(track?.album?.release_date));
 	const cover = $derived(track?.album?.cover_image_url);
 
+	// Lyrics focus layout: offered while the song has lyrics to read, they are
+	// on their way (also while the server still answers for the previous
+	// song), or the request failed (focus shows Retry). Same query and helper
+	// as NowLyrics (shared cache, one request), so the two never disagree.
+	const lyrics = createQuery(() => nowLyricsQuery(track?.id ?? null, playing));
+	const lyricsNow = $derived(
+		playing ? lyricsState(lyrics.data, lyrics, track?.id ?? null) : 'none'
+	);
+	const canFocus = $derived(
+		lyricsNow === 'loading' ||
+			lyricsNow === 'looking' ||
+			lyricsNow === 'readable' ||
+			lyricsNow === 'failed'
+	);
+	// No lyrics: the standard card, without changing the saved choice.
+	const focus = $derived(canFocus && lyricsLayout.value === 'lyrics');
+
 	// Last played, for the idle state: the newest history entry, or the stale paused track.
 	const lastPlayed = $derived(
 		history.data?.[0]
@@ -67,6 +87,123 @@
 
 {#snippet credit(label: string)}
 	<dt class="label text-ink-soft">{label}</dt>
+{/snippet}
+
+{#snippet statusRow()}
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<p class={['chip label', !playing && '[--chip:var(--spot-butter)]']}>
+			<BrandIcon name={playing ? 'now-playing' : 'paused'} tone="navy" class="size-4" />
+			{playing ? 'Now playing' : 'Paused'}
+		</p>
+		{#if canFocus}
+			<LayoutToggle
+				value={focus ? 'lyrics' : 'standard'}
+				onchange={(v) => (lyricsLayout.value = v)}
+			/>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet coverArt(cls: string)}
+	{#if track}
+		{#if albumUrl}
+			<a
+				href={albumUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="block shrink-0 rounded-brand"
+				aria-label="Album: {track.album?.name ?? track.name}, on Spotify"
+			>
+				<AlbumArt
+					src={cover}
+					alt="Album cover of {track.album?.name ?? track.name}"
+					class={cls}
+					eager
+				/>
+			</a>
+		{:else}
+			<AlbumArt
+				src={cover}
+				alt="Album cover of {track.album?.name ?? track.name}"
+				class={cls}
+				eager
+			/>
+		{/if}
+	{/if}
+{/snippet}
+
+{#snippet title(cls: string)}
+	{#if track}
+		<h3
+			class={[
+				'font-display leading-[1.05] font-semibold tracking-[-0.02em] text-balance break-words',
+				cls
+			]}
+		>
+			{#if trackUrl}
+				<a href={trackUrl} target="_blank" rel="noopener noreferrer" class="link">{track.name}</a>
+			{:else}
+				{track.name}
+			{/if}
+			{#if track.explicit}<span class="ml-1 inline-block align-middle"><ExplicitBadge /></span>{/if}
+		</h3>
+	{/if}
+{/snippet}
+
+{#snippet progress()}
+	<!-- Thin ink progress line with a dot. -->
+	<div
+		class="@container relative h-3"
+		role="progressbar"
+		aria-label="Playback progress"
+		aria-valuemin={0}
+		aria-valuemax={Math.round(durationMs / 1000)}
+		aria-valuenow={progressMs == null ? undefined : Math.round(progressMs / 1000)}
+		aria-valuetext={progressMs == null
+			? undefined
+			: `${duration(progressMs)} of ${duration(durationMs)}`}
+	>
+		<div class="absolute inset-x-0 top-1/2 h-px bg-rule-strong"></div>
+		<div
+			class="fill absolute top-1/2 left-0 h-0.5 w-full origin-left bg-ink"
+			style:transform="translateY(-50%) scaleX({ratio})"
+		></div>
+		<!-- Zero-width anchor moved with transform (compositor only); the bar is
+		     a size container, so 100cqw is the bar's width and the anchor never
+		     extends past it (only the dot's half-width can). -->
+		<div
+			class="knob pointer-events-none absolute inset-y-0 left-0 w-0"
+			style:transform="translateX(calc({ratio} * 100cqw))"
+		>
+			<div
+				class="absolute top-1/2 -left-1.5 size-3 -translate-y-1/2 rounded-full border-2 border-paper bg-ink"
+			></div>
+		</div>
+	</div>
+	<div
+		class="mt-2 flex justify-between font-mono text-xs text-ink-soft tabular-nums"
+		aria-hidden="true"
+	>
+		<span>{duration(progressMs)}</span>
+		<span>{duration(durationMs)}</span>
+	</div>
+{/snippet}
+
+{#snippet spotifyIcon()}
+	<svg viewBox="0 0 24 24" class="size-5" fill="currentColor" aria-hidden="true">
+		<path
+			d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.3-1.8-8.8-1a.6.6 0 1 1-.3-1.2c3.8-.9 7.1-.5 9.8 1.1.3.2.4.6.2.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.7-1.7-6.9-2.2-10.2-1.2a.8.8 0 1 1-.4-1.5c3.7-1.1 8.4-.6 11.5 1.4.3.2.4.7.1 1Zm.1-2.8C14.6 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.3-.9 13 1.3a.9.9 0 0 1-.9 1.6Z"
+		/>
+	</svg>
+{/snippet}
+
+{#snippet spotifyButton(cls: string)}
+	{#if trackUrl}
+		<a href={trackUrl} target="_blank" rel="noopener noreferrer" class={['btn btn-primary', cls]}>
+			{@render spotifyIcon()}
+			Listen on Spotify
+		</a>
+	{/if}
 {/snippet}
 
 <section
@@ -105,132 +242,88 @@
 				>Try again</button
 			>
 		</div>
-	{:else if track}
-		<div class="hero">
-			{#if albumUrl}
-				<a
-					href={albumUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="block rounded-brand"
-					aria-label="Album: {track.album?.name ?? track.name}, on Spotify"
-				>
-					<AlbumArt
-						src={cover}
-						alt="Album cover of {track.album?.name ?? track.name}"
-						class="print w-full rounded-brand [--print:var(--spot-now)]"
-						eager
-					/>
-				</a>
-			{:else}
-				<AlbumArt
-					src={cover}
-					alt="Album cover of {track.album?.name ?? track.name}"
-					class="print w-full rounded-brand [--print:var(--spot-now)]"
-					eager
-				/>
-			{/if}
-
-			<div class="min-w-0">
-				<p class={['chip label', !playing && '[--chip:var(--spot-butter)]']}>
-					<BrandIcon name={playing ? 'now-playing' : 'paused'} tone="navy" class="size-4" />
-					{playing ? 'Now playing' : 'Paused'}
-				</p>
-
-				<h3
-					class="mt-5 font-display text-4xl leading-[1.05] font-semibold tracking-[-0.02em] text-balance break-words sm:text-5xl lg:text-6xl"
-				>
-					{#if trackUrl}
-						<a href={trackUrl} target="_blank" rel="noopener noreferrer" class="link"
-							>{track.name}</a
-						>
-					{:else}
-						{track.name}
-					{/if}
-					{#if track.explicit}<span class="ml-1 inline-block align-middle"><ExplicitBadge /></span
-						>{/if}
-				</h3>
-
-				<p class="mt-3 text-lg font-medium break-words sm:text-xl">
-					<ArtistLinks artists={track.artists} />
-				</p>
-
-				<dl
-					class="mt-6 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 border-t border-rule pt-4 text-sm"
-				>
-					{#if track.album}
-						{@render credit('Album')}
-						<dd class="min-w-0 break-words">
-							{#if albumUrl}
-								<a href={albumUrl} target="_blank" rel="noopener noreferrer" class="link"
-									>{track.album.name}</a
-								>
-							{:else}
-								{track.album.name}
-							{/if}
-						</dd>
-					{/if}
-					{#if year}
-						{@render credit('Year')}
-						<dd class="font-mono tabular-nums">{year}</dd>
-					{/if}
-					{@render credit('Length')}
-					<dd class="font-mono tabular-nums">{duration(durationMs)}</dd>
-				</dl>
-
-				<!-- Thin ink progress line with a dot. -->
-				<div class="mt-6">
-					<div
-						class="@container relative h-3"
-						role="progressbar"
-						aria-label="Playback progress"
-						aria-valuemin={0}
-						aria-valuemax={Math.round(durationMs / 1000)}
-						aria-valuenow={progressMs == null ? undefined : Math.round(progressMs / 1000)}
-						aria-valuetext={progressMs == null
-							? undefined
-							: `${duration(progressMs)} of ${duration(durationMs)}`}
-					>
-						<div class="absolute inset-x-0 top-1/2 h-px bg-rule-strong"></div>
-						<div
-							class="fill absolute top-1/2 left-0 h-0.5 w-full origin-left bg-ink"
-							style:transform="translateY(-50%) scaleX({ratio})"
-						></div>
-						<!-- Zero-width anchor moved with transform (compositor only); the
-						     bar is a size container, so 100cqw is the bar's width and the
-						     anchor never extends past it (only the dot's half-width can). -->
-						<div
-							class="knob pointer-events-none absolute inset-y-0 left-0 w-0"
-							style:transform="translateX(calc({ratio} * 100cqw))"
-						>
-							<div
-								class="absolute top-1/2 -left-1.5 size-3 -translate-y-1/2 rounded-full border-2 border-paper bg-ink"
-							></div>
+	{:else if track && np}
+		<!-- One status row for both layouts: the same node at the same place,
+		     so the layout toggle never moves and keeps keyboard focus. -->
+		<div class="mb-6">{@render statusRow()}</div>
+		{#if focus}
+			<!-- Lyrics focus: a compact, sticky now-playing column; the lyrics take
+			     the main area. Stacks below lg (header row, then the lyrics). -->
+			<div class="focus-hero">
+				<div class="min-w-0 lg:sticky lg:top-6">
+					<div class="flex items-center gap-4 lg:block">
+						{@render coverArt(
+							'print size-20 rounded-[12px] [--print:var(--spot-now)] sm:size-24 lg:size-auto lg:w-full lg:max-w-[min(16rem,32svh)] lg:rounded-brand'
+						)}
+						<div class="min-w-0 flex-1 lg:mt-5">
+							{@render title('text-xl sm:text-2xl lg:text-3xl')}
+							<p class="mt-1 truncate font-medium lg:mt-2 lg:text-lg lg:whitespace-normal">
+								<ArtistLinks artists={track.artists} />
+							</p>
 						</div>
+						{#if trackUrl}
+							<!-- Phones and tablets: the full button sits in the column on lg. -->
+							<a
+								href={trackUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="btn btn-primary btn-icon shrink-0 lg:hidden"
+								aria-label="Listen on Spotify"
+								title="Listen on Spotify"
+							>
+								{@render spotifyIcon()}
+							</a>
+						{/if}
 					</div>
-					<div
-						class="mt-2 flex justify-between font-mono text-xs text-ink-soft tabular-nums"
-						aria-hidden="true"
-					>
-						<span>{duration(progressMs)}</span>
-						<span>{duration(durationMs)}</span>
-					</div>
+					<div class="mt-4 lg:mt-6">{@render progress()}</div>
+					{@render spotifyButton('mt-6 hidden lg:inline-flex')}
 				</div>
-
-				{#if playing && np}<NowLyrics {np} />{/if}
-
-				{#if trackUrl}
-					<a href={trackUrl} target="_blank" rel="noopener noreferrer" class="btn btn-primary mt-7">
-						<svg viewBox="0 0 24 24" class="size-5" fill="currentColor" aria-hidden="true">
-							<path
-								d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.3-1.8-8.8-1a.6.6 0 1 1-.3-1.2c3.8-.9 7.1-.5 9.8 1.1.3.2.4.6.2.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.7-1.7-6.9-2.2-10.2-1.2a.8.8 0 1 1-.4-1.5c3.7-1.1 8.4-.6 11.5 1.4.3.2.4.7.1 1Zm.1-2.8C14.6 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.3-.9 13 1.3a.9.9 0 0 1-.9 1.6Z"
-							/>
-						</svg>
-						Listen on Spotify
-					</a>
-				{/if}
+				<div class="min-w-0">
+					<NowLyrics {np} focus />
+				</div>
 			</div>
-		</div>
+		{:else}
+			<div class="hero">
+				{@render coverArt('print w-full rounded-brand [--print:var(--spot-now)]')}
+
+				<div class="min-w-0">
+					{@render title('text-4xl sm:text-5xl lg:text-6xl')}
+
+					<p class="mt-3 text-lg font-medium break-words sm:text-xl">
+						<ArtistLinks artists={track.artists} />
+					</p>
+
+					<dl
+						class="mt-6 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 border-t border-rule pt-4 text-sm"
+					>
+						{#if track.album}
+							{@render credit('Album')}
+							<dd class="min-w-0 break-words">
+								{#if albumUrl}
+									<a href={albumUrl} target="_blank" rel="noopener noreferrer" class="link"
+										>{track.album.name}</a
+									>
+								{:else}
+									{track.album.name}
+								{/if}
+							</dd>
+						{/if}
+						{#if year}
+							{@render credit('Year')}
+							<dd class="font-mono tabular-nums">{year}</dd>
+						{/if}
+						{@render credit('Length')}
+						<dd class="font-mono tabular-nums">{duration(durationMs)}</dd>
+					</dl>
+
+					<div class="mt-6">{@render progress()}</div>
+
+					{#if playing && np}<NowLyrics {np} />{/if}
+
+					{@render spotifyButton('mt-7')}
+				</div>
+			</div>
+		{/if}
 	{:else}
 		<div class="hero">
 			<img
@@ -299,6 +392,18 @@
 		}
 		.hero > :global(:first-child) {
 			max-width: none;
+		}
+	}
+	/* Lyrics focus: a narrow now-playing column next to the lyrics. */
+	.focus-hero {
+		display: grid;
+		gap: 1.5rem;
+	}
+	@media (min-width: 64rem) {
+		.focus-hero {
+			grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
+			gap: 3rem;
+			align-items: start;
 		}
 	}
 	/* Moved every frame from script: no CSS transition (it would lag behind and

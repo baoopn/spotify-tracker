@@ -395,7 +395,10 @@ func (q *Queries) Summary(ctx context.Context, r domain.Range) (domain.Summary, 
 	return s, nil
 }
 
-// TrackDetail returns a track with features and play counters.
+// TrackDetail returns a track with features and play counters (public). A
+// track is found once it has a play or while it is the current track (a
+// first play counts only after 30%); a track only prefetched from the queue,
+// or skipped before it counted, is not found, so the queue cannot be probed.
 func (q *Queries) TrackDetail(ctx context.Context, id string) (domain.TrackDetail, error) {
 	var d domain.TrackDetail
 	var al albumScan
@@ -403,7 +406,8 @@ func (q *Queries) TrackDetail(ctx context.Context, id string) (domain.TrackDetai
 			(SELECT COALESCE(SUM(replay_count), 0)::bigint FROM listening_history WHERE track_id = t.id),
 			(SELECT MAX(played_at) FROM listening_history WHERE track_id = t.id)
 		FROM tracks t LEFT JOIN albums al ON al.id = t.album_id
-		WHERE t.id = $1`, id).
+		WHERE t.id = $1 AND (EXISTS (SELECT 1 FROM listening_history h WHERE h.track_id = t.id)
+			OR t.id = (SELECT cp.track_id FROM current_playback cp))`, id).
 		Scan(append(append(scanTrack(&d.TrackView), al.targets()...), &d.Plays, &d.LastPlayed)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, domain.ErrNotFound

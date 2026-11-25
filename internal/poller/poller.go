@@ -40,6 +40,11 @@ type Poller struct {
 	log      *slog.Logger
 
 	lastSuccess atomic.Int64 // unix nanos
+	// pauseUntil (unix nanos) holds queue reads back after the main poll was
+	// rate limited (Spotify limits are app wide). It only moves forward
+	// (holdUntil); the main loop waits out its own 429 itself.
+	pauseUntil  atomic.Int64
+	prefetch    *prefetcher // nil = queue prefetch off
 	wasPlaying  bool
 	lastTrackID string
 }
@@ -90,6 +95,7 @@ func (p *Poller) Run(ctx context.Context) error {
 		case errors.As(err, &rl):
 			observability.PollCycles.WithLabelValues("rate_limited").Inc()
 			wait = max(rl.RetryAfter, p.interval)
+			p.holdUntil(time.Now().Add(wait))
 			p.log.Warn("spotify rate limited; backing off",
 				slog.Duration("retry_after", wait), slog.String("reason", rl.Reason))
 		case errors.Is(err, grpcapi.ErrSpotifyAuth):
@@ -128,6 +134,9 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 			p.log.Info("nothing playing")
 		}
 		p.wasPlaying, p.lastTrackID = false, ""
+		if p.prefetch != nil {
+			p.prefetch.idle()
+		}
 		return "idle", nil
 	}
 
@@ -146,5 +155,19 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 			slog.String("state", state), slog.Bool("history_created", res.GetHistoryCreated()))
 	}
 	p.wasPlaying, p.lastTrackID = pb.IsPlaying, pb.Track.ID
+	if p.prefetch != nil && pb.IsPlaying {
+		p.prefetch.kick(ctx, pb.Track.ID)
+	}
 	return state + ": " + pb.Track.Name, nil
+}
+
+// holdUntil pauses queue reads until t; it never shortens a pause.
+func (p *Poller) holdUntil(t time.Time) {
+	n := t.UnixNano()
+	for {
+		cur := p.pauseUntil.Load()
+		if n <= cur || p.pauseUntil.CompareAndSwap(cur, n) {
+			return
+		}
+	}
 }

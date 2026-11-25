@@ -147,6 +147,44 @@ func (s *ingestServer) ClearPlayback(ctx context.Context, req *trackerv1.ClearPl
 	return &trackerv1.ClearPlaybackResponse{}, nil
 }
 
+// maxUpcoming is the most queue entries PrefetchUpcoming accepts.
+const maxUpcoming = 20
+
+func (s *ingestServer) PrefetchUpcoming(ctx context.Context, req *trackerv1.PrefetchUpcomingRequest) (*trackerv1.PrefetchUpcomingResponse, error) {
+	items, skipped, err := upcomingFromRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	var at time.Time
+	if req.GetFetchedAt() != nil {
+		at = req.GetFetchedAt().AsTime()
+	}
+	ids, err := s.svc.PrefetchUpcoming(ctx, req.GetCurrentTrackId(), items, at)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &trackerv1.PrefetchUpcomingResponse{PrefetchedTrackIds: ids, Skipped: skipped}, nil
+}
+
+// upcomingFromRequest validates a PrefetchUpcoming request: at most
+// maxUpcoming entries; entries without a track id or name are dropped and
+// counted.
+func upcomingFromRequest(req *trackerv1.PrefetchUpcomingRequest) ([]domain.Upcoming, int32, error) {
+	if len(req.GetTracks()) > maxUpcoming {
+		return nil, 0, status.Errorf(codes.InvalidArgument, "at most %d tracks", maxUpcoming)
+	}
+	var skipped int32
+	items := make([]domain.Upcoming, 0, len(req.GetTracks()))
+	for _, t := range req.GetTracks() {
+		if t.GetTrack().GetId() == "" || t.GetTrack().GetName() == "" {
+			skipped++
+			continue
+		}
+		items = append(items, UpcomingFromProto(t))
+	}
+	return items, skipped, nil
+}
+
 // ─── EnrichmentService ────────────────────────────────────────────────────────
 
 type enrichmentServer struct {

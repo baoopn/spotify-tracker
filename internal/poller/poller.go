@@ -40,8 +40,9 @@ type Poller struct {
 	log      *slog.Logger
 
 	lastSuccess atomic.Int64 // unix nanos
-	// pauseUntil (unix nanos) holds every Spotify call back after a rate
-	// limit on another endpoint (the limit is app wide).
+	// pauseUntil (unix nanos) holds queue reads back after the main poll was
+	// rate limited (Spotify limits are app wide). It only moves forward
+	// (holdUntil); the main loop waits out its own 429 itself.
 	pauseUntil  atomic.Int64
 	prefetch    *prefetcher // nil = queue prefetch off
 	wasPlaying  bool

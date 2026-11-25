@@ -206,7 +206,7 @@ The token is never logged or audited.
 | GET | `/admin/api/lyrics/translation-queue` | – | `TranslationQueue` (see [Lyrics](#lyrics)) |
 | POST | `/admin/api/tracks/{id}/translation/requeue` | – | `202 { queued: true }`; `404 no_lyrics` when the track has no found lyrics |
 | GET | `/admin/api/lyrics/queue` | – | `LyricsQueue` (see [Lyrics](#lyrics)) |
-| POST | `/admin/api/tracks/{id}/lyrics/requeue` | – | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist |
+| POST | `/admin/api/tracks/{id}/lyrics/requeue` | – | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist; `409 lyrics_disabled` while `LYRICS_ENABLED` is false |
 | GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
@@ -267,6 +267,7 @@ type TrackLyrics = {
   queued: boolean;           // waiting for a lookup worker (pending, re-queued, or a retry that is due)
   looking_up: boolean;       // a lookup worker holds the track now (lease)
   requested_at: string | null; // an admin re-queue that has not finished
+  lookup_enabled: boolean;   // LYRICS_ENABLED; when false, queued / looking_up / waiting are false
   translation: TrackTranslation | null; // only when status is found
 };
 type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
@@ -304,7 +305,7 @@ type LyricsQueue = {         // exclusive counts: a queued or leased track count
   enabled: boolean;          // LYRICS_ENABLED
   queued: number;            // waiting for a worker, requested and backlog included
   requested: number;         // of queued: re-queued by an admin
-  backlog: number;           // of queued: never looked up (no row yet)
+  backlog: number;           // of queued: never looked up (no row yet, or a pending row)
   in_progress: number;       // leased by a worker now
   found: number; instrumental: number;
   not_found: number;         // retry scheduled

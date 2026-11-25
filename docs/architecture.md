@@ -188,10 +188,13 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   inserts a `pending` row for the tracks with no row that come next in line
   (at most one batch, tracks with a title and an artist), then leases rows
   with `SELECT ... FOR UPDATE SKIP LOCKED` (`claimed_by` / `claimed_until`,
-  `LYRICS_LEASE`, 10 min). So API replicas never look up the same track, and
-  a crashed worker's claim expires and is taken again. A row is claimable
-  when no live lease holds it and it is `pending`, re-queued
-  (`requested_at`), or a `not_found` / `error` retry that is due.
+  `LYRICS_LEASE`, 10 min, at least twice one batch). So API replicas never
+  look up the same track, and a crashed worker's claim expires and is taken
+  again. The pending rows are inserted in id order, so replicas inserting the
+  same tracks cannot deadlock. A row is claimable when no live lease holds it
+  and it is `pending`, re-queued (`requested_at`, or `claim_requested_at`
+  left by a worker that crashed: the re-queue survives), or its retry is due
+  (`next_attempt_at`).
 - **Order.** The song playing now, then the upcoming songs from
   [queue prefetch](#queue-prefetch) (`array_position` over the priority
   list), then admin re-queues (newest first), then by last play (most recent
@@ -200,7 +203,8 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   (LRCLIB is free). A new song playing (`Wake`) or an admin re-queue
   (`Nudge`) stops a running batch: its other claims are released and the
   next batch claims again at once. A new upcoming list waits for the batch to
-  end.
+  end. During a pause (rate limit, bad batches) the refresher waits at least
+  the interval and no wake cuts it short.
 - **Claims.** Results (`SetLyrics`) and deferrals (`DeferLyrics`) are written
   only while the worker holds the claim; a result after a lost lease is
   dropped. A rate limit, a stop after three transient errors, a new song and
@@ -226,7 +230,11 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   timestamps; a record with no lyrics text left is `instrumental`.
 - **States.** `pending` waits for its first lookup (`fetched_at` null).
   `found` and `instrumental` are final (never overwritten by a later failure
-  or not-found; only a successful re-lookup replaces them). `not_found` is retried after `LYRICS_NOT_FOUND_RETRY`
+  or not-found; only a successful re-lookup replaces them). A failed
+  re-lookup keeps them and is retried with the error backoff
+  (`next_attempt_at`, `attempts` counts failed re-lookups); a re-lookup that
+  finds nothing keeps them and ends. `last_error` is always the last
+  lookup's. `not_found` is retried after `LYRICS_NOT_FOUND_RETRY`
   (30 days). A transient error (5xx, 408, timeout, network, decode) or a
   failed database write is retried after 1 h, doubling per error in a row up
   to 7 days (`attempts` restarts at 1 when the status changes, so monthly
@@ -241,8 +249,11 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   `admin_requeue_lyrics`) puts a track at the front whatever its status:
   not looked up, `not_found`, `error`, or `found` (stale lyrics are fetched
   again). Stored lyrics stay served until the new lookup, and the error
-  backoff restarts. `GET /admin/api/lyrics/queue` (MCP `admin_lyrics_queue`)
-  counts the queue (queued, re-queued, never looked up, in progress, found,
+  backoff restarts. While `LYRICS_ENABLED` is false the re-queue answers
+  `409 lyrics_disabled`, and the admin hides "Look up again" and shows
+  nothing as queued (`lookup_enabled` in `TrackLyrics`). `GET /admin/api/lyrics/queue` (MCP `admin_lyrics_queue`)
+  counts the queue (queued, re-queued, never looked up (no row or a pending
+  row), in progress, found,
   instrumental, not found, failed), the next retry and the last lookup. The
   admin track page and the overview's now-playing lyrics show the state
   (Queued, Looking up…, Not found / next try, Lookup failed) and a "Look up
@@ -282,7 +293,8 @@ public page the full lyrics of the song playing now, and of no other song:
   (no text). Pending follows the lookup queue and always ends: no lookup yet
   (no row, or `pending`) while the lyrics fetcher runs (`LYRICS_ENABLED`), a
   re-queued or leased track without stored lyrics, or a not-found or failed
-  lookup retried within two minutes; otherwise the answer is null. Found or
+  lookup retried within two minutes; otherwise the answer is null. A track
+  with no title or artist is never looked up, so it is never pending. Found or
   instrumental lyrics are served while a fresh lookup is queued. The page shows "Looking for
   lyrics…" and asks again every 10 s while lyrics or their translation are
   pending, every 30 s while the answer is null, and stops once both are
@@ -348,7 +360,8 @@ now-playing lyrics and in the admin.
   so a new song gets lyrics and then a translation within about a minute.
 - **Leases.** The worker claims one song at a time with
   `UPDATE ... FOR UPDATE SKIP LOCKED` and a lease (`claimed_by`,
-  `claimed_until`, `TRANSLATE_LEASE`, 10 min). Results are written only while
+  `claimed_until`, `TRANSLATE_LEASE`, 10 min; a re-queue taken by a claim
+  whose worker crashed stays re-queued through `claim_requested_at`). Results are written only while
   the claim is held and the lyrics still match the hash they were read with
   (`source_hash`); a crashed worker's lease expires and the song is claimed
   again. So API replicas never translate the same song twice. A re-queue

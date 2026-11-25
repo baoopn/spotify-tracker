@@ -9,6 +9,7 @@
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear } from '#lib/format.js';
 	import { NowPlayingStream, snapshot } from '#lib/now-playing.svelte.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import type { NowPlaying } from '#lib/types.js';
 
 	let { initial }: { initial: NowPlaying | null } = $props();
@@ -58,12 +59,18 @@
 			/>
 			<div class="min-w-0 flex-1">
 				<p
-					class="font-display text-3xl leading-tight font-semibold tracking-tight text-ink"
+					lang={scriptLang(track.name)}
+					class="font-lyrics text-3xl leading-snug font-semibold tracking-tight text-ink"
 					title={track.name}
 				>
 					<span class="line-clamp-2">{track.name}</span>
 				</p>
-				<p class="mt-1 truncate text-base text-ink">{artistNames(track.artists)}</p>
+				<p
+					class="mt-1 truncate font-lyrics text-base text-ink"
+					lang={scriptLang(artistNames(track.artists))}
+				>
+					{artistNames(track.artists)}
+				</p>
 				{#if track.album?.name}
 					<p class="truncate font-mono text-xs text-ink-soft">
 						{track.album.name}{#if track.album.release_date}

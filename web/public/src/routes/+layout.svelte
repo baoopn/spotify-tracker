@@ -2,6 +2,9 @@
 	import '@fontsource-variable/inter';
 	import '@fontsource-variable/outfit';
 	import '@fontsource-variable/jetbrains-mono';
+	// Lyrics font (--font-lyrics); the CJK faces load on demand (#lib/lyricsFonts).
+	import '@fontsource-variable/noto-sans';
+	import '@fontsource-variable/noto-sans-thai';
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { QueryClientProvider } from '@tanstack/svelte-query';

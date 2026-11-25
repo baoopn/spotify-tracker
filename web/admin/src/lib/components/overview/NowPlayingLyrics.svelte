@@ -12,6 +12,7 @@
 	import { activeIndex, parseLrc } from '#lib/lrc.js';
 	import type { Snapshot } from '#lib/now-playing.svelte.js';
 	import { queries } from '#lib/queries.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
 	let {
@@ -101,7 +102,7 @@
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="relative max-h-80 overflow-y-auto py-2 text-base leading-relaxed"
+			class="relative max-h-80 overflow-y-auto py-2 font-lyrics text-base leading-relaxed"
 			onwheel={userScrolled}
 			onpointerdown={userScrolled}
 			ontouchmove={userScrolled}
@@ -111,6 +112,7 @@
 				<p
 					data-i={i}
 					dir="auto"
+					lang={scriptLang(line.text)}
 					aria-current={i === active ? 'true' : undefined}
 					class={[
 						'lyric-line py-0.5',
@@ -132,17 +134,17 @@
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="max-h-80 overflow-y-auto text-sm leading-relaxed text-ink"
+			class="max-h-80 overflow-y-auto font-lyrics text-sm leading-relaxed text-ink"
 		>
 			{#if trPairs}
 				{#each trPairs as p, i (i)}
-					<p class="min-h-[1lh]" dir="auto">
+					<p class="min-h-[1lh]" dir="auto" lang={scriptLang(p.text)}>
 						{p.text}
 						{#if p.tr}<span class="block opacity-75" {lang}>{p.tr}</span>{/if}
 					</p>
 				{/each}
 			{:else}
-				<div class="whitespace-pre-line">{plain}</div>
+				<div class="whitespace-pre-line" lang={scriptLang(plain)}>{plain}</div>
 				{#if trText}
 					<p class="eyebrow mt-4 mb-1 text-ink-soft" {lang}>
 						{lang === 'vi' ? 'Bản dịch tiếng Việt' : 'English translation'}

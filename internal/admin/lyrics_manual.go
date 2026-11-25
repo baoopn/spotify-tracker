@@ -88,7 +88,11 @@ func (a *API) putLyrics(w http.ResponseWriter, r *http.Request) {
 	var req manualLyricsRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxManualBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	err := dec.Decode(&req)
+	if err == nil {
+		err = noTrailing(dec)
+	}
+	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "the request body is too large")
@@ -113,6 +117,10 @@ func (a *API) putLyrics(w http.ResponseWriter, r *http.Request) {
 		lyricsError(w, code, msg, lines)
 		return
 	}
+	if err := a.keepStoredText(r, id, &l); err != nil {
+		a.internal(w, r, err)
+		return
+	}
 	actor := "system"
 	if u, ok := UserFrom(r.Context()); ok {
 		actor = u.Email
@@ -133,7 +141,7 @@ func (a *API) putLyrics(w http.ResponseWriter, r *http.Request) {
 		a.audit(r, "lyrics.manual_set", map[string]any{"track_id": id, "status": l.Status,
 			"synced": l.Synced != "", "retranslate": retranslate})
 	}
-	a.writeTrackLyrics(w, r, id, true)
+	a.writeTrackLyrics(w, r, id, true, "")
 }
 
 // clearManualLyrics serves DELETE /tracks/{id}/lyrics/manual: removes the
@@ -153,7 +161,11 @@ func (a *API) clearManualLyrics(w http.ResponseWriter, r *http.Request) {
 		a.LyricsNudge()
 	}
 	a.audit(r, "lyrics.manual_cleared", map[string]string{"track_id": id})
-	a.writeTrackLyrics(w, r, id, true)
+	msg := "LRCLIB is asked for the lyrics again."
+	if !a.LyricsLookup {
+		msg = "No lookup will run: the lyrics fetcher is off (LYRICS_ENABLED=false)."
+	}
+	a.writeTrackLyrics(w, r, id, true, msg)
 }
 
 // requeueLyricsRequest is the optional body of POST /tracks/{id}/lyrics/requeue.
@@ -169,10 +181,12 @@ func decodeRequeue(r *http.Request) (requeueLyricsRequest, error) {
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(&req); errors.Is(err, io.EOF) {
+		return req, nil // empty body
+	} else if err != nil {
 		return req, err
 	}
-	return req, nil
+	return req, noTrailing(dec)
 }
 
 // requeueLyrics serves POST /tracks/{id}/lyrics/requeue: the track's lyrics
@@ -215,4 +229,50 @@ func (a *API) requeueLyrics(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r, "lyrics.requeued", detail)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+// errTrailing is a JSON body with more after its object.
+var errTrailing = errors.New("unexpected data after the JSON object")
+
+// noTrailing fails when the body holds anything after the decoded value.
+func noTrailing(dec *json.Decoder) error {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return err
+		}
+		return errTrailing
+	}
+	return nil
+}
+
+// keepStoredText swaps in the stored texts when l only differs from them by
+// normalization (trailing spaces, line breaks, BOM): saving LRCLIB lyrics
+// unedited keeps the lyrics hash, so no translation is redone.
+func (a *API) keepStoredText(r *http.Request, id string, l *domain.Lyrics) error {
+	if l.Status != domain.LyricsFound {
+		return nil
+	}
+	cur, err := a.lyricsDB().TrackLyrics(r.Context(), id, true, store.TranslationCaps{})
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if cur.Status != domain.LyricsFound {
+		return nil
+	}
+	plain, synced := deref(cur.Plain), deref(cur.Synced)
+	if lrc.Normalize(synced) == l.Synced && lrc.Normalize(plain) == l.Plain {
+		l.Synced, l.Plain = synced, plain
+	}
+	return nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

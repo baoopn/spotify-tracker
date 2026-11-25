@@ -113,7 +113,7 @@ func TestManualLyricsTools(t *testing.T) {
 	set := findTool(t, adminTools, "admin_set_lyrics")
 	args := map[string]any{"id": "t 1", "synced": "[00:01.00] a  \n", "instrumental": false}
 	u, err := set.target("/admin/api", args)
-	if err != nil || u != "/admin/api/tracks/t%201/lyrics" || set.method != "PUT" || set.destructive {
+	if err != nil || u != "/admin/api/tracks/t%201/lyrics" || set.method != "PUT" || !set.destructive {
 		t.Errorf("set = %s %s, %v", set.method, u, err)
 	}
 	if got := string(set.body(args)); got != `{"instrumental":false,"synced":"[00:01.00] a  \n"}` {
@@ -128,6 +128,9 @@ func TestManualLyricsTools(t *testing.T) {
 		t.Errorf("clear = %s %s, %v", clr.method, u, err)
 	}
 	rq := findTool(t, adminTools, "admin_requeue_lyrics")
+	if !rq.destructive {
+		t.Error("admin_requeue_lyrics can replace manual lyrics: it must be marked destructive")
+	}
 	if got := string(rq.body(map[string]any{"id": "x", "replace_manual": true})); got != `{"replace_manual":true}` {
 		t.Errorf("requeue body = %s", got)
 	}

@@ -90,9 +90,11 @@ var mcpUser = User{ID: "mcp", Email: "mcp", Name: "MCP"}
 // public router. Lyrics (track lyrics and lyrics search) are served here, so
 // they reach admin-token MCP callers only. The only write routes are the
 // translation and lyrics re-queues (POST /tracks/{id}/translation/requeue,
-// POST /tracks/{id}/lyrics/requeue), which only reorder those queues, and
-// the manual lyrics routes (PUT /tracks/{id}/lyrics, DELETE
-// /tracks/{id}/lyrics/manual; audited as the "mcp" actor). Other write routes, /settings/email (SMTP
+// POST /tracks/{id}/lyrics/requeue; the lyrics re-queue with replace_manual
+// lets LRCLIB replace lyrics added by hand), and the manual lyrics routes
+// (PUT /tracks/{id}/lyrics replaces the stored lyrics, DELETE
+// /tracks/{id}/lyrics/manual deletes manual ones). All are audited as the
+// "mcp" actor. Other write routes, /settings/email (SMTP
 // settings), /auth/me, /audit, /config and the /mcp settings (token minting)
 // are left out on purpose.
 func ReadOnlyHandler(a *API) http.Handler {

@@ -42,11 +42,12 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_synced", "synced must be true or false")
 		return
 	}
-	a.writeTrackLyrics(w, r, chi.URLParam(r, "id"), withSynced)
+	a.writeTrackLyrics(w, r, chi.URLParam(r, "id"), withSynced, "")
 }
 
-// writeTrackLyrics answers the lyrics record of track id.
-func (a *API) writeTrackLyrics(w http.ResponseWriter, r *http.Request, id string, withSynced bool) {
+// writeTrackLyrics answers the lyrics record of track id, with message (a
+// note for the admin, left out when empty).
+func (a *API) writeTrackLyrics(w http.ResponseWriter, r *http.Request, id string, withSynced bool, message string) {
 	caps := store.TranslationCaps{Daily: a.Translation.DailyCap, Monthly: a.Translation.MonthlyCap}
 	l, err := a.lyricsDB().TrackLyrics(r.Context(), id, withSynced, caps)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -68,7 +69,10 @@ func (a *API) writeTrackLyrics(w http.ResponseWriter, r *http.Request, id string
 			l.Translation = nil
 		}
 	}
-	writeJSON(w, http.StatusOK, l)
+	writeJSON(w, http.StatusOK, struct {
+		store.TrackLyrics
+		Message string `json:"message,omitempty"`
+	}{l, message})
 }
 
 // searchLyrics serves GET /lyrics/search?q=&limit=.

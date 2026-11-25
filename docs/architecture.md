@@ -328,7 +328,10 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   (a track with no title or artist loses its row). The admin track page has
   an editor (Synced (LRC) and Plain tabs, live preview with per-line errors
   from the same rules in `src/lib/lrc.ts`, Instrumental, a local
-  "Import .lrc file") and shows the source as "Added by you".
+  "Import .lrc file") and shows the source as "Added by you". Saving LRCLIB
+  lyrics unedited keeps their hash: the editor prefills and sends LRCLIB's
+  plain text, and the API keeps the stored bytes when the new text differs
+  only by normalization, so no translation is redone.
 - **Search.** `search_tsv` is a stored generated column,
   `to_tsvector('simple', search_fold(plain_lyrics))`, with a GIN index. The
   `simple` configuration fits Vietnamese (space-separated syllables, no
@@ -710,11 +713,17 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   `admin_search_lyrics` (q, limit), `admin_translation_queue`,
   `admin_requeue_translation` (id), `admin_lyrics_queue`, `admin_requeue_lyrics`
   (id, replace_manual), `admin_set_lyrics` (id, synced, plain, instrumental)
-  and `admin_clear_manual_lyrics` (id; destructive). These four are the only
-  write tools: the re-queues only reorder the translation and lyrics queues,
-  the other two store or remove lyrics added by hand. They are marked not
-  read-only, send their non-path arguments as a JSON body (strings
-  untrimmed), and are audited as `translation.requeued` / `lyrics.requeued` /
+  and `admin_clear_manual_lyrics` (id). These four are the only write tools.
+  `admin_requeue_translation` only reorders the translation queue.
+  `admin_requeue_lyrics` reorders the lookup queue, and with
+  `replace_manual` lets LRCLIB replace lyrics added by hand.
+  `admin_set_lyrics` replaces the stored lyrics, and
+  `admin_clear_manual_lyrics` deletes lyrics added by hand. The last three are
+  marked destructive (the MCP hint is per tool, not per argument, so the
+  lyrics re-queue is marked for its replace_manual case). All four are marked
+  not read-only, send their non-path arguments as a JSON body (strings
+  untrimmed; the schema's `maxLength` counts characters, the API caps each
+  lyrics text at 200 000 bytes and answers `too_large` above it), and are audited as `translation.requeued` / `lyrics.requeued` /
   `lyrics.manual_set` / `lyrics.manual_cleared` by the MCP actor; LRC line
   errors are part of the tool error text,
   `admin_artists` (q, sort, order, limit,

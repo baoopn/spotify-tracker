@@ -65,6 +65,9 @@ func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool, 
 		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true, Queued: true, LookingUp: true}, nil
 	}
 	p := "line"
+	if f.curPlain != "" {
+		p = f.curPlain
+	}
 	out := store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}
 	if f.tr != nil {
 		c := *f.tr

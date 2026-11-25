@@ -23,6 +23,7 @@ type manualFake struct {
 	unchanged   bool // SetManualLyrics reports stored = false
 	retranslate bool
 	cleared     []string
+	curPlain    string // stored plain text TrackLyrics returns ("" = "line")
 }
 
 func (f *manualFake) SetManualLyrics(_ context.Context, id string, l domain.Lyrics, by string) (bool, bool, error) {
@@ -209,5 +210,67 @@ func TestRequeueManualLyrics(t *testing.T) {
 	}
 	if len(aud.calls) != 1 || aud.calls[0].detail["replace_manual"] != true {
 		t.Errorf("audit = %+v", aud.calls)
+	}
+}
+
+// A body with anything after its JSON object is refused.
+func TestManualLyricsTrailingJSON(t *testing.T) {
+	f := &fakeLyrics{manualFake: manualFake{duration: 200_000}}
+	a := lyricsAPI(f)
+	a.auditor = &fakeAuditor{}
+	a.LyricsLookup = true
+	h := ReadOnlyHandler(a)
+	for _, body := range []string{`{"plain":"a"} {"plain":"b"}`, `{"plain":"a"}x`} {
+		if rec := send(h, http.MethodPut, "/tracks/t1/lyrics", body); rec.Code != http.StatusBadRequest ||
+			lyricsErrCode(rec) != "invalid_body" || len(f.set) != 0 {
+			t.Errorf("PUT %q: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := send(h, http.MethodPut, "/tracks/t1/lyrics", "{\"plain\":\"a\"}\n"); rec.Code != http.StatusOK {
+		t.Errorf("trailing newline: %d", rec.Code)
+	}
+	if rec := send(h, http.MethodPost, "/tracks/t1/lyrics/requeue", `{} {}`); rec.Code != http.StatusBadRequest ||
+		len(f.lyricsReq) != 0 {
+		t.Errorf("requeue trailing: %d", rec.Code)
+	}
+}
+
+// DELETE says whether a lookup will run.
+func TestClearManualLyricsMessage(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := lyricsAPI(&fakeLyrics{manualFake: manualFake{manual: true}})
+		a.auditor = &fakeAuditor{}
+		a.LyricsLookup = on
+		rec := send(ReadOnlyHandler(a), http.MethodDelete, "/tracks/t1/lyrics/manual", "")
+		var body struct {
+			TrackID string `json:"track_id"`
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if rec.Code != http.StatusOK || body.TrackID != "t1" || strings.Contains(body.Message, "No lookup will run") == on {
+			t.Errorf("fetcher %v: %d %+v", on, rec.Code, body)
+		}
+	}
+	// GET has no message field.
+	rec := getLyrics(ReadOnlyHandler(lyricsAPI(&fakeLyrics{})), "/tracks/x/lyrics")
+	if strings.Contains(rec.Body.String(), `"message"`) {
+		t.Errorf("GET body has a message: %s", rec.Body.String())
+	}
+}
+
+// Saving the stored text again, only normalized differently, keeps the
+// stored bytes (so the lyrics hash, and the translation, stay).
+func TestPutLyricsKeepsStoredText(t *testing.T) {
+	f := &fakeLyrics{manualFake: manualFake{curPlain: "một  \nhai"}}
+	a := lyricsAPI(f)
+	a.auditor = &fakeAuditor{}
+	h := ReadOnlyHandler(a)
+	if rec := send(h, http.MethodPut, "/tracks/t1/lyrics", `{"plain":"một\r\nhai"}`); rec.Code != http.StatusOK ||
+		f.set[0].Plain != "một  \nhai" {
+		t.Fatalf("same text: %d, stored %q", rec.Code, f.set[0].Plain)
+	}
+	if rec := send(h, http.MethodPut, "/tracks/t1/lyrics", `{"plain":"một\nba"}`); rec.Code != http.StatusOK ||
+		f.set[1].Plain != "một\nba" {
+		t.Errorf("changed text: stored %q", f.set[1].Plain)
 	}
 }

@@ -207,7 +207,7 @@ The token is never logged or audited.
 | POST | `/admin/api/tracks/{id}/translation/requeue` | – | `202 { queued: true }`; `404 no_lyrics` when the track has no found lyrics |
 | GET | `/admin/api/lyrics/queue` | – | `LyricsQueue` (see [Lyrics](#lyrics)) |
 | PUT | `/admin/api/tracks/{id}/lyrics` | body `ManualLyricsInput` | `200 TrackLyrics` (with the synced text); `400 invalid_lrc` with per-line `lines`, `400 invalid_lyrics`, `400 too_large`, `400 invalid_body`; `413 too_large` (body over 1 MiB); `404 not_found` (see [Manual lyrics](#manual-lyrics)) |
-| DELETE | `/admin/api/tracks/{id}/lyrics/manual` | – | `200 TrackLyrics`; `404 no_manual_lyrics` when the track has no manual lyrics |
+| DELETE | `/admin/api/tracks/{id}/lyrics/manual` | – | `200 TrackLyrics & { message }` (`message` says whether an LRCLIB lookup will run: none while `LYRICS_ENABLED` is false); `404 no_manual_lyrics` when the track has no manual lyrics |
 | POST | `/admin/api/tracks/{id}/lyrics/requeue` | optional body `{ replace_manual?: boolean }` | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist; `409 lyrics_disabled` while `LYRICS_ENABLED` is false; `409 manual_lyrics` for manual lyrics unless `replace_manual` is true |
 | GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
@@ -356,7 +356,7 @@ routes the MCP server can reach.
 
 #### Manual lyrics
 
-`PUT /tracks/{id}/lyrics` stores lyrics added by hand (`source: "manual"`).
+`PUT /tracks/{id}/lyrics` stores lyrics added by hand (`source: "manual"`); a body with anything after its JSON object is `400 invalid_body`.
 They win over LRCLIB: no automatic lookup (backfill, retries, the song
 playing now, upcoming songs) claims or replaces them. Rules:
 
@@ -375,7 +375,9 @@ playing now, upcoming songs) claims or replaces them. Rules:
   timed lines. Errors are `400 invalid_lrc` with
   `lines: [{ line, message }]` (at most 50).
 - Changed lyrics (a new source hash) put an existing translation first in
-  the translation queue; saving the same lyrics again changes nothing. No
+  the translation queue; saving the same lyrics again changes nothing. Text that
+  differs from the stored text only by normalization is stored unchanged
+  (same hash). No
   translation row is created.
 - A pending lookup is cleared (re-queue, retry, `replace_manual`). A worker
   holding the track keeps its lease; its result is not stored.

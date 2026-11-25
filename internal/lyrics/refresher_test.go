@@ -114,7 +114,7 @@ func cands(ids ...string) []domain.LyricsCandidate {
 
 func TestDefaults(t *testing.T) {
 	r := New(nil, nil, "w", nil)
-	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour || r.Lease != 10*time.Minute ||
+	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour || r.Lease != 15*time.Minute ||
 		r.MinBackoff != time.Hour || r.MaxBackoff != 168*time.Hour || r.MaxPause != time.Hour {
 		t.Errorf("defaults = %+v", r)
 	}

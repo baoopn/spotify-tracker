@@ -188,8 +188,9 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   inserts a `pending` row for the tracks with no row that come next in line
   (at most one batch, tracks with a title and an artist), then leases rows
   with `SELECT ... FOR UPDATE SKIP LOCKED` (`claimed_by` / `claimed_until`,
-  `LYRICS_LEASE`, 10 min, at least one batch at 3 requests per track:
-  3 × `LYRICS_BATCH` × `LYRICS_SPACING`). So API replicas never
+  `LYRICS_LEASE`, 15 min, at least one batch at 3 requests per track, each
+  with the spacing and the 20 s request timeout:
+  3 × `LYRICS_BATCH` × (`LYRICS_SPACING` + 20 s), 11 min for the defaults). So API replicas never
   look up the same track, and a crashed worker's claim expires and is taken
   again. The pending rows are inserted in id order, so replicas inserting the
   same tracks cannot deadlock. A row is claimable when no live lease holds it
@@ -226,24 +227,30 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   first artist only (skipped for a single artist), then `GET /api/search`
   (track name and first artist). It stops at the first result with synced
   lyrics. An exact match with only plain lyrics, or `instrumental`, is kept
-  as a fallback while the search runs; a search candidate replaces it only
-  when it has synced lyrics and the same folded track name, an artist match
-  and a duration within 2 s. Otherwise the plain exact match is used. An
-  instrumental exact match stays instrumental unless a matching candidate
-  really has lyrics. When a later request fails after an exact match was
-  found, the exact match is stored (a rate limit still retries the whole
-  lookup). Without an exact match, a search candidate must have the same
-  folded track name (a version suffix such as "(Live)" or "- Remastered" is
-  ignored), an artist name that contains one of the credited artists or is
-  contained in one (folded), and, when the duration is known, a duration
-  within 2 s. Among those it prefers the exact name, then synced lyrics,
-  then plain lyrics, then the closest duration. A lookup sends at most 3
-  requests, and 3 only when the earlier ones found no synced lyrics. The
-  chosen entry's id is stored as `lrclib_id`. Songs stored with plain lyrics
-  before this matching are not looked up again on their own: they change
-  only when re-queued (admin "Look up again", MCP `admin_requeue_lyrics`) or
-  on a normal not-found retry. Synced lyrics change the lyrics hash, so an
-  existing translation is re-queued.
+  while the search runs; a search candidate replaces it only when it has
+  synced lyrics, the same folded track name, a duration within 2 s and a
+  credit naming the first artist (a cover by someone else or the featured
+  artist alone does not count). So an instrumental exact match flips only to
+  synced lyrics, never to plain. A failed Get does not end the lookup; when
+  nothing is found its error is returned, so the track is retried instead of
+  marked not found. When the search fails after an exact match was found
+  (also on the 20 s request timeout), the exact match is stored; a rate
+  limit or shutdown still retries the whole lookup. Without an exact match,
+  a search candidate must have the same folded track name (a version suffix
+  such as "(Live)" or "- Remastered" is ignored), an artist matching one of
+  the credited artists, and, when the duration is known, a duration within
+  2 s. Among those it prefers the exact name, then synced lyrics, then plain
+  lyrics, then the closest duration. Artist credits are split into names on
+  ",", "&", ";", "feat.", "ft.", "featuring" and "x" and folded; two names
+  match when equal, or when the shorter (at least 3 letters) is whole words
+  of the longer, so short names like "V" or "Ni" match only themselves.
+  Text that is only markers ("[Instrumental]", "♪") counts as no lyrics. A
+  lookup sends at most 3 requests, and 3 only when the earlier ones found no
+  synced lyrics. The chosen entry's id is stored as `lrclib_id`. Songs stored
+  with plain lyrics before this matching are not looked up again on their
+  own: they change only when re-queued (admin "Look up again", MCP
+  `admin_requeue_lyrics`) or on a normal not-found retry. Synced lyrics
+  change the lyrics hash, so an existing translation is re-queued.
   Without an album or duration only search is used. NUL bytes are removed,
   line breaks normalized to `\n`, and each text is capped at 200 000 bytes.
   When only synced lyrics exist, plain text is derived by removing the

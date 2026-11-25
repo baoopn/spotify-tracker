@@ -49,8 +49,10 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	l.LookupEnabled = a.LyricsLookup
 	if !a.LyricsLookup {
-		l.Waiting = false // nothing will look the lyrics up
+		// Nothing will look the lyrics up.
+		l.Waiting, l.Queued, l.LookingUp = false, false, false
 	}
 	if t := l.Translation; t != nil && !a.Translation.Enabled {
 		t.Waiting = false // nothing will translate it
@@ -139,8 +141,13 @@ func (a *API) lyricsQueue(w http.ResponseWriter, r *http.Request) {
 
 // requeueLyrics serves POST /tracks/{id}/lyrics/requeue: the track's lyrics
 // lookup goes to the front of the queue, whatever its status (found lyrics
-// are fetched again; when they changed, the translation is redone).
+// are fetched again; when they changed, the translation is redone). 409
+// while the lyrics fetcher is off.
 func (a *API) requeueLyrics(w http.ResponseWriter, r *http.Request) {
+	if !a.LyricsLookup {
+		writeError(w, http.StatusConflict, "lyrics_disabled", "the lyrics fetcher is off (LYRICS_ENABLED=false)")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	ok, err := a.lyricsDB().RequeueLyrics(r.Context(), id)
 	if err != nil {

@@ -148,7 +148,7 @@ var adminTools = []toolDef{
 		path: "/tracks/{id}/lyrics/requeue", method: "POST",
 		desc: "Put one track's LRCLIB lyrics lookup at the front of the queue, whatever its status (not found, " +
 			"failed, or found: stale lyrics are fetched again). When the lyrics change, an existing translation " +
-			"is redone first in line (uses Claude credit). Fails when the track is unknown.",
+			"is redone first in line (uses Claude credit). Fails when the track is unknown or the lyrics fetcher is off.",
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",

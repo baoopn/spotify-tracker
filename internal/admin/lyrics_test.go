@@ -57,7 +57,7 @@ func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool, 
 		return store.TrackLyrics{}, f.err
 	}
 	if f.pending {
-		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true}, nil
+		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true, Queued: true, LookingUp: true}, nil
 	}
 	p := "line"
 	out := store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}
@@ -271,6 +271,14 @@ func TestRequeueLyricsHandler(t *testing.T) {
 	a.auditor = aud
 	nudged := 0
 	a.LyricsNudge = func() { nudged++ }
+	// The fetcher off: 409, nothing queued or audited.
+	off := httptest.NewRecorder()
+	ReadOnlyHandler(a).ServeHTTP(off, httptest.NewRequest(http.MethodPost, "/tracks/t9/lyrics/requeue", nil))
+	if off.Code != http.StatusConflict || lyricsErrCode(off) != "lyrics_disabled" || len(f.lyricsReq) != 0 ||
+		len(aud.calls) != 0 || nudged != 0 {
+		t.Fatalf("fetcher off: %d %s", off.Code, off.Body.String())
+	}
+	a.LyricsLookup = true
 	h := ReadOnlyHandler(a)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/lyrics/requeue", nil))
@@ -291,5 +299,24 @@ func TestRequeueLyricsHandler(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tracks/t9/lyrics/requeue", nil))
 	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
 		t.Errorf("GET = %d", rec.Code)
+	}
+}
+
+// With the fetcher off, nothing is shown as queued or being looked up, and
+// lookup_enabled tells the UI to hide the re-queue button.
+func TestTrackLyricsQueueNeedsFetcher(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := lyricsAPI(&fakeLyrics{pending: true})
+		a.LyricsLookup = on
+		rec := getLyrics(ReadOnlyHandler(a), "/tracks/x/lyrics")
+		var body struct {
+			Queued        bool `json:"queued"`
+			LookingUp     bool `json:"looking_up"`
+			LookupEnabled bool `json:"lookup_enabled"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Queued != on || body.LookingUp != on || body.LookupEnabled != on {
+			t.Errorf("fetcher %v: %+v", on, body)
+		}
 	}
 }

@@ -343,6 +343,8 @@ export type TrackLyrics = {
 	looking_up: boolean;
 	/** An admin re-queue that has not finished yet. */
 	requested_at: string | null;
+	/** The lyrics fetcher runs (LYRICS_ENABLED): "Look up again" can be served. */
+	lookup_enabled: boolean;
 	/** The Claude translation; null unless status is "found". */
 	translation: TrackTranslation | null;
 };

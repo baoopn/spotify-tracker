@@ -40,10 +40,14 @@ type Translation = {
 	vi: { lines: string[]; plain: string | null } | null;
 };
 
-/** The translations that can be shown: done, not the song's own language. */
+/**
+ * The translations that can be shown: done and present. A language is null
+ * only when the song is all in it, so a mixed song keeps both, even its main
+ * language.
+ */
 export function availableLangs(t: Translation | null | undefined): ('en' | 'vi')[] {
 	if (!t || t.status !== 'done') return [];
-	return (['en', 'vi'] as const).filter((l) => t[l] != null && t.source_language !== l);
+	return (['en', 'vi'] as const).filter((l) => t[l] != null);
 }
 
 /** The language to show: the preference when the song has it, else the original. */

@@ -153,7 +153,7 @@ services:
       # Lyrics translation by Claude (off by default; uses Anthropic API credit).
       TRANSLATE_ENABLED: ${TRANSLATE_ENABLED:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      TRANSLATE_MODEL: ${TRANSLATE_MODEL:-claude-opus-5-5}
+      TRANSLATE_MODEL: ${TRANSLATE_MODEL:-claude-sonnet-5-5}
       TRANSLATE_EFFORT: ${TRANSLATE_EFFORT:-low}
       TRANSLATE_INTERVAL: ${TRANSLATE_INTERVAL:-1m}
       TRANSLATE_BATCH: ${TRANSLATE_BATCH:-5}

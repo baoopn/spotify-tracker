@@ -242,7 +242,7 @@ type Translate struct {
 	Enabled bool `env:"TRANSLATE_ENABLED" envDefault:"false"`
 	// APIKey is the Anthropic API key (required when enabled).
 	APIKey string `env:"ANTHROPIC_API_KEY,unset"`
-	Model  string `env:"TRANSLATE_MODEL" envDefault:"claude-opus-5-5"`
+	Model  string `env:"TRANSLATE_MODEL" envDefault:"claude-sonnet-5-5"`
 	// Effort is the Claude effort level: low or medium.
 	Effort   string        `env:"TRANSLATE_EFFORT" envDefault:"low"`
 	Interval time.Duration `env:"TRANSLATE_INTERVAL" envDefault:"1m"`
@@ -271,7 +271,7 @@ func (t *Translate) validate() error {
 	case t.APIKey == "":
 		return fmt.Errorf("ANTHROPIC_API_KEY is required when TRANSLATE_ENABLED=true")
 	case !modelName.MatchString(t.Model):
-		return fmt.Errorf("TRANSLATE_MODEL must be a model id such as claude-opus-5-5")
+		return fmt.Errorf("TRANSLATE_MODEL must be a model id such as claude-sonnet-5-5")
 	case t.Effort != "low" && t.Effort != "medium":
 		return fmt.Errorf("TRANSLATE_EFFORT must be low or medium")
 	case t.Interval < 10*time.Second || t.Interval > 24*time.Hour:

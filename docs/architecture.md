@@ -310,15 +310,25 @@ now-playing lyrics and in the admin.
   cap the worker pauses until the next UTC day (at most 6 h) and checks
   again. The SDK does not retry; the worker does, so every call counts once.
   Billed tokens are recorded for every answer, also unusable ones.
-- **Request.** Model `TRANSLATE_MODEL` (`claude-opus-5-5`), effort
-  `TRANSLATE_EFFORT` (low), thinking left at its default, structured JSON
+- **Request.** Model `TRANSLATE_MODEL` (`claude-sonnet-5-5`, $2 / $10 per
+  MTok), effort `TRANSLATE_EFFORT` (low; set explicitly, the API default is
+  high), thinking left unset (adaptive; `disabled` is a 400 on this model), structured JSON
   output (`{ source_language, en, vi }`), the fixed system prompt first with a
   cache breakpoint, the server-side refusal fallback (`fallbacks: "default"`).
   Synced lyrics go as numbered non-empty lines and come back as one line per
   input line; the worker puts empty lines back, so `en_lines` / `vi_lines`
   line up with `internal/lrc.Parse`. Plain lyrics go as one text. A language
-  the song is already in is stored as null. `<lyrics>` tags in the title,
-  artist or text are neutralized, so song text cannot leave its block. Songs
+  the song is already in is stored as null. Before the lyrics, the user
+  message holds a `<song>` block read by `TranslationContext` (a separate
+  read, not part of the claim): title, all credited artists, album, album
+  type, release year, artist genres, enrichment genres, explicit flag
+  and length; unknown fields are left
+  out, and a failed read sends the song without them. The system prompt stays
+  fixed, so it still caches. `<lyrics>` and `<song>` tags in any field or the
+  text are neutralized, so song text and metadata cannot leave their block.
+  Existing translations are not redone for a new model or prompt (there is
+  no backfill, and calls cost credit): re-queue a song in the admin to
+  translate it again with the current model and context. Songs
   over 250 lines or 6 000 characters are `skipped` without a call (both
   translations must fit one answer).
 - **Outcomes.** `done`; `refused` (terminal); `skipped` (also an answer cut

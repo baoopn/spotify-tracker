@@ -48,8 +48,9 @@ func (c *Claude) Translate(ctx context.Context, r Request) (Result, error) {
 	params := anthropic.BetaMessageNewParams{
 		Model:     c.model,
 		MaxTokens: maxTokens,
-		// Thinking is left unset: it is always on for claude-opus-5-5, and
-		// effort sets how much of it to use.
+		// Thinking is left unset (adaptive): claude-sonnet-5-5 rejects
+		// {type: "disabled"}, and the explicit effort (low; the API default
+		// is high) keeps it short.
 		OutputConfig: anthropic.BetaOutputConfigParam{
 			Effort: c.effort,
 			Format: anthropic.BetaJSONOutputFormatParam{Schema: schema},

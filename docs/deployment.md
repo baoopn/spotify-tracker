@@ -92,8 +92,8 @@ use Coolify's rollback to redeploy an earlier deployment. Re-running an older
    Translations use Anthropic API credit, not a Claude subscription. Only
    songs that play are translated (the song playing now first, plus plays in
    the last 30 min); the existing library is never backfilled. Each song is
-   one call of roughly 1 500 to 3 000 tokens with `claude-opus-5-5`, about
-   2 to 5 US cents. The defaults cap it at 100 calls a day and 1000 a month
+   one call of roughly 1 500 to 3 000 tokens with `claude-sonnet-5-5`
+   ($2 / $10 per million input / output tokens), about 1 to 3 US cents. The defaults cap it at 100 calls a day and 1000 a month
    (`TRANSLATE_DAILY_CAP`, `TRANSLATE_MONTHLY_CAP`); check the real use in the
    admin translation queue (`calls_month`, `tokens_month`) after a week.
 7. **Backups.** The `backup` service sends an encrypted dump to a private

@@ -25,6 +25,7 @@ type Store interface {
 	ReleaseTranslation(ctx context.Context, owner, trackID string) error
 	ReserveTranslationCall(ctx context.Context, day time.Time, dailyCap, monthlyCap int) (bool, error)
 	AddTranslationTokens(ctx context.Context, day time.Time, in, out int64) error
+	TranslationContext(ctx context.Context, trackID string) (domain.TranslationContext, error)
 }
 
 // Request limits: the same cut as the public lyrics, and a size above which
@@ -304,6 +305,12 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		s.skipped++
 		w.deferTrack(ctx, c, domain.TranslationSkipped, nil, "nothing to translate or too long")
 		return 0, outcomeSkipped
+	}
+	// The song's context helps the translation but is not required.
+	if song, err := w.Store.TranslationContext(ctx, c.TrackID); err == nil {
+		req.Song = song
+	} else if ctx.Err() == nil {
+		w.Log.WarnContext(ctx, "read translation context failed", slog.String("track_id", c.TrackID), logging.Err(err))
 	}
 	now := w.clock()
 	okCall, err := w.Store.ReserveTranslationCall(ctx, now, w.DailyCap, w.MonthlyCap)

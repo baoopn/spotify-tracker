@@ -270,7 +270,7 @@ func TestLoadAPITranslate(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := cfg.Translate
-	if tr.Enabled || tr.Model != "claude-opus-5-5" || tr.Effort != "low" || tr.Interval != time.Minute ||
+	if tr.Enabled || tr.Model != "claude-sonnet-5-5" || tr.Effort != "low" || tr.Interval != time.Minute ||
 		tr.Batch != 5 || tr.Spacing != 15*time.Second || tr.Lease != 10*time.Minute ||
 		tr.RecentWindow != 30*time.Minute || tr.DailyCap != 100 || tr.MonthlyCap != 1000 || tr.MaxAttempts != 5 {
 		t.Errorf("defaults = %+v", tr)

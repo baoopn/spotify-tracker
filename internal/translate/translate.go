@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/baoopn/spotify-tracker/internal/domain"
 )
 
 // Request is one song's lyrics to translate.
@@ -21,6 +23,9 @@ type Request struct {
 	Kind  string
 	Lines []string // parsed LRC lines in order; "" for empty lines
 	Plain string
+	// Song is what the database knows about the song (album, genres, ...),
+	// sent with the lyrics; every field may be empty.
+	Song domain.TranslationContext
 }
 
 // Result is a translation. For synced lyrics EN and VI have one entry per

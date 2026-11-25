@@ -305,10 +305,14 @@ export const api = {
 			method: 'PUT',
 			body
 		}),
+	/** message says whether an LRCLIB lookup will run (none while the fetcher is off). */
 	clearManualLyrics: (id: string) =>
-		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics/manual`, {
-			method: 'DELETE'
-		}),
+		request<TrackLyrics & { message?: string }>(
+			`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics/manual`,
+			{
+				method: 'DELETE'
+			}
+		),
 	lyricsQueue: ({ signal }: Signal = {}) =>
 		request<LyricsQueue>(`${ADMIN_API}/lyrics/queue`, { signal }),
 	enrichTrack: (id: string) =>

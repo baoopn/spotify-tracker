@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick, untrack } from 'svelte';
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { LoaderCircle, Upload } from '@lucide/svelte';
 	import { ApiError, api, errorMessage } from '#lib/api.js';
@@ -35,15 +36,18 @@
 		{ v: 'plain', label: 'Plain' }
 	];
 
-	// Prefilled once from the current lyrics. Plain text derived from the synced
-	// lyrics is left out, so it follows edits of the synced text.
+	// Prefilled once from the current lyrics, LRCLIB's plain text included: saving
+	// them unedited sends the same texts, so the lyrics hash (and a translation)
+	// stays as it is. Plain text that belongs to the synced text (LRCLIB's, or
+	// derived from it) is re-derived when only the synced text is edited.
 	const initial = (() => {
 		const synced = lyrics.status === 'found' ? (lyrics.synced ?? '') : '';
 		const plain = lyrics.status === 'found' ? (lyrics.plain ?? '') : '';
-		const ownPlain = !synced || (lyrics.source === 'manual' && plain !== plainFromLrc(synced));
 		return {
 			synced,
-			plain: ownPlain ? plain : '',
+			plain,
+			plainFollowsSynced:
+				!!synced && (lyrics.source !== 'manual' || plain === plainFromLrc(synced)),
 			instrumental: lyrics.status === 'instrumental',
 			tab: (plain && !synced ? 'plain' : 'synced') as Tab
 		};
@@ -70,11 +74,13 @@
 	// Server errors replace the live ones until the text changes.
 	const errors = $derived(serverLines.length ? serverLines : liveErrors);
 	const errorsByLine = $derived(
-		Map.groupBy(
-			errors.filter((e) => e.line > 0),
-			(e) => e.line
-		)
+		errors.reduce((m, e) => {
+			if (e.line > 0) m.set(e.line, [...(m.get(e.line) ?? []), e]);
+			return m;
+		}, new Map<number, LrcLineError[]>())
 	);
+	// Announced (alert) only on a save attempt or a server answer, not while typing.
+	let announce = $state('');
 	const derivedPlain = $derived(normSynced && !liveErrors.length ? plainFromLrc(normSynced) : '');
 	const empty = $derived(!normSynced && !normPlain);
 
@@ -92,15 +98,21 @@
 			if (err instanceof ApiError && err.lines.length) {
 				serverLines = err.lines;
 				tab = 'synced';
-				focusSummary();
+				announce = problems(err.lines.length);
+				void focusSummary();
 				return;
 			}
 			formError = errorMessage(err);
 		}
 	}));
 
-	function focusSummary() {
-		queueMicrotask(() => summary?.focus());
+	async function focusSummary() {
+		await tick();
+		summary?.focus();
+	}
+
+	function problems(n: number): string {
+		return `${n === 1 ? '1 problem' : `${n} problems`} in the synced lyrics`;
 	}
 
 	function select(t: Tab, focusTab = false) {
@@ -126,6 +138,7 @@
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
 		formError = '';
+		announce = '';
 		serverLines = [];
 		if (instrumental) {
 			save.mutate({ instrumental: true });
@@ -137,7 +150,8 @@
 		}
 		if (liveErrors.length) {
 			tab = 'synced';
-			focusSummary();
+			announce = `${problems(liveErrors.length)}. Fix them to save.`;
+			void focusSummary();
 			return;
 		}
 		const words = normPlain || derivedPlain;
@@ -145,9 +159,15 @@
 			formError = 'The lyrics hold no words: mark the song instrumental instead.';
 			return;
 		}
+		// The synced text changed and the plain text was not touched: plain text
+		// that belonged to the old synced text is derived again from the new one.
+		const rederive =
+			initial.plainFollowsSynced &&
+			plain === initial.plain &&
+			normSynced !== normalizeLyrics(initial.synced);
 		save.mutate({
 			...(normSynced ? { synced: normSynced } : {}),
-			...(normPlain ? { plain: normPlain } : {})
+			...(normPlain && !rederive ? { plain: normPlain } : {})
 		});
 	}
 
@@ -188,10 +208,13 @@
 		area.setSelectionRange(start, start);
 	}
 
-	// Focus the editor's first field when it opens.
+	// Focus the editor's first field once, when it opens. untrack: the attachment
+	// must not re-run (and steal focus) when the tab changes.
 	function autofocus(node: HTMLElement) {
-		(tab === 'synced' ? syncedArea : plainArea)?.focus({ preventScroll: true });
-		node.scrollIntoView({ block: 'nearest' });
+		untrack(() => {
+			(tab === 'synced' ? syncedArea : plainArea)?.focus({ preventScroll: true });
+			node.scrollIntoView({ block: 'nearest' });
+		});
 	}
 
 	const errorsId = `${uid}-errors`;
@@ -230,7 +253,9 @@
 				>
 					{t.label}
 					{#if t.v === 'synced' && errors.length && !instrumental}
-						<span class="ml-1.5 text-danger" aria-hidden="true">●</span>
+						<span class="ml-1.5 text-danger" aria-hidden="true">●</span><span class="sr-only"
+							>, has problems</span
+						>
 					{/if}
 				</button>
 			{/each}
@@ -291,11 +316,10 @@
 				bind:this={summary}
 				id={errorsId}
 				tabindex="-1"
-				role="alert"
 				class="mt-2 rounded-lg border border-danger px-3 py-2 text-sm text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
 			>
 				<p class="font-semibold text-danger">
-					{errors.length === 1 ? '1 problem' : `${errors.length} problems`} in the synced lyrics
+					{problems(errors.length)}
 				</p>
 				<ul class="mt-1 space-y-0.5">
 					{#each errors as e, i (i)}
@@ -366,7 +390,9 @@
 			placeholder={derivedPlain || 'First line\nSecond line'}
 			bind:value={plain}></textarea>
 		<p id={plainHint} class="hint">
-			{#if normSynced}
+			{#if normSynced && initial.plainFollowsSynced && plain === initial.plain}
+				This text comes from the synced lyrics. If you edit only those, it is made from them again.
+			{:else if normSynced}
 				Leave it empty to use the synced lyrics without timestamps.
 			{:else}
 				Without synced lyrics, the page shows this text.
@@ -377,6 +403,8 @@
 	{#if instrumental}
 		<p class="mt-2 text-sm text-muted">The song is saved as instrumental, with no lyrics.</p>
 	{/if}
+
+	<p class="sr-only" role="alert">{announce}</p>
 
 	{#if formError}
 		<p class="field-error" role="alert">{formError}</p>

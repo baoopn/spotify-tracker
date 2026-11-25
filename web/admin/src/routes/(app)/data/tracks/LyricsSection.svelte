@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import OutLink from '#lib/components/OutLink.svelte';
 	import LyricsEditor from '#lib/components/lyrics/LyricsEditor.svelte';
@@ -49,10 +50,11 @@
 	let confirmRemove = $state(false);
 	let editButton: HTMLButtonElement | undefined = $state();
 
-	function closeEditor() {
+	async function closeEditor() {
 		editingFor = null;
-		// Back to the button that opened the editor.
-		queueMicrotask(() => editButton?.focus());
+		// Back to the button that opened the editor, once it is rendered again.
+		await tick();
+		editButton?.focus();
 	}
 
 	const queryClient = useQueryClient();
@@ -62,7 +64,10 @@
 			queryClient.setQueryData(qk.tracks.lyrics(trackId, true), data);
 			void queryClient.invalidateQueries({ queryKey: ['tracks', 'lyrics', trackId] });
 			void queryClient.invalidateQueries({ queryKey: qk.lyrics.queue });
-			toasts.success('Your lyrics were removed', 'LRCLIB is asked for the lyrics again.');
+			// The API says whether a lookup will run (none while the fetcher is off).
+			const note = data.message ?? '';
+			if (data.lookup_enabled) toasts.success('Your lyrics were removed', note);
+			else toasts.info('Your lyrics were removed', note);
 		},
 		onError: (err) => toasts.error('Could not remove the lyrics', errorMessage(err))
 	}));

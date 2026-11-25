@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,9 @@ type Worker struct {
 	MaxBackoff   time.Duration
 	MaxPause     time.Duration // longest pause (cap reached, spend limit, bad key)
 	MaxAttempts  int32         // failures before giving up
+	// OnDone, when set, is called after a translation was stored (queue
+	// prefetch re-warms the public lyrics cache with it). Must not block.
+	OnDone func(trackID string)
 
 	wake       chan struct{}
 	mu         sync.Mutex
@@ -69,6 +73,7 @@ type Worker struct {
 	enqueued   string          // the last priority song queued
 	upcoming   []string        // the next songs of the Spotify queue, claimed after the priority song
 	upQueued   map[string]bool // upcoming songs that have a translation row
+	upcomingAt time.Time       // when upcoming was set; it expires after UpcomingTTL
 	badBatches int
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration, wake <-chan struct{}) bool
@@ -92,6 +97,7 @@ func (w *Worker) Wake(trackID string) {
 	w.mu.Lock()
 	same := w.priority == trackID
 	w.priority = trackID
+	w.upcoming = slices.DeleteFunc(w.upcoming, func(id string) bool { return id == trackID }) // it plays now
 	w.mu.Unlock()
 	if !same {
 		w.Nudge()
@@ -111,17 +117,20 @@ func (w *Worker) LyricsFound(trackID string) {
 	w.Nudge()
 }
 
+// UpcomingTTL is how long an upcoming list counts without a refresh.
+const UpcomingTTL = 15 * time.Minute
+
 // EnqueueUpcoming tells the worker which songs are next in the user's Spotify
 // queue: they are queued (when they have lyrics) and translated right after
 // the song playing now. This is the one exception to "queued when played":
-// a song that is then skipped still costs a call, within the caps. Never
-// blocks.
+// a song that is then skipped still costs a call, within the caps. Queue
+// prefetch passes only the very next song. An empty list clears it
+// (playback went idle); a list expires after UpcomingTTL. Never blocks.
 func (w *Worker) EnqueueUpcoming(trackIDs []string) {
-	if len(trackIDs) == 0 {
-		return
-	}
 	w.mu.Lock()
-	w.upcoming = append([]string(nil), trackIDs...)
+	changed := !slices.Equal(w.upcoming, trackIDs)
+	w.upcoming = slices.Clone(trackIDs)
+	w.upcomingAt = w.clock()
 	keep := map[string]bool{}
 	for _, id := range w.upcoming {
 		if w.upQueued[id] {
@@ -130,7 +139,9 @@ func (w *Worker) EnqueueUpcoming(trackIDs []string) {
 	}
 	w.upQueued = keep
 	w.mu.Unlock()
-	w.Nudge()
+	if changed && len(trackIDs) > 0 {
+		w.Nudge()
+	}
 }
 
 // Nudge starts the next batch now (for example after lyrics were found).
@@ -215,6 +226,9 @@ func (w *Worker) RunOnce(ctx context.Context) time.Duration {
 // the upcoming songs.
 func (w *Worker) enqueuePriority(ctx context.Context) []string {
 	w.mu.Lock()
+	if w.clock().Sub(w.upcomingAt) > UpcomingTTL {
+		w.upcoming = nil
+	}
 	prio, done := w.priority, w.priority == w.enqueued
 	upcoming := append([]string(nil), w.upcoming...)
 	var todo []string
@@ -236,7 +250,9 @@ func (w *Worker) enqueuePriority(ctx context.Context) []string {
 		}
 	}
 	for _, id := range todo {
-		if w.enqueue(ctx, id) { // no row yet (no lyrics): try again next batch or on LyricsFound
+		// Without a row yet (no lyrics), it is tried again next batch or on
+		// LyricsFound.
+		if w.enqueue(ctx, id) {
 			w.mu.Lock()
 			if w.upQueued == nil {
 				w.upQueued = map[string]bool{}
@@ -365,6 +381,9 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		return 0, outcomeNone
 	}
 	s.done++
+	if w.OnDone != nil {
+		w.OnDone(c.TrackID)
+	}
 	return 0, outcomeDone
 }
 

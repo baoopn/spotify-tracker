@@ -208,12 +208,12 @@ func TestPrefetchInFlightBlocksSecond(t *testing.T) {
 	}
 }
 
-func TestPrefetchRateLimitPausesPoller(t *testing.T) {
+func TestPrefetchRateLimitPausesQueueOnly(t *testing.T) {
 	h := newHarness(t)
 	h.q.err = &spotify.RateLimitError{RetryAfter: 2 * time.Minute}
 	h.kickWait("a")
-	if got := time.Unix(0, h.p.pauseUntil.Load()); !got.Equal(h.clock.Add(2 * time.Minute)) {
-		t.Errorf("pauseUntil = %v", got)
+	if h.p.pauseUntil.Load() != 0 {
+		t.Error("a queue 429 must not pause the poll loop")
 	}
 	h.clock = h.clock.Add(90 * time.Second)
 	h.kickWait("b") // still before retryAt
@@ -264,5 +264,54 @@ func TestPrefetchPruneBounded(t *testing.T) {
 	h.f.prune(h.clock)
 	if len(h.f.done) > maxDoneEntries {
 		t.Fatalf("len = %d", len(h.f.done))
+	}
+}
+
+// The main loop's 429 holds queue reads too; a hold only moves forward.
+func TestPrefetchHeldByMainLoop(t *testing.T) {
+	h := newHarness(t)
+	h.q.entries = []domain.CatalogEntry{entry("n")}
+	h.p.holdUntil(h.clock.Add(time.Minute))
+	h.p.holdUntil(h.clock.Add(10 * time.Second)) // shorter: ignored
+	if got := time.Unix(0, h.p.pauseUntil.Load()); !got.Equal(h.clock.Add(time.Minute)) {
+		t.Fatalf("pauseUntil = %v", got)
+	}
+	h.kickWait("a")
+	if h.q.count() != 0 {
+		t.Fatal("queue read during the main loop's rate limit")
+	}
+	h.clock = h.clock.Add(61 * time.Second)
+	h.kickWait("a")
+	if h.q.count() != 1 {
+		t.Fatal("no queue read after the hold")
+	}
+}
+
+type rateLimitedSource struct{ calls int }
+
+func (r *rateLimitedSource) CurrentlyPlaying(context.Context) (*domain.Playback, error) {
+	r.calls++
+	return nil, &spotify.RateLimitError{RetryAfter: time.Hour}
+}
+
+type nopHeartbeat struct{}
+
+func (nopHeartbeat) OK(context.Context, string)  {}
+func (nopHeartbeat) Fail(context.Context, error) {}
+
+// Run honours a 429 from the main loop: it holds queue reads for the
+// Retry-After and waits that long before the next poll.
+func TestRunHonoursRateLimit(t *testing.T) {
+	src := &rateLimitedSource{}
+	p := New(src, &fakeIngest{}, 10*time.Millisecond, nopHeartbeat{}, slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_ = p.Run(ctx)
+	if src.calls != 1 {
+		t.Errorf("polls during the rate limit = %d, want 1", src.calls)
+	}
+	if held := time.Unix(0, p.pauseUntil.Load()); held.Sub(start) < 59*time.Minute {
+		t.Errorf("queue reads held until %v", held)
 	}
 }

@@ -578,8 +578,39 @@ func TestWorkerEnqueueUpcoming(t *testing.T) {
 	if tr.order[len(tr.order)-1] != "later" {
 		t.Errorf("order = %v", tr.order)
 	}
-	w.EnqueueUpcoming(nil) // ignored
-	if len(w.upcoming) != 2 {
+	w.EnqueueUpcoming(nil) // playback went idle: cleared
+	if len(w.upcoming) != 0 {
 		t.Errorf("upcoming = %v", w.upcoming)
+	}
+}
+
+// An upcoming song that starts playing leaves the list; a list expires after
+// UpcomingTTL, so stale ids never outrank re-queues; OnDone fires per stored
+// translation.
+func TestWorkerUpcomingExpiresAndDone(t *testing.T) {
+	st := newFakeStore(cand("req", "[00:01.00] r"))
+	st.lyrics["next"] = cand("next", "[00:01.00] x")
+	tr := &fakeTranslator{}
+	w := testWorker(st, tr, nil)
+	w.RecentWindow = 0
+	clock := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return clock }
+	var done []string
+	w.OnDone = func(id string) { done = append(done, id) }
+
+	w.EnqueueUpcoming([]string{"next"})
+	w.Wake("next") // it starts playing
+	if len(w.upcoming) != 0 {
+		t.Fatalf("upcoming after it plays = %v", w.upcoming)
+	}
+
+	w.EnqueueUpcoming([]string{"stale"})
+	clock = clock.Add(UpcomingTTL + time.Minute)
+	if got := w.enqueuePriority(context.Background()); !slices.Equal(got, []string{"next"}) {
+		t.Errorf("priority after expiry = %v", got)
+	}
+	w.RunOnce(context.Background())
+	if !slices.Equal(done, tr.order) || len(done) == 0 {
+		t.Errorf("OnDone = %v, translated %v", done, tr.order)
 	}
 }

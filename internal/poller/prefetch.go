@@ -31,7 +31,8 @@ type PrefetchConfig struct {
 }
 
 const (
-	prefetchTimeout   = 10 * time.Second
+	queueTimeout      = 10 * time.Second // the Spotify queue read
+	rpcTimeout        = 10 * time.Second // the PrefetchUpcoming call
 	forbiddenBackoff  = time.Hour
 	maxDoneEntries    = 500
 	maxUpcomingListed = 20 // the RPC accepts at most this many
@@ -44,8 +45,9 @@ type prefetcher struct {
 	ingest trackerv1.IngestServiceClient
 	cfg    PrefetchConfig
 	log    *slog.Logger
-	// pause makes the whole poller wait (Spotify rate limits are app wide).
-	pause func(until time.Time)
+	// held reports until when the main loop is rate limited (queue reads
+	// wait for it too: Spotify limits are app wide).
+	held func() time.Time
 
 	mu       sync.Mutex
 	done     map[string]time.Time // track id -> prefetched at
@@ -65,8 +67,8 @@ func (p *Poller) EnablePrefetch(src QueueSource, cfg PrefetchConfig) {
 	cfg.Depth = max(1, min(cfg.Depth, maxUpcomingListed))
 	p.prefetch = &prefetcher{
 		src: src, ingest: p.ingest, cfg: cfg, log: p.log,
-		pause: func(until time.Time) { p.pauseUntil.Store(until.UnixNano()) },
-		done:  map[string]time.Time{}, now: time.Now,
+		held: func() time.Time { return time.Unix(0, p.pauseUntil.Load()) },
+		done: map[string]time.Time{}, now: time.Now,
 	}
 }
 
@@ -74,7 +76,7 @@ func (p *Poller) EnablePrefetch(src QueueSource, cfg PrefetchConfig) {
 func (f *prefetcher) due(currentID string, now time.Time) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.running.Load() || now.Before(f.retryAt) {
+	if f.running.Load() || now.Before(f.retryAt) || (f.held != nil && now.Before(f.held())) {
 		return false
 	}
 	return currentID != f.forTrack || now.Sub(f.lastAt) >= f.cfg.Recheck
@@ -105,9 +107,9 @@ func (f *prefetcher) kick(ctx context.Context, currentID string) {
 
 // run reads the queue once and reports it to the API.
 func (f *prefetcher) run(ctx context.Context, currentID string) {
-	ctx, cancel := context.WithTimeout(ctx, prefetchTimeout)
-	defer cancel()
-	entries, err := f.src.Queue(ctx, f.cfg.Depth+1) // +1: the current song may be queued again
+	qctx, cancel := context.WithTimeout(ctx, queueTimeout)
+	entries, err := f.src.Queue(qctx, f.cfg.Depth+1) // +1: the current song may be queued again
+	cancel()
 	if err != nil {
 		f.fail(ctx, err)
 		return
@@ -135,7 +137,9 @@ func (f *prefetcher) run(ctx context.Context, currentID string) {
 		observability.QueueFetches.WithLabelValues("ok").Inc()
 	}
 
-	res, err := f.ingest.PrefetchUpcoming(ctx, req)
+	rctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+	res, err := f.ingest.PrefetchUpcoming(rctx, req)
 	if err != nil {
 		if ctx.Err() == nil {
 			f.log.WarnContext(ctx, "prefetch upcoming failed", logging.Err(err))
@@ -163,10 +167,8 @@ func (f *prefetcher) fail(ctx context.Context, err error) {
 	case errors.As(err, &rl):
 		observability.QueueFetches.WithLabelValues("rate_limited").Inc()
 		f.retryAt = now.Add(max(rl.RetryAfter, f.cfg.Recheck))
-		if f.pause != nil {
-			f.pause(now.Add(rl.RetryAfter))
-		}
-		f.log.WarnContext(ctx, "spotify rate limited the queue read", slog.Duration("retry_after", rl.RetryAfter))
+		f.log.WarnContext(ctx, "spotify rate limited the queue read; queue reads paused",
+			slog.Duration("retry_after", rl.RetryAfter), slog.Time("until", f.retryAt))
 	case errors.Is(err, spotify.ErrQueueForbidden):
 		observability.QueueFetches.WithLabelValues("forbidden").Inc()
 		f.retryAt = now.Add(forbiddenBackoff)
@@ -175,7 +177,7 @@ func (f *prefetcher) fail(ctx context.Context, err error) {
 			f.log.WarnContext(ctx, "spotify refused the queue read (403); queue prefetch retries hourly")
 		}
 	default:
-		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+		if ctx.Err() != nil {
 			return
 		}
 		observability.QueueFetches.WithLabelValues("error").Inc()

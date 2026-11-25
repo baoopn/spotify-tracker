@@ -80,13 +80,6 @@ func (p *Poller) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 
-		if until := time.Until(time.Unix(0, p.pauseUntil.Load())); until > 0 {
-			if !sleepCtx(ctx, until) {
-				p.log.Info("poller stopped")
-				return nil
-			}
-		}
-
 		detail, err := p.cycle(ctx)
 		wait = p.interval
 		var rl *spotify.RateLimitError
@@ -101,6 +94,7 @@ func (p *Poller) Run(ctx context.Context) error {
 		case errors.As(err, &rl):
 			observability.PollCycles.WithLabelValues("rate_limited").Inc()
 			wait = max(rl.RetryAfter, p.interval)
+			p.holdUntil(time.Now().Add(wait))
 			p.log.Warn("spotify rate limited; backing off",
 				slog.Duration("retry_after", wait), slog.String("reason", rl.Reason))
 		case errors.Is(err, grpcapi.ErrSpotifyAuth):
@@ -166,14 +160,13 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	return state + ": " + pb.Track.Name, nil
 }
 
-// sleepCtx waits for d; false when ctx ended first.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
+// holdUntil pauses queue reads until t; it never shortens a pause.
+func (p *Poller) holdUntil(t time.Time) {
+	n := t.UnixNano()
+	for {
+		cur := p.pauseUntil.Load()
+		if n <= cur || p.pauseUntil.CompareAndSwap(cur, n) {
+			return
+		}
 	}
 }

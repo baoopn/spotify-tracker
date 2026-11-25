@@ -29,14 +29,31 @@ const (
 	pgLater   = "3333333333333333333333"
 )
 
-func pgService(t *testing.T) (*tracker.Service, *store.Store, *pgxpool.Pool) {
+// pgPool connects to STORE_TEST_DATABASE_URL in its own schema ("tracker_test"),
+// so test packages running against the same database never touch each
+// other's tables. It skips the test when the variable is unset.
+func pgPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("STORE_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("STORE_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
+	admin, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS tracker_test")
+	admin.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "tracker_test"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +61,13 @@ func pgService(t *testing.T) (*tracker.Service, *store.Store, *pgxpool.Pool) {
 	if err := postgres.Migrate(ctx, pool, slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
+	return pool
+}
+
+func pgService(t *testing.T) (*tracker.Service, *store.Store, *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	pool := pgPool(t)
 	if _, err := pool.Exec(ctx, `TRUNCATE listening_history, track_features, track_artists, tracks, albums,
 		artists, current_playback CASCADE`); err != nil {
 		t.Fatal(err)
@@ -128,6 +152,13 @@ func TestPGPrefetchUpcoming(t *testing.T) {
 	}
 	if n := count(t, pool, `SELECT count(*) FROM track_features WHERE track_id = $1`, pgNext); n != 1 {
 		t.Errorf("track_features after the play = %d, want 1", n)
+	}
+	// A first play is found while it plays, before it counts (30%).
+	if n := count(t, pool, `SELECT count(*) FROM listening_history`); n != 0 {
+		t.Fatalf("history after 1 s = %d", n)
+	}
+	if _, err := st.TrackDetail(ctx, pgNext); err != nil {
+		t.Errorf("track detail while it plays: %v", err)
 	}
 }
 

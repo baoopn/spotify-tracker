@@ -351,3 +351,32 @@ func TestRefresherWakeUpcoming(t *testing.T) {
 		t.Error("empty list must not wake")
 	}
 }
+
+// The upcoming list drops a song once it plays, clears on idle (nil) and
+// expires after UpcomingTTL.
+func TestRefresherUpcomingLifetime(t *testing.T) {
+	st := &fakeStore{}
+	r := New(st, &fakeSource{}, slog.New(slog.DiscardHandler))
+	clock := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return clock }
+	r.WakeUpcoming([]string{"a", "b"})
+	r.Wake("a")
+	if got := r.priorityList(); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("after a plays = %v", got)
+	}
+	r.mu.Lock()
+	up := slices.Clone(r.upcoming)
+	r.mu.Unlock()
+	if !slices.Equal(up, []string{"b"}) {
+		t.Errorf("upcoming = %v", up)
+	}
+	r.WakeUpcoming(nil)
+	if got := r.priorityList(); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("after idle = %v", got)
+	}
+	r.WakeUpcoming([]string{"c"})
+	clock = clock.Add(UpcomingTTL + time.Second)
+	if got := r.priorityList(); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("after expiry = %v", got)
+	}
+}

@@ -50,6 +50,38 @@ jobs:
       - name: Build
         run: go build ./...
 
+  go-postgres:
+    name: Go — PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: scratch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d scratch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The *_pg_test.go tests skip without STORE_TEST_DATABASE_URL; each
+      # package migrates its own schema. -p 1 runs the packages one by one.
+      - name: Test against PostgreSQL
+        env:
+          STORE_TEST_DATABASE_URL: postgres://test:test@localhost:5432/scratch?sslmode=disable
+        run: go test -count=1 -p 1 -run PG ./...
+
   web:
     name: Frontend (${{ matrix.app }}) — check, lint, build
     runs-on: ubuntu-latest

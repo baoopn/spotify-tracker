@@ -204,8 +204,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 	lyricsRefresher, translator := newLyricsQueue(cfg, st, svc, adminAPI, log)
 	images, albums := artistimages.New(st, mgr, log), albumdetails.New(st, mgr, log)
 	warmer := &httpapi.LyricsWarmer{}
-	hookPrefetch(cfg, svc, prefetchHooks{lyrics: lyricsRefresher, translator: translator,
-		albums: albums, images: images, warmer: warmer}, log)
+	hookPrefetch(cfg, svc, prefetchHooksFor(lyricsRefresher, translator, albums, images, warmer), log)
 
 	grpcSrv, hs := grpcapi.NewServer(svc, mgr, cfg.InternalToken, log, cfg.IsDevelopment())
 	return &components{

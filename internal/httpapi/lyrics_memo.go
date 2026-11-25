@@ -34,21 +34,41 @@ type memoEntry struct {
 	ttl  time.Duration
 }
 
+// get returns a fresh body for a request. A warmed entry (long TTL) falls
+// back to the normal TTL from its first request on, so the song playing
+// now is re-read about once a minute.
 func (m *lyricsMemo) get(trackID string, now time.Time) (*nowLyricsBody, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	e, ok := m.entries[trackID]
+	e, ok := m.lookup(trackID, now)
 	if !ok {
 		return nil, false
+	}
+	if e.ttl > nowLyricsMemoTTL {
+		e.at, e.ttl = now, nowLyricsMemoTTL
+		m.entries[trackID] = e
+	}
+	return e.body, true
+}
+
+// fresh reports whether a fresh entry exists, without serving it.
+func (m *lyricsMemo) fresh(trackID string, now time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.lookup(trackID, now)
+	return ok
+}
+
+func (m *lyricsMemo) lookup(trackID string, now time.Time) (memoEntry, bool) {
+	e, ok := m.entries[trackID]
+	if !ok {
+		return e, false
 	}
 	ttl := e.ttl
 	if e.body.pending() {
 		ttl = nowLyricsEmptyTTL
 	}
-	if now.Sub(e.at) >= ttl {
-		return nil, false
-	}
-	return e.body, true
+	return e, now.Sub(e.at) < ttl
 }
 
 // put stores a body; past lyricsMemoSlots the oldest other entry goes.
@@ -79,25 +99,32 @@ func (h *Handler) buildBody(trackID string, l store.NowLyrics) *nowLyricsBody {
 }
 
 // warmLyrics builds and caches the body of an upcoming track, so its lyrics
-// are served from memory the moment it starts. A body that is still pending
-// is not kept (it would only live seconds).
-func (h *Handler) warmLyrics(ctx context.Context, trackID string) {
+// are served from memory the moment it starts. It runs in the same flight
+// as requests, so it never overwrites a body built meanwhile. A body still
+// pending is not kept (it would only live seconds). force rebuilds a fresh
+// entry (a translation just finished).
+func (h *Handler) warmLyrics(ctx context.Context, trackID string, force bool) {
 	if h.lyrics == nil || trackID == "" {
 		return
 	}
 	now := h.clock()
-	if _, ok := h.lyricsCache.get(trackID, now); ok {
+	if !force && h.lyricsCache.fresh(trackID, now) {
 		return
 	}
-	l, err := h.lyrics.NowLyrics(ctx, trackID, h.opts.TranslationCaps)
-	if err != nil {
-		return
-	}
-	body := h.buildBody(trackID, l)
-	if body == nil || body.pending() {
-		return
-	}
-	h.lyricsCache.put(trackID, body, now, lyricsWarmTTL)
+	_, _, _ = h.lyricsCache.flight.Do(trackID, func() (any, error) {
+		if !force && h.lyricsCache.fresh(trackID, now) {
+			return nil, nil
+		}
+		l, err := h.lyrics.NowLyrics(ctx, trackID, h.opts.TranslationCaps)
+		if err != nil {
+			return nil, err
+		}
+		body := h.buildBody(trackID, l)
+		if body != nil && !body.pending() {
+			h.lyricsCache.put(trackID, body, now, lyricsWarmTTL)
+		}
+		return body, nil
+	})
 }
 
 // LyricsWarmer lets queue prefetch warm the public now-playing lyrics cache
@@ -108,8 +135,9 @@ type LyricsWarmer struct {
 	h  *Handler
 }
 
-// Warm caches the public lyrics body of trackID (best effort).
-func (w *LyricsWarmer) Warm(ctx context.Context, trackID string) {
+// Warm caches the public lyrics body of trackID (best effort); force
+// rebuilds an entry that is already cached.
+func (w *LyricsWarmer) Warm(ctx context.Context, trackID string, force bool) {
 	if w == nil {
 		return
 	}
@@ -117,7 +145,7 @@ func (w *LyricsWarmer) Warm(ctx context.Context, trackID string) {
 	h := w.h
 	w.mu.Unlock()
 	if h != nil {
-		h.warmLyrics(ctx, trackID)
+		h.warmLyrics(ctx, trackID, force)
 	}
 }
 

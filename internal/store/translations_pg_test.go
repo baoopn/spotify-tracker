@@ -21,14 +21,31 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/store"
 )
 
-func pgStore(t *testing.T) (*store.Store, *pgxpool.Pool) {
+// pgPool connects to STORE_TEST_DATABASE_URL in its own schema ("store_test"),
+// so test packages running against the same database never touch each
+// other's tables. It skips the test when the variable is unset.
+func pgPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("STORE_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("STORE_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
+	admin, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS store_test")
+	admin.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "store_test"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +53,13 @@ func pgStore(t *testing.T) (*store.Store, *pgxpool.Pool) {
 	if err := postgres.Migrate(ctx, pool, slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `TRUNCATE translation_usage, lyrics_translations, lyrics, listening_history,
+	return pool
+}
+
+func pgStore(t *testing.T) (*store.Store, *pgxpool.Pool) {
+	t.Helper()
+	pool := pgPool(t)
+	_, err := pool.Exec(context.Background(), `TRUNCATE translation_usage, lyrics_translations, lyrics, listening_history,
 		track_artists, tracks, artists CASCADE`)
 	if err != nil {
 		t.Fatal(err)

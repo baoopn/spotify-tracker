@@ -14,5 +14,6 @@ func TestTrackDetailRequiresPlay(t *testing.T) {
 	if _, err := (&Queries{db: db}).TrackDetail(context.Background(), "t1"); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
-	wantSQL(t, db.sql, "WHERE t.id = $1 AND EXISTS (SELECT 1 FROM listening_history h WHERE h.track_id = t.id)")
+	wantSQL(t, db.sql, "WHERE t.id = $1 AND (EXISTS (SELECT 1 FROM listening_history h WHERE h.track_id = t.id)",
+		"OR t.id = (SELECT cp.track_id FROM current_playback cp))")
 }

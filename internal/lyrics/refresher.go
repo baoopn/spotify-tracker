@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -57,9 +58,10 @@ type Refresher struct {
 
 	wake       chan struct{}
 	mu         sync.Mutex
-	priority   string   // the song playing now: looked up first
-	upcoming   []string // the next songs of the queue: looked up right after
-	badBatches int      // batches in a row that ended on maxTransient errors
+	priority   string    // the song playing now: looked up first
+	upcoming   []string  // the next songs of the queue: looked up right after
+	upcomingAt time.Time // when upcoming was set; it expires after UpcomingTTL
+	badBatches int       // batches in a row that ended on maxTransient errors
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) bool
 }
@@ -83,6 +85,7 @@ func (r *Refresher) Wake(trackID string) {
 	r.mu.Lock()
 	same := r.priority == trackID
 	r.priority = trackID
+	r.upcoming = slices.DeleteFunc(r.upcoming, func(id string) bool { return id == trackID }) // it plays now
 	r.mu.Unlock()
 	if same || r.wake == nil {
 		return
@@ -93,17 +96,21 @@ func (r *Refresher) Wake(trackID string) {
 	}
 }
 
+// UpcomingTTL is how long an upcoming list counts without a refresh (the
+// poller re-reads the queue about every minute while a song plays).
+const UpcomingTTL = 15 * time.Minute
+
 // WakeUpcoming tells the refresher which songs are queued to play next (from
 // the Spotify queue): they are looked up right after the song playing now,
-// and the next batch starts now. Never blocks.
+// and a changed list starts the next batch now. An empty list clears it
+// (playback went idle). Never blocks.
 func (r *Refresher) WakeUpcoming(trackIDs []string) {
-	if len(trackIDs) == 0 {
-		return
-	}
 	r.mu.Lock()
-	r.upcoming = append([]string(nil), trackIDs...)
+	changed := !slices.Equal(r.upcoming, trackIDs)
+	r.upcoming = slices.Clone(trackIDs)
+	r.upcomingAt = r.clock()
 	r.mu.Unlock()
-	if r.wake == nil {
+	if !changed || len(trackIDs) == 0 || r.wake == nil {
 		return
 	}
 	select {
@@ -112,10 +119,15 @@ func (r *Refresher) WakeUpcoming(trackIDs []string) {
 	}
 }
 
-// priorityList is the song playing now, then the upcoming songs.
+// priorityList is the song playing now, then the upcoming songs (unless the
+// list expired).
 func (r *Refresher) priorityList() []string {
+	now := r.clock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if now.Sub(r.upcomingAt) > UpcomingTTL {
+		r.upcoming = nil
+	}
 	out := make([]string, 0, 1+len(r.upcoming))
 	if r.priority != "" {
 		out = append(out, r.priority)

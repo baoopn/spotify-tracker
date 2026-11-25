@@ -237,7 +237,7 @@ func (s *Service) ClearPlayback(ctx context.Context, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	s.clearUpNext(ctx)
+	s.clearUpcoming(ctx)
 	if changed {
 		s.publishNowPlaying(ctx)
 	}

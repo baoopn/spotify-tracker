@@ -12,79 +12,115 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/domain"
 )
 
-// MaxRequestsPerLookup is the most requests one Lookup sends: a Get with all
-// artists, a Get with the first artist and a search. config checks
-// LYRICS_LEASE against it.
-const MaxRequestsPerLookup = 3
+// MaxRequestsPerLookup is the most requests one Lookup sends: Gets with the
+// name and with its core title (all artists, then the first artist), then
+// searches with the core title and the name, cut off at this budget. config
+// checks LYRICS_LEASE against it.
+const MaxRequestsPerLookup = 5
 
 // minContain is the shortest artist name (in runes) that may match as part
 // of a longer one; shorter names ("V", "Ni") must match a whole name.
 const minContain = 3
 
 // Lookup finds the lyrics of a track. With an album and a duration it first
-// tries the exact Get with all credited artists joined by ", " (as LRCLIB
-// writes them), then with the first artist only (skipped for one artist),
-// then searches. It stops at the first result with synced lyrics. An exact
+// tries the exact Get with the name and all credited artists joined by ", "
+// (as LRCLIB writes them), then with the first artist only (skipped for one
+// artist), then the same two with the core title (decorations such as
+// "(电视剧《…》插曲)" or " - Remastered" removed; skipped when it equals the
+// name or would drop a version tag such as "(Live)"). Then it searches with
+// the core title and with the name. It stops at the first result with
+// synced lyrics and sends at most MaxRequestsPerLookup requests. An exact
 // match with only plain lyrics, or instrumental, is kept while the search
-// looks for a synced candidate with the exact folded name, the first artist
-// and the duration; without one the exact match is returned. A Get that
-// fails (other than a rate limit or a cancelled ctx) does not end the
-// lookup: when nothing is found, its error is returned so the track is
-// retried. nil, nil means no lyrics were found.
+// looks for a synced candidate with a matching name (titleMatch), the first
+// artist and the duration; without one the exact match is returned. A
+// request that fails (other than a rate limit or a cancelled ctx) does not
+// end the lookup: when nothing is found, its error is returned so the track
+// is retried. nil, nil means no lyrics were found.
 func (c *Client) Lookup(ctx context.Context, cand domain.LyricsCandidate) (*domain.Lyrics, error) {
 	artists := credited(cand)
 	if len(artists) == 0 {
 		return nil, nil
 	}
 	durSec := int(math.Round(float64(cand.DurationMS) / 1000))
+	want := parseTitle(cand.Name)
+	left := MaxRequestsPerLookup
 	var exact *Record // the best exact match without synced lyrics
-	var getErr error  // a Get that failed; the lookup goes on
+	var failed error  // a request that failed; the lookup goes on
 	if cand.Album != "" && durSec > 0 {
 		names := []string{strings.Join(artists, ", ")}
 		if len(artists) > 1 {
 			names = append(names, artists[0])
 		}
-		for _, artist := range names {
-			rec, err := c.Get(ctx, cand.Name, artist, cand.Album, durSec)
-			if err != nil {
-				if stop(ctx, err) {
-					return nil, err
+		titles := []string{cand.Name}
+		if v := want.getVariant(); v != "" {
+			titles = append(titles, v)
+		}
+		for i, track := range titles {
+			for _, artist := range names {
+				if left == 0 {
+					break
 				}
-				getErr = err
-				continue
-			}
-			if rec == nil {
-				continue
-			}
-			if lyricsKind(rec) == kindSynced {
-				return toLyrics(rec), nil
-			}
-			if exact == nil || lyricsKind(rec) > lyricsKind(exact) {
-				exact = rec
+				left--
+				rec, err := c.Get(ctx, track, artist, cand.Album, durSec)
+				if err != nil {
+					if stop(ctx, err) {
+						return nil, err
+					}
+					failed = err
+					continue
+				}
+				if rec == nil || (i > 0 && want.match(rec.TrackName) == 0) {
+					continue
+				}
+				if lyricsKind(rec) == kindSynced {
+					return toLyrics(rec), nil
+				}
+				if exact == nil || lyricsKind(rec) > lyricsKind(exact) {
+					exact = rec
+				}
 			}
 		}
-	}
-	recs, err := c.Search(ctx, cand.Name, artists[0])
-	if err != nil {
-		if exact == nil || stop(ctx, err) {
-			return nil, err
-		}
-		return toLyrics(exact), nil // keep the exact match (e.g. on a timeout)
-	}
-	if exact == nil {
-		if rec := pick(recs, cand.Name, artists, durSec, nil); rec != nil {
-			return toLyrics(rec), nil
-		}
-		return nil, getErr
 	}
 	// Only synced lyrics replace an exact match, also an instrumental one.
-	want := fold(cand.Name)
-	if rec := pick(recs, cand.Name, artists, durSec, func(r *Record) bool {
-		return fold(r.TrackName) == want && lyricsKind(r) == kindSynced && primaryMatch(r.ArtistName, artists[0])
-	}); rec != nil {
-		return toLyrics(rec), nil
+	var accept func(*Record) bool
+	if exact != nil {
+		accept = func(r *Record) bool {
+			return lyricsKind(r) == kindSynced && primaryMatch(r.ArtistName, artists[0])
+		}
 	}
-	return toLyrics(exact), nil
+	var recs []Record
+	seen := map[int64]bool{}
+	var best *Record
+	for _, track := range want.searchTitles() {
+		if left == 0 {
+			break
+		}
+		left--
+		got, err := c.Search(ctx, track, artists[0])
+		if err != nil {
+			if stop(ctx, err) {
+				return nil, err
+			}
+			failed = err
+			continue
+		}
+		for _, r := range got {
+			if r.ID != 0 && !seen[r.ID] {
+				seen[r.ID] = true
+				recs = append(recs, r)
+			}
+		}
+		if best = pick(recs, cand.Name, artists, durSec, accept); best != nil && lyricsKind(best) == kindSynced {
+			break
+		}
+	}
+	switch {
+	case best != nil:
+		return toLyrics(best), nil
+	case exact != nil:
+		return toLyrics(exact), nil // also when the search failed (e.g. a timeout)
+	}
+	return nil, failed
 }
 
 // stop reports whether err ends the lookup at once: a rate limit (the whole
@@ -130,15 +166,15 @@ func lyricsKind(r *Record) int {
 	}
 }
 
-// pick chooses the best search candidate. A candidate must have the same
-// track name (folded, ignoring a bracketed or " - " version suffix such as
-// "(Live)" or "- Remastered"), an artist that matches one of the credited
+// pick chooses the best search candidate. A candidate must have a matching
+// track name (title.match: the same normalized name, or the same core title
+// with the same version tags), an artist that matches one of the credited
 // artists (artistMatch), and, when the duration is known, a duration within
 // durationSlack; accept (nil = any) may narrow it further. Among those it
-// prefers the exact folded name, then synced lyrics, then plain lyrics, then
-// the closest duration.
+// prefers synced lyrics, then plain lyrics, then the same normalized name
+// over the same core title, then the closest duration.
 func pick(recs []Record, name string, artists []string, durSec int, accept func(*Record) bool) *Record {
-	want, wantBase := fold(name), baseName(name)
+	want := parseTitle(name)
 	var wantNames []string
 	for _, a := range artists {
 		wantNames = append(wantNames, artistNames(a)...)
@@ -147,10 +183,11 @@ func pick(recs []Record, name string, artists []string, durSec int, accept func(
 	var bestKey [4]float64
 	for i := range recs {
 		r := &recs[i]
-		if r.ID == 0 || baseName(r.TrackName) != wantBase || !artistMatch(artistNames(r.ArtistName), wantNames) {
+		if r.ID == 0 || !artistMatch(artistNames(r.ArtistName), wantNames) {
 			continue
 		}
-		if accept != nil && !accept(r) {
+		rank := want.match(r.TrackName)
+		if rank == 0 || (accept != nil && !accept(r)) {
 			continue
 		}
 		diff := 0.0
@@ -159,7 +196,7 @@ func pick(recs []Record, name string, artists []string, durSec int, accept func(
 				continue
 			}
 		}
-		key := [4]float64{b2f(fold(r.TrackName) == want), b2f(nonBlank(r.SyncedLyrics)), b2f(nonBlank(r.PlainLyrics)), -diff}
+		key := [4]float64{b2f(nonBlank(r.SyncedLyrics)), b2f(nonBlank(r.PlainLyrics)), float64(rank), -diff}
 		if best == nil || less(bestKey, key) {
 			best, bestKey = r, key
 		}
@@ -234,22 +271,6 @@ func primaryMatch(credit, first string) bool {
 		}
 	}
 	return len(names) > 0
-}
-
-// nameSuffix matches a trailing "(…)", "[…]" or " - …" version suffix.
-var nameSuffix = regexp.MustCompile(`\s*(?:\([^)]*\)|\[[^\]]*\]|\s-\s.*)$`)
-
-// baseName folds a track name and removes version suffixes ("(Live)",
-// "[Remix]", "- Remastered 2011").
-func baseName(s string) string {
-	b := fold(s)
-	for {
-		next := strings.TrimSpace(nameSuffix.ReplaceAllString(b, ""))
-		if next == b || next == "" {
-			return b
-		}
-		b = next
-	}
 }
 
 func less(a, b [4]float64) bool {

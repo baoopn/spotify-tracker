@@ -213,18 +213,18 @@ type Lyrics struct {
 	NotFoundRetry time.Duration `env:"LYRICS_NOT_FOUND_RETRY" envDefault:"720h"`
 	// Lease is how long a worker holds a claimed batch; a crashed worker's
 	// claims expire after it.
-	Lease time.Duration `env:"LYRICS_LEASE" envDefault:"15m"`
+	Lease time.Duration `env:"LYRICS_LEASE" envDefault:"20m"`
 }
 
 // lyricsRequestsPerTrack is the most LRCLIB requests one track's lookup
-// sends (lrclib.MaxRequestsPerLookup: Get with all artists, Get with the
-// first artist, search), and lyricsRequestTimeout the LRCLIB client's
+// sends (lrclib.MaxRequestsPerLookup: Gets with the name and its core title,
+// each with all artists and the first artist, then searches), and lyricsRequestTimeout the LRCLIB client's
 // request timeout (lrclib.DefaultTimeout). A worst-case batch waits the
 // spacing before each request and then up to the timeout for it, so the
 // lease must cover lyricsRequestsPerTrack × LYRICS_BATCH × (LYRICS_SPACING +
 // lyricsRequestTimeout).
 const (
-	lyricsRequestsPerTrack = 3
+	lyricsRequestsPerTrack = 5
 	lyricsRequestTimeout   = 20 * time.Second
 )
 
@@ -249,8 +249,8 @@ func (l *Lyrics) validate() error {
 	case l.Lease < 5*time.Minute || l.Lease > time.Hour:
 		return fmt.Errorf("LYRICS_LEASE must be between 5m and 1h")
 	case l.Lease < lyricsRequestsPerTrack*time.Duration(l.Batch)*(l.Spacing+lyricsRequestTimeout):
-		return fmt.Errorf("LYRICS_LEASE must be at least 3 × LYRICS_BATCH × (LYRICS_SPACING + 20s): " +
-			"one batch at 3 requests per track, each waiting the spacing and up to the 20s request timeout")
+		return fmt.Errorf("LYRICS_LEASE must be at least 5 × LYRICS_BATCH × (LYRICS_SPACING + 20s): " +
+			"one batch at 5 requests per track, each waiting the spacing and up to the 20s request timeout")
 	}
 	return nil
 }

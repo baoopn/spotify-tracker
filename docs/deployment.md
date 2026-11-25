@@ -23,7 +23,10 @@ deployed** — and (3) a local pre-push hook (`git config core.hooksPath
 .githooks`) that refuses pushes to `main`.
 
 - **`ci.yml`** runs on PRs and on `main`. Go: generated-code drift check, `go mod tidy`
-  check, golangci-lint, race tests, build. SPA: svelte-check, eslint, build.
+  check, golangci-lint, race tests, build. A second Go job runs the
+  `*_pg_test.go` tests against a PostgreSQL 17 service
+  (`STORE_TEST_DATABASE_URL`; each package migrates its own schema).
+  SPA: svelte-check, eslint, build.
   It also validates all compose files and does a Docker build on PRs. The
   backup image gets shellcheck, a build and a backup/restore roundtrip test. The
   **Public-safety check** (`scripts/check-public.sh`, also `make check-public`)

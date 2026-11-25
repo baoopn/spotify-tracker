@@ -284,15 +284,15 @@ now-playing lyrics and in the admin.
   played since the feature shipped are never queued on their own.
 - **Upcoming songs.** With queue prefetch on and `QUEUE_PREFETCH_TRANSLATE`
   (default true), the next song of the Spotify queue (position 0 only) is
-  queued too, so its translation is ready when it starts. This is the one exception to
-  "queued when it plays": a song that is then skipped still costs a call,
-  within the caps.
-- **Order.** The song playing now first, then the upcoming songs in queue
-  order, then re-queued songs (newest request first), then by last play. The song playing now counts as queued only once
-  its row exists (it may have no lyrics yet); when LRCLIB finds its lyrics,
-  the fetcher tells the translator, which queues it then (also with
-  `TRANSLATE_RECENT_WINDOW=0`), so a new song gets lyrics and then a
-  translation within about a minute.
+  queued too, so its translation is ready when it starts. This is the one
+  exception to "queued when it plays": a song that is then skipped still
+  costs a call, within the caps.
+- **Order.** The song playing now first, then the upcoming song, then
+  re-queued songs (newest request first), then by last play. The song
+  playing now counts as queued only once its row exists (it may have no
+  lyrics yet); when LRCLIB finds its lyrics, the fetcher tells the
+  translator, which queues it then (also with `TRANSLATE_RECENT_WINDOW=0`),
+  so a new song gets lyrics and then a translation within about a minute.
 - **Leases.** The worker claims one song at a time with
   `UPDATE ... FOR UPDATE SKIP LOCKED` and a lease (`claimed_by`,
   `claimed_until`, `TRANSLATE_LEASE`, 10 min). Results are written only while
@@ -344,24 +344,27 @@ default (`QUEUE_PREFETCH_ENABLED`).
 - **Cadence (poller).** The queue is read only while something plays: when
   the song changes, and every `QUEUE_PREFETCH_RECHECK` (60 s) while it plays
   on, to catch queue edits. The read runs in its own goroutine with a 10 s
-  timeout (and the RPC its own 10 s), so a slow queue never delays the 3 s
-  poll. A 429 on the queue read pauses only queue reads for Retry-After; a 429
-  on the main poll also holds queue reads (Spotify limits are app wide; the
-  hold only ever moves forward). A 403 backs off for an hour. The token cache
-  of the poller is never locked across the token RPC: concurrent refreshes
+  timeout (and the RPC to the API its own 10 s), so a slow queue never delays
+  the 3 s poll. A 429 on the queue read pauses only queue reads, for
+  Retry-After (at least one recheck interval). A 429 on the main poll pauses
+  queue reads too, since Spotify limits are app wide; a new pause never
+  shortens one already running. A 403 backs off for an hour. The poller's
+  token cache is never locked across the token RPC: concurrent refreshes
   share one call, and the poll keeps using the still-valid token meanwhile.
 - **What is sent.** The next `QUEUE_PREFETCH_DEPTH` (1) tracks; episodes,
   local files, invalid ids and repeats are skipped, and so is the song playing
   now (repeat-one). A track prefetched within `QUEUE_PREFETCH_TTL` (6 h) is
   sent as listed only; a track is marked done only after the API stored it.
-  An empty queue is still sent, so the up-next list clears. The API drops
-  repeats and the song playing now, and ignores a list read while playback
-  stopped or moved to another song.
+  An empty queue is still sent, so the up-next list clears. The API also
+  drops repeats and the song playing now. When playback stopped or moved to
+  another song while the queue was read, it still stores the rows, but it
+  does not save the list or wake any lookup.
 - **Catalog only.** `IngestService.PrefetchUpcoming` upserts artists, album
   and track (an empty value never overwrites a stored one). It never writes a
   play: no history row, replay, `listen_state`, `current_playback` or
-  response-cache change. A deadlock with a RecordPlayback upserting the same
-  rows is retried once.
+  response-cache change. When a `RecordPlayback` upserting the same rows
+  makes Postgres abort the transaction (deadlock or serialization failure),
+  it is retried once.
 - **Enrichment waits for the play.** Prefetch does not set the catalog-seen
   marker and creates no `track_features` row, so the real play still creates
   the row and queues Soundcharts enrichment. `QUEUE_PREFETCH_ENRICH=true`
@@ -373,18 +376,18 @@ default (`QUEUE_PREFETCH_ENABLED`).
   `QUEUE_PREFETCH_TRANSLATE` is on (see [Lyrics translation](#lyrics-translation)).
   An upcoming list expires after 15 minutes without a refresh, is cleared
   when playback goes idle, and a song leaves it once it plays, so stale ids
-  never outrank admin re-queues. With
-  `QUEUE_PREFETCH_DETAILS` the album-details and artist-image jobs wake, and
-  their never-checked-first order picks the new album and artists.
+  never outrank admin re-queues. With `QUEUE_PREFETCH_DETAILS` the
+  album-details and artist-image jobs wake, and their never-checked-first
+  order picks the new album and artists.
 - **Cache.** The public now-playing lyrics memo holds several tracks (8).
   Upcoming tracks whose lyrics are stored (or just found) are built into it
   ahead of time with a 10-minute TTL, so the first request after the switch
   is served from memory; from that first request on, the normal one-minute
   TTL applies. Warming runs in the same flight as requests, so it never
   overwrites a newer body, and a translation finished for an upcoming song
-  rebuilds its entry. Bodies still pending are not warmed. Only the
-  replica that received the RPC is warmed and woken; other replicas pick the
-  tracks up in their next batch.
+  rebuilds its entry. Bodies still pending are not warmed. Only the replica
+  that received the RPC is warmed and woken; other replicas pick the tracks
+  up in their next batch.
 - **Up next (private).** The list is kept in Redis (`playback:upnext`,
   5 min, cleared when nothing plays) and shown in the admin overview
   (`up_next`) and the `admin_overview` MCP tool. It is never on the public

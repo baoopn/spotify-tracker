@@ -51,12 +51,12 @@ func (m *lyricsMemo) get(trackID string, now time.Time) (*nowLyricsBody, bool) {
 	return e.body, true
 }
 
-// fresh reports whether a fresh entry exists, without serving it.
-func (m *lyricsMemo) fresh(trackID string, now time.Time) bool {
+// peek returns a fresh entry without serving it (its TTL is kept).
+func (m *lyricsMemo) peek(trackID string, now time.Time) (*nowLyricsBody, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.lookup(trackID, now)
-	return ok
+	e, ok := m.lookup(trackID, now)
+	return e.body, ok
 }
 
 func (m *lyricsMemo) lookup(trackID string, now time.Time) (memoEntry, bool) {
@@ -108,23 +108,37 @@ func (h *Handler) warmLyrics(ctx context.Context, trackID string, force bool) {
 		return
 	}
 	now := h.clock()
-	if !force && h.lyricsCache.fresh(trackID, now) {
+	if _, ok := h.lyricsCache.peek(trackID, now); ok && !force {
 		return
 	}
 	_, _, _ = h.lyricsCache.flight.Do(trackID, func() (any, error) {
-		if !force && h.lyricsCache.fresh(trackID, now) {
-			return nil, nil
-		}
-		l, err := h.lyrics.NowLyrics(ctx, trackID, h.opts.TranslationCaps)
-		if err != nil {
-			return nil, err
-		}
-		body := h.buildBody(trackID, l)
-		if body != nil && !body.pending() {
-			h.lyricsCache.put(trackID, body, now, lyricsWarmTTL)
-		}
-		return body, nil
+		return h.warmOnce(ctx, trackID, now, force), nil
 	})
+}
+
+// warmOnce is the body of a warm flight. A request that joined the flight
+// gets its result, so an entry already fresh is handed on, not dropped.
+func (h *Handler) warmOnce(ctx context.Context, trackID string, now time.Time, force bool) warmResult {
+	if body, ok := h.lyricsCache.peek(trackID, now); ok && !force {
+		return warmResult{body: body, ok: true}
+	}
+	l, err := h.lyrics.NowLyrics(ctx, trackID, h.opts.TranslationCaps)
+	if err != nil {
+		return warmResult{} // a request that joined loads on its own
+	}
+	body := h.buildBody(trackID, l)
+	if body != nil && !body.pending() {
+		h.lyricsCache.put(trackID, body, now, lyricsWarmTTL)
+	}
+	return warmResult{body: body, ok: true}
+}
+
+// warmResult is what a warm flight hands a request that joined it. ok is
+// false when the warm failed (its own short, background context may have
+// run out): the request then loads the body itself.
+type warmResult struct {
+	body *nowLyricsBody
+	ok   bool
 }
 
 // LyricsWarmer lets queue prefetch warm the public now-playing lyrics cache

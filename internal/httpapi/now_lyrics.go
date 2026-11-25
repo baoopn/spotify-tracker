@@ -159,7 +159,7 @@ func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time)
 	if body, ok := h.lyricsCache.get(trackID, now); ok {
 		return body, nil
 	}
-	v, err, _ := h.lyricsCache.flight.Do(trackID, func() (any, error) {
+	load := func() (*nowLyricsBody, error) {
 		if body, ok := h.lyricsCache.get(trackID, now); ok {
 			return body, nil
 		}
@@ -170,9 +170,21 @@ func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time)
 		body := h.buildBody(trackID, l)
 		h.lyricsCache.put(trackID, body, now, nowLyricsMemoTTL)
 		return body, nil
-	})
+	}
+	v, err, _ := h.lyricsCache.flight.Do(trackID, func() (any, error) { return load() })
 	if err != nil {
 		return nil, err
+	}
+	if w, ok := v.(warmResult); ok {
+		// Joined a warm-up of the lyrics cache: use its body, or load with
+		// this request's context when the warm failed.
+		if !w.ok {
+			return load()
+		}
+		if body, ok := h.lyricsCache.get(trackID, now); ok {
+			return body, nil // served: the warm TTL falls back to the normal one
+		}
+		return w.body, nil
 	}
 	body, _ := v.(*nowLyricsBody)
 	return body, nil

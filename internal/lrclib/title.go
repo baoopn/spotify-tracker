@@ -38,30 +38,16 @@ var (
 	dashSep = regexp.MustCompile(`\s[-–—]\s`)
 	// tildeSuffix is a trailing "~…~" subtitle (Japanese style).
 	tildeSuffix = regexp.MustCompile(`\s*[~〜]([^~〜]+)[~〜]$`)
-	// featSuffix is an unbracketed featured-artist part ("Song feat. X").
-	featSuffix = regexp.MustCompile(`(?i)\s(?:feat\.?|ft\.?|featuring)\s.+$`)
-	// featPart is a removed part that names other artists ("feat. X",
-	// "with X"); it carries no version tag.
-	featPart = regexp.MustCompile(`^(?:feat\.?|ft\.?|featuring|with)\s`)
+	// featSuffix is an unbracketed featured-artist part followed by a name
+	// ("Song feat. X", not "5 ft. 7").
+	featSuffix = regexp.MustCompile(`(?i)\s(?:feat\.?|ft\.?|featuring)\s+\pL.*$`)
 )
 
-// versionWords are the version-defining tags, matched as whole words in a
-// folded removed part, with their canonical tag.
-var versionWords = []struct {
-	re  *regexp.Regexp
-	tag string
-}{
-	{regexp.MustCompile(`\b(?:live|concert)\b|现场|現場|演唱会|演唱會|ライブ`), "live"},
-	{regexp.MustCompile(`\b(?:acoustic|unplugged)\b|不插电|不插電|アコースティック`), "acoustic"},
-	{regexp.MustCompile(`\b(?:remix(?:ed)?|dj|rmx|bootleg)\b|混音|リミックス`), "remix"},
-	{regexp.MustCompile(`\b(?:instrumental|inst|karaoke|off vocal|backing track)\b|伴奏|纯音乐|純音樂|カラオケ|インスト`), "inst"},
-	{regexp.MustCompile(`\b(?:sped up|speed up|slowed|nightcore)\b|加速|降速`), "speed"},
-	{regexp.MustCompile(`\b(?:demo|reprise)\b`), "alt"},
-	{regexp.MustCompile(`粤语|粵語|\bcantonese\b`), "lang-yue"},
-	{regexp.MustCompile(`国语|國語|普通话|\bmandarin\b`), "lang-cmn"},
-	{regexp.MustCompile(`英文版|英语版|英語版|\benglish (?:ver|version)\b`), "lang-en"},
-	{regexp.MustCompile(`日文版|日语版|日語版|日本語|\bjapanese (?:ver|version)\b`), "lang-ja"},
-	{regexp.MustCompile(`韩文版|韩语版|韓文版|韓語版|\bkorean (?:ver|version)\b`), "lang-ko"},
+// part is a removed piece of a title: the inside of a bracketed group
+// (open is its opening bracket) or a suffix (open 0, or '~').
+type part struct {
+	text string
+	open rune
 }
 
 // title is a track name prepared for matching.
@@ -70,13 +56,15 @@ type title struct {
 	norm     string   // normName of the whole name
 	core     string   // normName with decorations removed
 	tags     string   // version tags of the removed parts, sorted, "|"-joined
+	harmless bool     // every removed part is a harmless decoration
 	variants []string // titleVariants
 }
 
 func parseTitle(name string) title {
 	raw := strings.TrimSpace(name)
-	coreRaw, removed := stripAll(norm.NFKC.String(raw))
-	return title{raw: raw, norm: normName(raw), core: normName(coreRaw), tags: versionTags(removed), variants: titleVariants(raw)}
+	coreRaw, parts := stripAll(norm.NFKC.String(raw))
+	return title{raw: raw, norm: normName(raw), core: normName(coreRaw), tags: versionTags(parts),
+		harmless: harmlessParts(parts), variants: titleVariants(raw)}
 }
 
 // match ranks how well a candidate track name matches: 2 for the same
@@ -85,7 +73,10 @@ func (t title) match(name string) int {
 	if t.norm == "" {
 		return 0
 	}
-	o := parseTitle(name)
+	return t.matchTitle(parseTitle(name))
+}
+
+func (t title) matchTitle(o title) int {
 	switch {
 	case o.norm == t.norm:
 		return 2
@@ -95,13 +86,31 @@ func (t title) match(name string) int {
 	return 0
 }
 
+// replaces reports whether a candidate name may replace an exact match: the
+// same normName, or the same core when both sides removed only harmless
+// decorations ("- Remastered", "(电视剧《…》插曲)", "feat. X"). "Intro" is not
+// replaced by "Intro (Song A)", nor "Interlude - A" by "Interlude - B".
+func (t title) replaces(name string) bool {
+	if t.norm == "" {
+		return false
+	}
+	o := parseTitle(name)
+	switch t.matchTitle(o) {
+	case 2:
+		return true
+	case 1:
+		return t.harmless && o.harmless
+	}
+	return false
+}
+
 // getVariant is the extra title tried with Get: the most decoration-free
 // variant whose version tags equal the name's ("" when none differs). A
 // "Song (Live)" has none, since "Song" would only find studio lyrics.
 func (t title) getVariant() string {
 	for i := len(t.variants) - 1; i > 0; i-- {
 		v := t.variants[i]
-		if _, removed := stripAll(norm.NFKC.String(v)); versionTags(removed) == t.tags {
+		if _, parts := stripAll(norm.NFKC.String(v)); versionTags(parts) == t.tags {
 			return v
 		}
 	}
@@ -120,9 +129,9 @@ func (t title) searchTitles() []string {
 // have them.
 var quotes = strings.NewReplacer("’", "'", "‘", "'", "“", `"`, "”", `"`)
 
-// titleVariants lists a name, then the name (NFKC, ASCII quotes) with trailing bracketed
-// and suffix parts removed, then with every bracketed part removed: no
-// blanks, no duplicates. Stripping never empties a name.
+// titleVariants lists a name, then the name (NFKC, ASCII quotes) with
+// trailing bracketed and suffix parts removed, then with every bracketed
+// part removed: no blanks, no duplicates. Stripping never empties a name.
 func titleVariants(name string) []string {
 	raw := strings.TrimSpace(name)
 	if raw == "" {
@@ -143,37 +152,37 @@ func titleVariants(name string) []string {
 // stripTrailing removes trailing decorations one at a time: a bracketed
 // group, a " - …" suffix, a "~…~" subtitle, a "feat. …" part. It stops
 // before the name would be empty and returns the removed parts.
-func stripTrailing(s string) (string, []string) {
+func stripTrailing(s string) (string, []part) {
 	s = collapse(s)
-	var removed []string
+	var removed []part
 	for {
-		next, part := trimOne(s)
+		next, p := trimOne(s)
 		if next == "" || next == s {
 			return s, removed
 		}
-		s, removed = next, append(removed, part)
+		s, removed = next, append(removed, p)
 	}
 }
 
-func trimOne(s string) (string, string) {
+func trimOne(s string) (string, part) {
 	if start, ok := trailingGroup(s); ok && start > 0 {
-		_, size := utf8.DecodeRuneInString(s[start:])
+		open, size := utf8.DecodeRuneInString(s[start:])
 		_, last := utf8.DecodeLastRuneInString(s)
-		return collapse(s[:start]), s[start+size : len(s)-last]
+		return collapse(s[:start]), part{text: s[start+size : len(s)-last], open: open}
 	}
 	if m := dashSep.FindAllStringIndex(s, -1); len(m) > 0 {
 		at := m[len(m)-1]
 		if p := collapse(s[:at[0]]); p != "" {
-			return p, collapse(s[at[1]:])
+			return p, part{text: collapse(s[at[1]:])}
 		}
 	}
 	if m := tildeSuffix.FindStringSubmatchIndex(s); m != nil && m[0] > 0 {
-		return collapse(s[:m[0]]), s[m[2]:m[3]]
+		return collapse(s[:m[0]]), part{text: s[m[2]:m[3]], open: '~'}
 	}
 	if m := featSuffix.FindStringIndex(s); m != nil {
-		return collapse(s[:m[0]]), collapse(s[m[0]:])
+		return collapse(s[:m[0]]), part{text: collapse(s[m[0]:])}
 	}
-	return s, ""
+	return s, part{}
 }
 
 // trailingGroup finds the opening bracket of the group that ends s.
@@ -199,69 +208,60 @@ func trailingGroup(s string) (int, bool) {
 	return 0, false
 }
 
-// stripAll removes every bracketed group (innermost first), then the
-// trailing suffixes. A name that is one bracketed group ("『ありがとう』")
-// keeps its inside; a name with nothing left is returned whole with no
-// removed parts.
-func stripAll(s string) (string, []string) {
+// stripAll removes every top-level bracketed group, then the trailing
+// suffixes. A name made only of bracketed groups ("『ありがとう』",
+// "《X》(Live)") takes the inside of the first non-empty group as its title
+// and the other groups as removed parts; a name with nothing left is
+// returned whole with no removed parts.
+func stripAll(s string) (string, []part) {
 	s = collapse(s)
-	rest, removed := removeGroups(s)
+	rest, parts := topGroups(s)
 	rest, more := stripTrailing(rest)
 	if rest != "" {
-		return rest, append(removed, more...)
+		return rest, append(parts, more...)
 	}
-	if start, ok := trailingGroup(s); ok && start == 0 {
-		_, size := utf8.DecodeRuneInString(s)
-		_, last := utf8.DecodeLastRuneInString(s)
-		if len(s) > size+last {
-			if inner, _ := stripAll(s[size : len(s)-last]); inner != "" {
-				return inner, nil
-			}
+	for i, p := range parts {
+		if core, inner := stripAll(p.text); core != "" {
+			return core, append(inner, parts[i+1:]...)
 		}
 	}
 	return s, nil
 }
 
-// removeGroups removes the balanced bracketed groups of s and returns them.
-func removeGroups(s string) (string, []string) {
-	var removed []string
-outer:
-	for {
-		open, openR := -1, rune(0)
-		for i, r := range s {
-			if _, ok := bracketPairs[r]; ok {
-				open, openR = i, r
-				continue
+// topGroups removes the balanced top-level bracketed groups of s and
+// returns them; groups nested inside them stay in their text. An unclosed
+// group stays in the name.
+func topGroups(s string) (string, []part) {
+	var b strings.Builder
+	var parts []part
+	var stack []rune
+	start := 0
+	for i, r := range s {
+		if _, ok := bracketPairs[r]; ok {
+			if len(stack) == 0 {
+				start = i
 			}
-			if o, ok := bracketClosers[r]; ok {
-				if open >= 0 && o == openR {
-					removed = append(removed, s[open+utf8.RuneLen(openR):i])
-					s = s[:open] + " " + s[i+utf8.RuneLen(r):]
-					continue outer
-				}
-				open = -1
-			}
-		}
-		return collapse(s), removed
-	}
-}
-
-// versionTags lists the canonical version tags of removed title parts.
-func versionTags(parts []string) string {
-	var tags []string
-	for _, p := range parts {
-		f := collapse(fold(p))
-		if featPart.MatchString(f) {
+			stack = append(stack, r)
 			continue
 		}
-		for _, w := range versionWords {
-			if w.re.MatchString(f) && !slices.Contains(tags, w.tag) {
-				tags = append(tags, w.tag)
+		if o, ok := bracketClosers[r]; ok && len(stack) > 0 {
+			if stack[len(stack)-1] == o {
+				if stack = stack[:len(stack)-1]; len(stack) == 0 {
+					open, size := utf8.DecodeRuneInString(s[start:])
+					parts = append(parts, part{text: s[start+size : i], open: open})
+					b.WriteByte(' ')
+				}
 			}
+			continue
+		}
+		if len(stack) == 0 {
+			b.WriteRune(r)
 		}
 	}
-	slices.Sort(tags)
-	return strings.Join(tags, "|")
+	if len(stack) > 0 {
+		b.WriteString(s[start:])
+	}
+	return collapse(b.String()), parts
 }
 
 // normName folds a name for comparison: NFKC (full-width to half-width),

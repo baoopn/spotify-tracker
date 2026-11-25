@@ -269,20 +269,34 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   quotes, commas) as spaces, spaces collapsed. The core title also removes
   every bracketed part (`()` `[]` `{}` `【】` `「」` `『』` `《》` `〈〉` `〔〕`
   `〖〗` `«»`, full-width forms included, nested ones too) and trailing
-  " - …", "~…~" and "feat. …"/"ft. …" suffixes; a name that is one
-  bracketed group ("『ありがとう』") keeps its inside, and stripping never
-  empties a name. Two names match when their normalized forms are equal, or
-  their cores are equal and so are their version tags. Version tags are
-  read from the removed parts only ("Live Forever" has none): live (Live,
-  现场, 演唱会, ライブ), acoustic, remix (Remix, DJ, DJ版), instrumental
-  (Instrumental, Inst, Karaoke, Off Vocal, 伴奏, 纯音乐, カラオケ), sped up
-  or slowed, demo or reprise, and language versions (粤语, 国语, English
-  version, …); a featured-artist part ("feat. X", "with X") has none. So
+  " - …", "~…~" and "feat. …"/"ft. …" suffixes (followed by a name, so
+  "5 ft. 7" stays). A name made only of bracketed groups ("『ありがとう』",
+  "《X》(Live)") takes the inside of the first group as its title and the
+  other groups as removed parts, and stripping never empties a name. Two
+  names match when their normalized forms are equal, or their cores are
+  equal and so are their version tags. Version tags are read only from a
+  removed part made of tag phrases, apart from "version"/"ver."/"版", a
+  year, a "live at …" place and a remixer's name before "Remix": "(Live)",
+  " - Live at Wembley", "(Kygo Remix)", "(现场版)", "(Sped-Up)". So
+  " - Live Forever", "(From "Love Live!")" and a 《drama title》 nested in a
+  bracket have none, nor do featured-artist and producer parts ("feat. X",
+  "with X", "prod. X"). The families: live (Live, Concert, 现场, 演唱会,
+  ライブ), acoustic, piano (Piano Version, 钢琴版), remix (Remix, DJ, DJ版),
+  instrumental (Instrumental, Inst, Karaoke, Off Vocal, Beat, 伴奏, 纯音乐,
+  カラオケ), sped up or slowed, demo or reprise, and language versions
+  (粤语, 国语, 中文版, 英文版, English, Chinese, Japanese, Korean). So
   "Song (Live)" matches "Song - Live" or "Song (Live at Wembley)" but never
   the studio "Song", and a studio track never takes a live, karaoke or
   remix entry: with only the other version on LRCLIB the track stays not
   found (retried later, or add lyrics by hand). The same rule applies to
-  the core Get, the search pick and the replacement of an exact match.
+  the core Get, the search pick and the replacement of an exact match. A
+  core-only match replaces an exact match only when both sides removed
+  nothing but harmless decorations: a remaster, "From …", OST, 插曲,
+  主题曲, 片尾曲, 片头曲, 电视剧, drama, TV size, a 《drama title》, a
+  featured artist or producer, a radio edit, an explicit, clean or single
+  version. So "Intro" is not replaced by "Intro (Song A)", nor
+  "Interlude - A" by "Interlude - B"; without an exact match a core match
+  is still taken.
 - **States.** `pending` waits for its first lookup (`fetched_at` null).
   `found` and `instrumental` are final (never overwritten by a later failure
   or not-found; only a successful re-lookup replaces them). A failed

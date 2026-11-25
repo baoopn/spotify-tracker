@@ -1,7 +1,9 @@
 package lrclib
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strings"
@@ -294,5 +296,161 @@ func TestLookupRequestCap(t *testing.T) {
 	if l := lookup(t, s, domain.LyricsCandidate{Name: "Song (feat. X)", Artist: "A", Artists: []string{"A", "X"},
 		Album: "Al", DurationMS: 200_000}); l == nil || l.LRCLibID != 7 || len(s.reqs) != 3 {
 		t.Errorf("lyrics = %+v after %d requests, want id 7 after 3", l, len(s.reqs))
+	}
+}
+
+func TestVersionTagsStrict(t *testing.T) {
+	for in, want := range map[string]string{
+		"Song (Sped-Up)":                "speed",
+		"Song (Slowed + Reverb)":        "speed",
+		"Bài Hát (Beat)":                "inst",
+		"Bài Hát (Karaoke)":             "inst",
+		"Song (Piano Version)":          "piano",
+		"假如风有颜色 (钢琴版)":                  "piano",
+		"Song (中文版)":                    "lang-zh",
+		"Song (英文版)":                    "lang-en",
+		"Song (English)":                "lang-en",
+		"Song (Chinese)":                "lang-zh",
+		"Song (Japanese Ver.)":          "lang-ja",
+		"Song (Korean)":                 "lang-ko",
+		"Song (现场版)":                    "live",
+		"Song (Live 2019)":              "live",
+		"Song - Live":                   "live",
+		"Song - Live Version":           "live",
+		"Song - Live at the O2":         "live",
+		"Song (Kygo Remix)":             "remix",
+		"Song ~Live~":                   "live",
+		"Song - Live Forever":           "",
+		"Song (prod. Live Beats)":       "",
+		"Song (Produced by DJ X)":       "",
+		"Song (From \"Love Live!\")":    "",
+		"Song (电视剧《Live》插曲)":            "", // a nested drama title is not a tag
+		"Song (Lively)":                 "",
+		"Song (Official Live Session)":  "",
+		"《X》(Live)":                     "live",
+		"「X」(Live)":                     "live",
+		"Song (Remastered 2011) (Live)": "live",
+	} {
+		if got := parseTitle(in).tags; got != want {
+			t.Errorf("tags(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBracketOnlyTitles(t *testing.T) {
+	for _, tc := range []struct {
+		track, rec string
+		want       int
+	}{
+		{"《X》(Live)", "X (Live)", 2}, // same normName
+		{"《X》(Live)", "X [Live] - Remastered", 1},
+		{"「X」(Live)", "X (Live)", 2},
+		{"「X」(Live)", "X (Live at Budokan)", 1},
+		{"《X》(Live)", "X", 0},
+		{"「X」", "X", 2},
+		{"() 「X」", "X", 2},
+	} {
+		if got := parseTitle(tc.track).match(tc.rec); got != tc.want {
+			t.Errorf("match(%q, %q) = %d, want %d", tc.track, tc.rec, got, tc.want)
+		}
+	}
+	if c := parseTitle("《X》(Live)").core; c != "x" {
+		t.Errorf("core = %q, want x", c)
+	}
+}
+
+func TestFeatSuffixNeedsName(t *testing.T) {
+	if got := strings.Join(titleVariants("5 ft. 7"), "|"); got != "5 ft. 7" {
+		t.Errorf("variants = %q", got)
+	}
+	if got := strings.Join(titleVariants("Song ft. Xám"), "|"); got != "Song ft. Xám|Song" {
+		t.Errorf("variants = %q", got)
+	}
+}
+
+func TestReplaces(t *testing.T) {
+	for _, tc := range []struct {
+		track, rec string
+		ok         bool
+	}{
+		{"Intro", "Intro (Song A)", false},
+		{"Interlude - A", "Interlude - B", false},
+		{"Song", "Song (Live)", false},
+		{"Song", "song", true},
+		{"Song", "Song - Remastered 2011", true},
+		{"Song", "Song (2011 Remaster)", true},
+		{"Song (feat. X)", "Song", true},
+		{"Song (with X)", "Song (prod. Y)", true},
+		{"Song (Radio Edit)", "Song", true},
+		{"Song", "Song (Explicit)", true},
+		{"Song", "Song (TV Size)", true},
+		{"Song (Single Version)", "Song", true},
+		{"Song (From \"Movie\")", "Song", true},
+		{"假如风有颜色(电视剧《白色橄榄树》插曲)", "假如风有颜色", true},
+		{"Song《Drama》", "Song", true},
+		{"白色橄榄树 (白色橄榄树OST)", "白色橄榄树", true},
+	} {
+		if got := parseTitle(tc.track).replaces(tc.rec); got != tc.ok {
+			t.Errorf("replaces(%q, %q) = %v, want %v", tc.track, tc.rec, got, tc.ok)
+		}
+	}
+}
+
+// A core-only match does not replace an exact match of another song; with
+// no exact match it is still taken.
+func TestLookupCoreMatchDoesNotReplaceOtherSong(t *testing.T) {
+	plain := Record{ID: 1, TrackName: "Intro", ArtistName: "A", AlbumName: "Al", Duration: 60, PlainLyrics: ptr("p")}
+	other := syncedRec(2, "Intro (Song A)", "A", "B", 60)
+	c := domain.LyricsCandidate{Name: "Intro", Artist: "A", Album: "Al", DurationMS: 60_000}
+	if l := lookup(t, fakeDB{plain, other}.server(), c); l == nil || l.LRCLibID != 1 {
+		t.Errorf("lyrics = %+v, want the exact plain entry", l)
+	}
+	if l := lookup(t, fakeDB{other}.server(), c); l == nil || l.LRCLibID != 2 {
+		t.Errorf("no exact match: %+v, want the core match", l)
+	}
+	plain = Record{ID: 3, TrackName: "Interlude - A", ArtistName: "A", AlbumName: "Al", Duration: 60, PlainLyrics: ptr("p")}
+	c.Name = "Interlude - A"
+	if l := lookup(t, fakeDB{plain, syncedRec(4, "Interlude - B", "A", "B", 60)}.server(), c); l == nil || l.LRCLibID != 3 {
+		t.Errorf("lyrics = %+v, want the exact plain entry", l)
+	}
+}
+
+// byTrack answers with the handler for the track_name, else 404.
+func byTrack(hs map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := hs[r.URL.Query().Get("track_name")]; ok {
+			h(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}
+}
+
+func TestLookupVariantErrors(t *testing.T) {
+	limited := status(http.StatusTooManyRequests, http.Header{"Retry-After": {"5"}})
+	var rl *RateLimitError
+	// A rate limit on the core Get ends the lookup.
+	s := &server{get: byTrack(map[string]http.HandlerFunc{"Song": limited}), search: jsonBody(`[]`)}
+	_, err := s.start(t).Lookup(context.Background(), domain.LyricsCandidate{Name: "Song (feat. X)", Artist: "A",
+		Album: "Al", DurationMS: 200_000})
+	if !errors.As(err, &rl) || s.trackQueries() != "/api/get Song (feat. X)|/api/get Song" {
+		t.Errorf("core Get rate limit: err = %v, requests = %q", err, s.trackQueries())
+	}
+	live := domain.LyricsCandidate{Name: "Song (Live)", Artist: "A", DurationMS: 200_000}
+	// A rate limit on the second search ends it too.
+	s = &server{search: byTrack(map[string]http.HandlerFunc{"Song": jsonBody(`[]`), "Song (Live)": limited})}
+	if _, err := s.start(t).Lookup(context.Background(), live); !errors.As(err, &rl) {
+		t.Errorf("second search rate limit: err = %v", err)
+	}
+	// A failed first search goes on to the second.
+	s = &server{search: byTrack(map[string]http.HandlerFunc{"Song": status(http.StatusBadGateway, nil),
+		"Song (Live)": jsonBody(`[{"id":8,"trackName":"Song (Live)","artistName":"A","duration":200,"syncedLyrics":"[00:01.00] a"}]`)})}
+	if l, err := s.start(t).Lookup(context.Background(), live); err != nil || l == nil || l.LRCLibID != 8 {
+		t.Errorf("second search after a failure = %+v, %v", l, err)
+	}
+	// Both failing returns the error (retried, not not_found).
+	s = &server{search: status(http.StatusBadGateway, nil)}
+	if l, err := s.start(t).Lookup(context.Background(), live); err == nil {
+		t.Errorf("both searches failed = %+v, want an error", l)
 	}
 }

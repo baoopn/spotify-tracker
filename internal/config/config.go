@@ -218,8 +218,9 @@ type Lyrics struct {
 
 // lyricsRequestsPerTrack is the most LRCLIB requests one track's lookup
 // sends (lrclib.MaxRequestsPerLookup: Gets with the name and its core title,
-// each with all artists and the first artist, then searches), and lyricsRequestTimeout the LRCLIB client's
-// request timeout (lrclib.DefaultTimeout). A worst-case batch waits the
+// each with all artists and the first artist, then searches), and
+// lyricsRequestTimeout the LRCLIB client's request timeout
+// (lrclib.DefaultTimeout). A worst-case batch waits the
 // spacing before each request and then up to the timeout for it, so the
 // lease must cover lyricsRequestsPerTrack × LYRICS_BATCH × (LYRICS_SPACING +
 // lyricsRequestTimeout).

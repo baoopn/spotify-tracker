@@ -31,7 +31,7 @@ const minContain = 3
 // the core title and with the name. It stops at the first result with
 // synced lyrics and sends at most MaxRequestsPerLookup requests. An exact
 // match with only plain lyrics, or instrumental, is kept while the search
-// looks for a synced candidate with a matching name (titleMatch), the first
+// looks for a synced candidate with a matching name (title.replaces), the first
 // artist and the duration; without one the exact match is returned. A
 // request that fails (other than a rate limit or a cancelled ctx) does not
 // end the lookup: when nothing is found, its error is returned so the track
@@ -81,11 +81,13 @@ func (c *Client) Lookup(ctx context.Context, cand domain.LyricsCandidate) (*doma
 			}
 		}
 	}
-	// Only synced lyrics replace an exact match, also an instrumental one.
+	// Only synced lyrics replace an exact match, also an instrumental one,
+	// and a core-only name match only when both sides removed nothing but
+	// harmless decorations (title.replaces).
 	var accept func(*Record) bool
 	if exact != nil {
 		accept = func(r *Record) bool {
-			return lyricsKind(r) == kindSynced && primaryMatch(r.ArtistName, artists[0])
+			return lyricsKind(r) == kindSynced && primaryMatch(r.ArtistName, artists[0]) && want.replaces(r.TrackName)
 		}
 	}
 	var recs []Record

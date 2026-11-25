@@ -65,7 +65,8 @@ export type NowLyrics = {
 	instrumental: boolean;
 	lines: LyricLine[];
 	plain: string | null;
-	credit: { text: string; url: string };
+	/** url is null for lyrics added by hand ("Lyrics added by Bao"). */
+	credit: { text: string; url: string | null };
 	translation: LyricsTranslation | null;
 };
 

@@ -1,18 +1,28 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import OutLink from '#lib/components/OutLink.svelte';
+	import LyricsEditor from '#lib/components/lyrics/LyricsEditor.svelte';
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import LyricsLangPicker from '#lib/components/lyrics/LyricsLangPicker.svelte';
 	import LyricsLookupStatus from '#lib/components/lyrics/LyricsLookupStatus.svelte';
 	import TranslationStatus from '#lib/components/lyrics/TranslationStatus.svelte';
-	import { errorMessage } from '#lib/api.js';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { api, errorMessage } from '#lib/api.js';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { PenLine, Trash2 } from '@lucide/svelte';
+	import RelTime from '#lib/components/RelTime.svelte';
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { parseLrc } from '#lib/lrc.js';
-	import { queries } from '#lib/queries.js';
+	import { qk, queries } from '#lib/queries.js';
+	import { toasts } from '#lib/toast.svelte.js';
 	import { scriptLang } from '#lib/scriptLang.js';
 	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
-	let { trackId }: { trackId: string } = $props();
+	let {
+		trackId,
+		durationMs = 0
+	}: { trackId: string; /** Track length (ms), for the LRC checks. */ durationMs?: number } =
+		$props();
 	// A JS string: a leading space in markup would be dropped.
 	const CREDIT_SEP = ' · ';
 	const uid = $props.id();
@@ -32,6 +42,44 @@
 	const lines = $derived(trText && tr?.kind === 'synced' && l ? parseLrc(l.synced) : []);
 	const trLines = $derived(translatedLines(trText, lines.length));
 	const trPairs = $derived(!trLines && l?.plain && trText ? interleave(l.plain, trText) : null);
+
+	const manual = $derived(l?.source === 'manual');
+	const hasLyrics = $derived(l?.status === 'found' || l?.status === 'instrumental');
+	// The editor belongs to one track: another track closes it.
+	let editingFor = $state<string | null>(null);
+	const editing = $derived(editingFor === trackId);
+	let confirmRemove = $state(false);
+	let editButton: HTMLButtonElement | undefined = $state();
+
+	async function closeEditor() {
+		editingFor = null;
+		// Back to the button that opened the editor, once it is rendered again.
+		await tick();
+		editButton?.focus();
+	}
+
+	const queryClient = useQueryClient();
+	const remove = createMutation(() => ({
+		mutationFn: () => api.clearManualLyrics(trackId),
+		onSuccess: (data) => {
+			queryClient.setQueryData(qk.tracks.lyrics(trackId, true), data);
+			void queryClient.invalidateQueries({ queryKey: ['tracks', 'lyrics', trackId] });
+			void queryClient.invalidateQueries({ queryKey: qk.lyrics.queue });
+			// The API says whether a lookup will run (none while the fetcher is off).
+			const note = data.message ?? '';
+			if (data.lookup_enabled) toasts.success('Your lyrics were removed', note);
+			else toasts.info('Your lyrics were removed', note);
+		},
+		onError: (err) => toasts.error('Could not remove the lyrics', errorMessage(err))
+	}));
+
+	async function removeLyrics() {
+		try {
+			await remove.mutateAsync();
+		} catch {
+			// onError shows a toast.
+		}
+	}
 </script>
 
 <section aria-labelledby={headingId}>
@@ -54,6 +102,8 @@
 		</p>
 	{:else if !l}
 		<Skeleton class="h-24" />
+	{:else if editing}
+		<LyricsEditor lyrics={l} {durationMs} onclose={closeEditor} />
 	{:else if l.status === 'found' && l.plain}
 		<!-- A scrollable box must be focusable so keyboard users can scroll it. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -97,8 +147,31 @@
 		<p class="text-sm text-muted">Not fetched yet. Lyrics are looked up in the background.</p>
 	{/if}
 
-	{#if l}
+	{#if l && !editing}
 		<LyricsLookupStatus lyrics={l} details />
+		<div class="mt-2 flex flex-wrap items-center gap-2">
+			<button
+				bind:this={editButton}
+				type="button"
+				class="btn btn-secondary btn-sm"
+				onclick={() => (editingFor = trackId)}
+			>
+				<PenLine class="size-4" aria-hidden="true" />
+				{hasLyrics ? 'Edit lyrics' : 'Add your own lyrics'}
+			</button>
+			{#if manual}
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm"
+					aria-haspopup="dialog"
+					disabled={remove.isPending}
+					onclick={() => (confirmRemove = true)}
+				>
+					<Trash2 class="size-4" aria-hidden="true" />
+					Remove my lyrics
+				</button>
+			{/if}
+		</div>
 	{/if}
 
 	{#if l?.status === 'found'}
@@ -107,10 +180,21 @@
 
 	{#if l && (l.status === 'found' || l.status === 'instrumental')}
 		<p class="mt-2 text-xs text-muted">
-			Lyrics from <OutLink
-				href="https://lrclib.net"
-				class="font-medium text-primary hover:underline">LRCLIB</OutLink
-			>{#if trText}{CREDIT_SEP}Translated by Claude{/if}
+			{#if manual}<span class="font-medium text-fg">Added by you</span>{#if l.manual_at}, <RelTime
+						value={l.manual_at}
+					/>{/if}{:else}Lyrics from <OutLink
+					href="https://lrclib.net"
+					class="font-medium text-primary hover:underline">LRCLIB</OutLink
+				>{/if}{#if trText}{CREDIT_SEP}Translated by Claude{/if}
 		</p>
 	{/if}
 </section>
+
+<ConfirmDialog
+	bind:open={confirmRemove}
+	title="Remove your lyrics?"
+	message="The lyrics you added for this song are deleted, and LRCLIB is asked for its lyrics again. This cannot be undone."
+	confirmLabel="Remove my lyrics"
+	danger
+	onconfirm={removeLyrics}
+/>

@@ -154,7 +154,7 @@ func TestNowLyricsFull(t *testing.T) {
 			if body.Lines[0].Text != "line 0" || body.Lines[199].StartMS != 1000+199*3000 {
 				t.Errorf("lines %+v ... %+v", body.Lines[0], body.Lines[199])
 			}
-			if body.Credit.Text != "Lyrics from LRCLIB" || body.Credit.URL != "https://lrclib.net" {
+			if body.Credit.Text != "Lyrics from LRCLIB" || body.Credit.URL == nil || *body.Credit.URL != "https://lrclib.net" {
 				t.Errorf("credit = %+v", body.Credit)
 			}
 		})
@@ -185,6 +185,37 @@ func TestNowLyricsPlainAndInstrumental(t *testing.T) {
 	}
 	if _, body = getLyrics(t, lyricsHandler(st, snap("blank")), "/api/v1/now-playing/lyrics"); body != nil {
 		t.Errorf("blank plain: %+v", body)
+	}
+}
+
+// Manual lyrics credit the owner with no link; synced lines and plain text
+// are served the same way, and the JSON url is null.
+func TestNowLyricsManualCredit(t *testing.T) {
+	st := &fakeLyrics{rec: map[string]store.NowLyrics{
+		"synced": {Status: domain.LyricsFound, Source: "manual", Synced: "[00:01.00] một\n[00:02.00] hai", Plain: "một\nhai"},
+		"plain":  {Status: domain.LyricsFound, Source: "manual", Plain: "la la"},
+		"inst":   {Status: domain.LyricsInstrumental, Source: "manual"},
+		"lrclib": {Status: domain.LyricsFound, Source: "lrclib", Plain: "x"},
+	}}
+	snap := func(id string) []byte { return snapshot(true, ms(6000), lyricsNow, id, 200_000) }
+	for _, id := range []string{"synced", "plain", "inst"} {
+		rec, body := getLyrics(t, lyricsHandler(st, snap(id)), "/api/v1/now-playing/lyrics")
+		if body == nil || body.Credit.Text != "Lyrics added by Bao" || body.Credit.URL != nil ||
+			!strings.Contains(rec.Body.String(), `"credit":{"text":"Lyrics added by Bao","url":null}`) {
+			t.Errorf("%s: %s", id, rec.Body.String())
+		}
+	}
+	if _, body := getLyrics(t, lyricsHandler(st, snap("synced")), "/api/v1/now-playing/lyrics"); body == nil ||
+		!body.Synced || len(body.Lines) != 2 || body.Lines[1].Text != "hai" {
+		t.Errorf("manual synced: %+v", body)
+	}
+	if _, body := getLyrics(t, lyricsHandler(st, snap("plain")), "/api/v1/now-playing/lyrics"); body == nil ||
+		body.Plain == nil || *body.Plain != "la la" {
+		t.Errorf("manual plain: %+v", body)
+	}
+	if _, body := getLyrics(t, lyricsHandler(st, snap("lrclib")), "/api/v1/now-playing/lyrics"); body == nil ||
+		body.Credit.Text != "Lyrics from LRCLIB" || body.Credit.URL == nil {
+		t.Errorf("lrclib credit: %+v", body)
 	}
 }
 

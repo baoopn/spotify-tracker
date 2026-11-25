@@ -206,7 +206,9 @@ The token is never logged or audited.
 | GET | `/admin/api/lyrics/translation-queue` | – | `TranslationQueue` (see [Lyrics](#lyrics)) |
 | POST | `/admin/api/tracks/{id}/translation/requeue` | – | `202 { queued: true }`; `404 no_lyrics` when the track has no found lyrics |
 | GET | `/admin/api/lyrics/queue` | – | `LyricsQueue` (see [Lyrics](#lyrics)) |
-| POST | `/admin/api/tracks/{id}/lyrics/requeue` | – | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist; `409 lyrics_disabled` while `LYRICS_ENABLED` is false |
+| PUT | `/admin/api/tracks/{id}/lyrics` | body `ManualLyricsInput` | `200 TrackLyrics` (with the synced text); `400 invalid_lrc` with per-line `lines`, `400 invalid_lyrics`, `400 too_large`, `400 invalid_body`; `413 too_large` (body over 1 MiB); `404 not_found` (see [Manual lyrics](#manual-lyrics)) |
+| DELETE | `/admin/api/tracks/{id}/lyrics/manual` | – | `200 TrackLyrics & { message }` (`message` says whether an LRCLIB lookup will run: none while `LYRICS_ENABLED` is false); `404 no_manual_lyrics` when the track has no manual lyrics |
+| POST | `/admin/api/tracks/{id}/lyrics/requeue` | optional body `{ replace_manual?: boolean }` | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist; `409 lyrics_disabled` while `LYRICS_ENABLED` is false; `409 manual_lyrics` for manual lyrics unless `replace_manual` is true |
 | GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
@@ -246,14 +248,16 @@ here and through the admin MCP tools (`admin_track_lyrics`,
 [architecture](architecture.md#public-now-playing-lyrics)), never those of any
 other track. The admin overview's now-playing card uses
 `GET /tracks/{id}/lyrics?synced=true` for the current track; there is no
-admin-only now-playing lyrics route. Credit LRCLIB wherever lyrics are shown.
+admin-only now-playing lyrics route. Credit LRCLIB wherever its lyrics are
+shown; lyrics added by hand (`source: "manual"`) are shown as "Added by you"
+in the admin and "Lyrics added by Bao" (no link) on the public page.
 
 ```ts
 type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';
 type TrackLyrics = {
   track_id: string;
   status: LyricsStatus;      // pending = not looked up yet (no row, or a pending queue row)
-  source: string;            // "lrclib", "" when pending
+  source: string;            // "lrclib", "manual" (added by hand), "" when pending
   lrclib_id: number | null;
   plain: string | null;      // only when status is found
   synced?: string;           // LRC text ("[mm:ss.xx] line"), only with synced=true and when stored
@@ -268,8 +272,15 @@ type TrackLyrics = {
   looking_up: boolean;       // a lookup worker holds the track now (lease)
   requested_at: string | null; // an admin re-queue that has not finished
   lookup_enabled: boolean;   // LYRICS_ENABLED; when false, queued / looking_up / waiting are false
+  manual_at: string | null;  // manual lyrics: the last manual edit
+  manual_by: string;         // manual lyrics: who made it (admin email, or "mcp")
+  replace_manual: boolean;   // a re-queue with replace_manual waits: LRCLIB's next result replaces them
   translation: TrackTranslation | null; // only when status is found
 };
+// PUT /tracks/{id}/lyrics. Give synced, plain, or both; or instrumental with no text.
+type ManualLyricsInput = { synced?: string; plain?: string; instrumental?: boolean };
+// 400 invalid_lrc: { error: { code, message, lines: LrcLineError[] } }
+type LrcLineError = { line: number; message: string }; // 1-based line; 0 = the text as a whole
 type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
 type TrackTranslation = {
   status: TranslationStatus; // not_queued = never queued (no backfill; queued when it plays or re-queued)
@@ -315,6 +326,7 @@ type LyricsQueue = {         // exclusive counts: a queued or leased track count
   error: number;             // failed, retry scheduled
   next_retry_at: string | null;
   last_lookup_at: string | null;
+  manual: number;            // of found and instrumental: added by hand
 };
 type LyricsMatch = { track: TrackView; snippet: string; phrase_match: boolean; has_synced: boolean };
 ```
@@ -337,7 +349,46 @@ translation queue (it uses Claude credit); unchanged lyrics are not
 translated again, and a track that was never translated gets no
 translation row. It is audited (`lyrics.requeued`) and reachable from MCP
 (`admin_requeue_lyrics`); `GET /lyrics/queue` is `admin_lyrics_queue`.
-These two re-queues are the only write routes the MCP server can reach.
+Manual lyrics are kept: the re-queue answers `409 manual_lyrics` unless the
+body sets `replace_manual: true`, and then the next LRCLIB result replaces
+them (a lookup that finds nothing keeps them).
+These two re-queues and the manual lyrics routes below are the only write
+routes the MCP server can reach.
+
+#### Manual lyrics
+
+`PUT /tracks/{id}/lyrics` stores lyrics added by hand (`source: "manual"`); a body with anything after its JSON object is `400 invalid_body`.
+They win over LRCLIB: no automatic lookup (backfill, retries, the song
+playing now, upcoming songs) claims or replaces them. Rules:
+
+- The texts are normalized (byte order marks and NUL bytes removed, line
+  breaks made `\n`, trailing spaces cut, blank edges dropped) and capped at
+  200 000 bytes each (`400 too_large`); the body is at most 1 MiB.
+- Give `synced`, `plain`, both, or `instrumental: true` with no text
+  (`400 invalid_lyrics` otherwise, also for text that holds no words, such
+  as only "♪"). With only `synced`, the plain text is derived: timestamps
+  and metadata removed, word-less lines made stanza breaks.
+- `synced` is checked line by line (`internal/lrc.Validate`, mirrored by
+  `validateLrc` in `src/lib/lrc.ts`): every non-blank line is a metadata tag
+  or starts with valid time tags (seconds below 60, minutes at most 999);
+  lines with one time tag are in time order; no line starts more than 5 s
+  after the track's end (after `[offset:]`); at least one and at most 2000
+  timed lines. Errors are `400 invalid_lrc` with
+  `lines: [{ line, message }]` (at most 50).
+- Changed lyrics (a new source hash) put an existing translation first in
+  the translation queue; saving the same lyrics again changes nothing. Text that
+  differs from the stored text only by normalization is stored unchanged
+  (same hash). No
+  translation row is created.
+- A pending lookup is cleared (re-queue, retry, `replace_manual`). A worker
+  holding the track keeps its lease; its result is not stored.
+- Audited as `lyrics.manual_set` (`track_id`, `status`, `synced`,
+  `retranslate`) when something changed. MCP: `admin_set_lyrics`.
+
+`DELETE /tracks/{id}/lyrics/manual` removes the manual lyrics and puts an
+LRCLIB lookup first in line (a track with no title or artist loses its
+lyrics row). Audited as `lyrics.manual_cleared`. MCP:
+`admin_clear_manual_lyrics`.
 
 The admin overview polls the song playing now
 every 10 s while its lyrics or translation are on their way; other tracks

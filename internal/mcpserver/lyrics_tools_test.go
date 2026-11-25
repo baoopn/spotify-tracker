@@ -1,10 +1,13 @@
 package mcpserver
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func findTool(t *testing.T, defs []toolDef, name string) toolDef {
@@ -76,7 +79,7 @@ func TestTranslationToolTargets(t *testing.T) {
 		t.Errorf("lyrics queue = %s %s", lq.method, u)
 	}
 	for _, d := range append(append([]toolDef{}, publicTools...), adminTools...) {
-		if d.method != "" && d.name != "admin_requeue_translation" && d.name != "admin_requeue_lyrics" {
+		if d.method != "" && !writeTools[d.name] {
 			t.Errorf("unexpected write tool %s", d.name)
 		}
 	}
@@ -95,5 +98,64 @@ func TestCallMethod(t *testing.T) {
 	}
 	if call(t.Context(), h, "", "/x", "t", log); got != "GET" {
 		t.Errorf("default method = %s", got)
+	}
+}
+
+// writeTools are the only tools that are not GETs.
+var writeTools = map[string]bool{
+	"admin_requeue_translation": true, "admin_requeue_lyrics": true,
+	"admin_set_lyrics": true, "admin_clear_manual_lyrics": true,
+}
+
+// The manual lyrics tools send their arguments as a JSON body; strings are
+// kept as given (not trimmed), and only the id goes into the path.
+func TestManualLyricsTools(t *testing.T) {
+	set := findTool(t, adminTools, "admin_set_lyrics")
+	args := map[string]any{"id": "t 1", "synced": "[00:01.00] a  \n", "instrumental": false}
+	u, err := set.target("/admin/api", args)
+	if err != nil || u != "/admin/api/tracks/t%201/lyrics" || set.method != "PUT" || !set.destructive {
+		t.Errorf("set = %s %s, %v", set.method, u, err)
+	}
+	if got := string(set.body(args)); got != `{"instrumental":false,"synced":"[00:01.00] a  \n"}` {
+		t.Errorf("set body = %s", got)
+	}
+	if got := string(set.body(map[string]any{"id": "x"})); got != `{}` {
+		t.Errorf("empty body = %s", got)
+	}
+	clr := findTool(t, adminTools, "admin_clear_manual_lyrics")
+	if u, err := clr.target("/admin/api", map[string]any{"id": "x"}); err != nil ||
+		u != "/admin/api/tracks/x/lyrics/manual" || clr.method != "DELETE" || !clr.destructive || clr.body(nil) != nil {
+		t.Errorf("clear = %s %s, %v", clr.method, u, err)
+	}
+	rq := findTool(t, adminTools, "admin_requeue_lyrics")
+	if !rq.destructive {
+		t.Error("admin_requeue_lyrics can replace manual lyrics: it must be marked destructive")
+	}
+	if got := string(rq.body(map[string]any{"id": "x", "replace_manual": true})); got != `{"replace_manual":true}` {
+		t.Errorf("requeue body = %s", got)
+	}
+	s := set.schema()
+	if s.Properties["instrumental"].Type != "boolean" || s.Properties["synced"].Type != "string" {
+		t.Errorf("schema = %+v", s.Properties)
+	}
+}
+
+// callBody sends the JSON body; LRC line errors reach the tool error text.
+func TestCallBodyAndLineErrors(t *testing.T) {
+	var got, ctype string
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got, ctype = string(b), r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_lrc","message":"the synced lyrics have 2 errors",` +
+			`"lines":[{"line":3,"message":"out of order"},{"line":0,"message":"no timed lines"}]}}`))
+	})
+	res := callBody(t.Context(), h, "PUT", "/x", []byte(`{"plain":"a"}`), "t", slog.New(slog.DiscardHandler))
+	if got != `{"plain":"a"}` || ctype != "application/json" || !res.IsError {
+		t.Fatalf("body %q type %q error %v", got, ctype, res.IsError)
+	}
+	text := res.Content[0].(*mcp.TextContent).Text
+	if text != "the synced lyrics have 2 errors; line 3: out of order; no timed lines" {
+		t.Errorf("error = %q", text)
 	}
 }

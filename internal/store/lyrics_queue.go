@@ -27,21 +27,30 @@ const lyricsLeasedSQL = `COALESCE(l.claimed_until >= now(), false)`
 // lease the worker crashed and the re-queue still counts).
 const lyricsRequestedSQL = `(l.requested_at IS NOT NULL OR l.claim_requested_at IS NOT NULL)`
 
+// lyricsHeldSQL is true when the lyrics row l holds manual lyrics that no
+// lookup may replace: source 'manual' without an explicit re-queue with
+// replace_manual (00019). Automatic lookups (backfill, retries, now-playing
+// and prefetch wakes) never claim such a row, and a lookup that claimed it
+// before the manual lyrics were set only gives its lease back.
+const lyricsHeldSQL = `(l.source = 'manual' AND NOT l.replace_manual)`
+
 // lyricsClaimableSQL is true when the lyrics row l can be claimed: no live
-// lease, and it waits (pending), was re-queued, or its retry is due
-// (not_found, error, or a failed re-lookup of stored lyrics).
-const lyricsClaimableSQL = `(l.claimed_until IS NULL OR l.claimed_until < now())
+// lease, not held manual lyrics, and it waits (pending), was re-queued, or
+// its retry is due (not_found, error, or a failed re-lookup of stored
+// lyrics).
+const lyricsClaimableSQL = `(l.claimed_until IS NULL OR l.claimed_until < now()) AND NOT ` + lyricsHeldSQL + `
 	AND (l.status = 'pending' OR ` + lyricsRequestedSQL + ` OR l.next_attempt_at <= now())`
 
 // lyricsWaitingSQL is true when the lyrics row l will be looked up soon:
-// leased now, pending, re-queued, or a retry due within lyricsSoon.
-const lyricsWaitingSQL = `(` + lyricsLeasedSQL + ` OR l.status = 'pending' OR ` + lyricsRequestedSQL + `
-	OR COALESCE(l.next_attempt_at <= now() + ` + lyricsSoon + `, false))`
+// leased now, pending, re-queued, or a retry due within lyricsSoon. Held
+// manual lyrics never wait (a lease left on one is only given back).
+const lyricsWaitingSQL = `(NOT ` + lyricsHeldSQL + ` AND (` + lyricsLeasedSQL + ` OR l.status = 'pending'
+	OR ` + lyricsRequestedSQL + ` OR COALESCE(l.next_attempt_at <= now() + ` + lyricsSoon + `, false)))`
 
 // lyricsQueuedSQL is true when the lyrics row l waits for a worker now (no
-// lease): pending, re-queued, or a retry that is due.
-const lyricsQueuedSQL = `(NOT ` + lyricsLeasedSQL + ` AND (l.status = 'pending' OR ` + lyricsRequestedSQL + `
-	OR COALESCE(l.next_attempt_at <= now(), false)))`
+// lease, not held manual lyrics): pending, re-queued, or a retry that is due.
+const lyricsQueuedSQL = `(NOT ` + lyricsLeasedSQL + ` AND NOT ` + lyricsHeldSQL + ` AND (l.status = 'pending'
+	OR ` + lyricsRequestedSQL + ` OR COALESCE(l.next_attempt_at <= now(), false)))`
 
 // lookupableSQL is true when track t can be looked up: it has a title and a
 // credited artist. Other tracks never get a lookup (nor a pending status).
@@ -155,6 +164,13 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 // the claim and reports whether it was stored. A track re-queued while it
 // was claimed (requested_at set again) is looked up again.
 //
+// Manual lyrics win: when the row holds manual lyrics that no re-queue with
+// replace_manual asked to replace (lyricsHeldSQL), only the lease is given
+// back and stored is false. The row is locked first (FOR UPDATE), so manual
+// lyrics saved while the lookup ran are seen even when they were committed
+// after this statement started. After a replace_manual re-queue the result
+// replaces the manual lyrics (source becomes 'lrclib' again).
+//
 // When the stored lyrics changed (found, and a different source hash than
 // before and than the translation's), an existing translation goes to the
 // front of the translation queue in the same statement (retranslate). It
@@ -172,12 +188,19 @@ func (q *Queries) SetLyrics(ctx context.Context, owner, trackID string, l domain
 	var n, requeued int64
 	err = q.db.QueryRow(ctx, `
 		WITH old AS (
-			SELECT l.track_id, `+srcHashSQL+` AS hash FROM lyrics l WHERE l.track_id = $1 AND l.claimed_by = $2),
+			SELECT l.track_id, `+srcHashSQL+` AS hash, `+lyricsHeldSQL+` AS held
+			FROM lyrics l WHERE l.track_id = $1 AND l.claimed_by = $2
+			FOR UPDATE),
+		kept AS (
+			UPDATE lyrics l SET claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
+			FROM old WHERE l.track_id = old.track_id AND l.claimed_by = $2 AND old.held
+			RETURNING 1),
 		up AS (
 			UPDATE lyrics l SET status = $3, source = 'lrclib', lrclib_id = $4, plain_lyrics = $5,
 				synced_lyrics = $6, attempts = 0, last_error = NULL, fetched_at = now(), next_attempt_at = NULL,
-				claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
-			WHERE l.track_id = $1 AND l.claimed_by = $2
+				claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL,
+				replace_manual = false, manual_at = NULL, manual_by = NULL
+			FROM old WHERE l.track_id = old.track_id AND l.claimed_by = $2 AND NOT old.held
 			RETURNING l.track_id, l.status, `+srcHashSQL+` AS hash),
 		tr AS (
 			UPDATE lyrics_translations tr SET requested_at = now(), updated_at = now()
@@ -205,15 +228,22 @@ func (q *Queries) DeferLyrics(ctx context.Context, owner, trackID, status string
 	if status != domain.LyricsNotFound && status != domain.LyricsError {
 		return fmt.Errorf("defer lyrics %s: invalid status %q", trackID, status)
 	}
+	// Held manual lyrics (saved while the lookup ran) only get the lease back.
+	// A replace_manual re-queue that finds nothing ends and keeps the manual
+	// lyrics; one that fails keeps the request and is retried.
 	_, err := q.db.Exec(ctx, `
 		UPDATE lyrics l SET
-			attempts = CASE WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN 0
+			attempts = CASE WHEN `+lyricsHeldSQL+` THEN l.attempts
+				WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN 0
 				WHEN l.status IN ('found', 'instrumental') THEN l.attempts + 1
 				WHEN l.status = $3 THEN l.attempts + 1 ELSE 1 END,
-			next_attempt_at = CASE WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN NULL
+			next_attempt_at = CASE WHEN `+lyricsHeldSQL+` THEN l.next_attempt_at
+				WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN NULL
 				ELSE $4::timestamptz END,
 			status = CASE WHEN l.status IN ('found', 'instrumental') THEN l.status ELSE $3 END,
-			last_error = $5, fetched_at = now(),
+			last_error = CASE WHEN `+lyricsHeldSQL+` THEN l.last_error ELSE $5 END,
+			fetched_at = CASE WHEN `+lyricsHeldSQL+` THEN l.fetched_at ELSE now() END,
+			replace_manual = l.replace_manual AND $3::text = 'error',
 			claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
 		WHERE l.track_id = $1 AND l.claimed_by = $2`,
 		trackID, owner, status, next, nullIfEmpty(lastErr))
@@ -243,17 +273,34 @@ func (q *Queries) ReleaseLyrics(ctx context.Context, owner, trackID string) erro
 // then. The error backoff restarts. A track a worker is looking up right now
 // keeps its lease and is looked up again when that worker finishes. It
 // reports false when the track is unknown or has no title or artist.
-func (q *Queries) RequeueLyrics(ctx context.Context, trackID string) (bool, error) {
+//
+// Manual lyrics are kept: without replaceManual the re-queue changes nothing
+// and fails with ErrManualLyrics. With replaceManual the next LRCLIB result
+// replaces them (a lookup that finds nothing keeps them).
+func (q *Queries) RequeueLyrics(ctx context.Context, trackID string, replaceManual bool) (bool, error) {
 	tag, err := q.db.Exec(ctx, `
 		INSERT INTO lyrics (track_id, status, source, requested_at)
 		SELECT t.id, 'pending', 'lrclib', now() FROM tracks t
 		WHERE t.id = $1 AND `+lookupableSQL+`
 		ON CONFLICT (track_id) DO UPDATE SET requested_at = now(),
-			attempts = CASE WHEN lyrics.claimed_until >= now() THEN lyrics.attempts ELSE 0 END`, trackID)
+			attempts = CASE WHEN lyrics.claimed_until >= now() THEN lyrics.attempts ELSE 0 END,
+			replace_manual = lyrics.source = 'manual'
+		WHERE lyrics.source <> 'manual' OR $2::boolean`, trackID, replaceManual)
 	if err != nil {
 		return false, fmt.Errorf("requeue lyrics %s: %w", trackID, err)
 	}
-	return tag.RowsAffected() > 0, nil
+	if tag.RowsAffected() > 0 || replaceManual {
+		return tag.RowsAffected() > 0, nil
+	}
+	var manual bool
+	if err := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM lyrics WHERE track_id = $1 AND source = 'manual')`,
+		trackID).Scan(&manual); err != nil {
+		return false, fmt.Errorf("requeue lyrics %s: %w", trackID, err)
+	}
+	if manual {
+		return false, ErrManualLyrics
+	}
+	return false, nil
 }
 
 // LyricsQueue summarizes the lyrics lookup queue (admin and MCP). The status
@@ -269,6 +316,7 @@ type LyricsQueue struct {
 	Error        int64      `json:"error"`     // failed, retry scheduled
 	NextRetryAt  *time.Time `json:"next_retry_at"`
 	LastLookupAt *time.Time `json:"last_lookup_at"`
+	Manual       int64      `json:"manual"` // of found and instrumental: added by hand (never looked up again on their own)
 }
 
 // LyricsQueueSummary counts the lyrics queue by state.
@@ -277,7 +325,8 @@ func (q *Queries) LyricsQueueSummary(ctx context.Context) (LyricsQueue, error) {
 	err := q.db.QueryRow(ctx, `
 		WITH l AS (
 			SELECT l.status, `+lyricsRequestedSQL+` AS requested, l.next_attempt_at, l.fetched_at,
-				`+lyricsLeasedSQL+` AS leased, `+lyricsQueuedSQL+` AS queued
+				`+lyricsLeasedSQL+` AND NOT `+lyricsHeldSQL+` AS leased, `+lyricsQueuedSQL+` AS queued,
+				l.source = 'manual' AS manual
 			FROM lyrics l),
 		b AS (SELECT count(*) AS n FROM tracks t
 			WHERE `+lookupableSQL+` AND NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = t.id))
@@ -291,9 +340,10 @@ func (q *Queries) LyricsQueueSummary(ctx context.Context) (LyricsQueue, error) {
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'not_found'),
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'error'),
 			(SELECT min(next_attempt_at) FROM l WHERE next_attempt_at > now()),
-			(SELECT max(fetched_at) FROM l)
+			(SELECT max(fetched_at) FROM l),
+			(SELECT count(*) FROM l WHERE manual AND status IN ('found', 'instrumental'))
 		FROM b`).Scan(&s.Queued, &s.Requested, &s.Backlog, &s.InProgress, &s.Found, &s.Instrumental,
-		&s.NotFound, &s.Error, &s.NextRetryAt, &s.LastLookupAt)
+		&s.NotFound, &s.Error, &s.NextRetryAt, &s.LastLookupAt, &s.Manual)
 	if err != nil {
 		return LyricsQueue{}, fmt.Errorf("lyrics queue summary: %w", err)
 	}

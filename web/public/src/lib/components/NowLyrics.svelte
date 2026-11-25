@@ -6,6 +6,7 @@
 	import { live } from '#lib/live.svelte.js';
 	import {
 		availableLangs,
+		creditHref,
 		currentIndex,
 		interleave,
 		lineKeys,
@@ -161,13 +162,15 @@
 		{/if}
 
 		{#if found}
+			{@const href = creditHref(found.credit)}
 			<p class="mt-3 text-xs text-ink-soft">
-				<a
-					href={found.credit.url}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="link font-semibold text-ink">{found.credit.text}</a
-				>{#if trText && tr}{CREDIT_SEP}{tr.credit.text}{/if}
+				{#if href}<a
+						{href}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="link font-semibold text-ink">{found.credit.text}</a
+					>{:else}<span class="font-semibold text-ink">{found.credit.text}</span
+					>{/if}{#if trText && tr}{CREDIT_SEP}{tr.credit.text}{/if}
 			</p>
 		{/if}
 	</section>

@@ -164,11 +164,11 @@ func TestPGLyricsRequeue(t *testing.T) {
 	exec(t, pool, `INSERT INTO lyrics (track_id, status, attempts, next_attempt_at, fetched_at)
 		VALUES ('nf', 'not_found', 4, now() + interval '20 days', now())`)
 
-	if ok, err := st.RequeueLyrics(ctx, "unknown"); err != nil || ok {
+	if ok, err := st.RequeueLyrics(ctx, "unknown", false); err != nil || ok {
 		t.Fatalf("unknown = %v, %v", ok, err)
 	}
 	for _, id := range []string{"nf", "found"} { // found is the newest request
-		if ok, err := st.RequeueLyrics(ctx, id); err != nil || !ok {
+		if ok, err := st.RequeueLyrics(ctx, id, false); err != nil || !ok {
 			t.Fatalf("requeue %s = %v, %v", id, ok, err)
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -205,7 +205,7 @@ func TestPGLyricsRequeue(t *testing.T) {
 		t.Fatalf("after release = %v", ids(got))
 	}
 	// A re-queue while claimed keeps the lease and comes back after the result.
-	if ok, _ := st.RequeueLyrics(ctx, "nf"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "nf", false); !ok {
 		t.Fatal("requeue while claimed")
 	}
 	if _, by, _ := lyricsRow(t, pool, "nf"); by == nil || *by != "w1" {
@@ -247,7 +247,7 @@ ba', synced_lyrics = '[00:01.00] một
 	exec(t, pool, `UPDATE lyrics_translations SET status = 'done' WHERE track_id IN ('same', 'changed')`)
 	exec(t, pool, `UPDATE listening_history SET played_at = now() WHERE track_id = 'other'`) // other: last play wins
 	for _, id := range []string{"same", "changed", "untranslated"} {
-		if ok, _ := st.RequeueLyrics(ctx, id); !ok {
+		if ok, _ := st.RequeueLyrics(ctx, id, false); !ok {
 			t.Fatal(id)
 		}
 	}
@@ -293,7 +293,7 @@ ba', synced_lyrics = '[00:01.00] một
 	}
 
 	// Found → instrumental: the translation is no longer served or claimed.
-	if ok, _ := st.RequeueLyrics(ctx, "same"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "same", false); !ok {
 		t.Fatal("requeue same")
 	}
 	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1); !eq(ids(got), []string{"same"}) {
@@ -342,7 +342,7 @@ func TestPGNowLyricsFollowsQueue(t *testing.T) {
 			t.Errorf("%s = %q, %v; want %q", id, got.Status, err, want)
 		}
 	}
-	if ok, _ := st.RequeueLyrics(ctx, "nflater"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "nflater", false); !ok {
 		t.Fatal("requeue")
 	}
 	if got, _ := st.NowLyrics(ctx, "nflater", caps); got.Status != domain.LyricsPending {
@@ -365,7 +365,7 @@ func TestPGLyricsQueueSummary(t *testing.T) {
 		VALUES ('er', 'error', now() + interval '2 hours', now() - interval '2 hours')`)
 	bare(t, pool, "inst", time.Minute)
 	exec(t, pool, `INSERT INTO lyrics (track_id, status, fetched_at) VALUES ('inst', 'instrumental', now() - interval '3 hours')`)
-	if ok, _ := st.RequeueLyrics(ctx, "f2"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "f2", false); !ok {
 		t.Fatal("requeue")
 	}
 	exec(t, pool, `UPDATE lyrics SET claimed_by = 'w', claimed_until = now() + interval '5 minutes' WHERE track_id = 'f1'`)
@@ -392,7 +392,7 @@ func TestPGRequeueSurvivesCrashedClaim(t *testing.T) {
 	ctx := context.Background()
 	seed(t, pool, "asked", 5*time.Hour)
 	bare(t, pool, "recent", time.Minute)
-	if ok, _ := st.RequeueLyrics(ctx, "asked"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "asked", false); !ok {
 		t.Fatal("requeue lyrics")
 	}
 	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1); !eq(ids(got), []string{"asked"}) {
@@ -464,7 +464,7 @@ func TestPGLyricsChangeRetranslatesSettled(t *testing.T) {
 		t.Fatalf("settled translations claimed: %+v", c)
 	}
 	for _, id := range []string{"refused", "skipped", "givenup"} {
-		if ok, _ := st.RequeueLyrics(ctx, id); !ok {
+		if ok, _ := st.RequeueLyrics(ctx, id, false); !ok {
 			t.Fatal(id)
 		}
 	}
@@ -494,7 +494,7 @@ func TestPGFailedRelookupKeepsLyrics(t *testing.T) {
 	st, pool := pgStore(t)
 	ctx := context.Background()
 	seed(t, pool, "keep", time.Hour)
-	if ok, _ := st.RequeueLyrics(ctx, "keep"); !ok {
+	if ok, _ := st.RequeueLyrics(ctx, "keep", false); !ok {
 		t.Fatal("requeue")
 	}
 	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1); !eq(ids(got), []string{"keep"}) {

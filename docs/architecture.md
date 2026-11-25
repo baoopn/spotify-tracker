@@ -176,7 +176,8 @@ is not connected.
 
 `internal/lyrics` looks up track lyrics on [LRCLIB](https://lrclib.net)
 (`internal/lrclib`, no API key) and stores them in the `lyrics` table
-(migration `00014_lyrics.sql`; the queue columns are `00017_lyrics_queue.sql`).
+(migration `00014_lyrics.sql`; the queue columns are `00017_lyrics_queue.sql`,
+manual lyrics `00019_manual_lyrics.sql`).
 Lyrics are admin and MCP only, with one
 public exception: the [lyrics of the song playing now](#public-now-playing-lyrics).
 No other `/api/v1` route, no public MCP tool and none of the shared track JSON
@@ -276,7 +277,8 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   `admin_requeue_lyrics`) puts a track at the front whatever its status:
   not looked up, `not_found`, `error`, or `found` (stale lyrics are fetched
   again). Stored lyrics stay served until the new lookup, and the error
-  backoff restarts. While `LYRICS_ENABLED` is false the re-queue answers
+  backoff restarts. Manual lyrics answer `409 manual_lyrics` unless the
+  request sets `replace_manual: true` (see Manual lyrics below). While `LYRICS_ENABLED` is false the re-queue answers
   `409 lyrics_disabled`, and the admin hides "Look up again" and shows
   nothing as queued (`lookup_enabled` in `TrackLyrics`). `GET /admin/api/lyrics/queue` (MCP `admin_lyrics_queue`)
   counts the queue (queued, re-queued, never looked up (no row or a pending
@@ -299,6 +301,37 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   translation is no longer served or claimed (it joins `found` lyrics only).
   A re-lookup that finds nothing keeps the stored lyrics. This holds for an
   admin or MCP re-queue and for any other lookup.
+- **Manual lyrics.** The admin can add lyrics by hand (`source = 'manual'`,
+  migration `00019_manual_lyrics.sql`, with `manual_at` / `manual_by` and
+  `replace_manual`): `PUT /admin/api/tracks/{id}/lyrics` (MCP
+  `admin_set_lyrics`) takes `{ synced?, plain?, instrumental? }`. The texts
+  are normalized (BOM, NUL, CRLF, trailing spaces) and capped like LRCLIB
+  text; synced text is checked line by line by `internal/lrc.Validate`
+  (valid time tags, single-tag lines in time order, nothing more than 5 s
+  past the track's end, 1 to 2000 timed lines) and a bad line is a
+  `400 invalid_lrc` naming it; with only synced text the plain text is
+  derived (`lrc.Plain`: tags removed, word-less lines made stanza breaks).
+  `store.SetManualLyrics` uses the hash rule of `SetLyrics`: changed lyrics
+  put an existing translation first in line, unchanged ones touch nothing,
+  and no translation row is created. Manual lyrics win: `lyricsHeldSQL`
+  (manual, no `replace_manual`) keeps the row out of every automatic claim
+  (backfill, retries, now-playing and prefetch priority) and out of the
+  queued / waiting states. A manual save clears the re-queue marks and the
+  retry state but never breaks a live lease; `SetLyrics` locks the row
+  (`FOR UPDATE`) and, on held manual lyrics, only gives the lease back, and
+  `DeferLyrics` leaves them as they are, so a lookup that finishes later
+  cannot overwrite them. An explicit re-queue with `replace_manual: true`
+  lets the next LRCLIB result replace them (`source` becomes `lrclib`); a
+  lookup that finds nothing ends the request and keeps them, a failed one is
+  retried. `DELETE /admin/api/tracks/{id}/lyrics/manual` (MCP
+  `admin_clear_manual_lyrics`) removes them and puts an LRCLIB lookup first
+  (a track with no title or artist loses its row). The admin track page has
+  an editor (Synced (LRC) and Plain tabs, live preview with per-line errors
+  from the same rules in `src/lib/lrc.ts`, Instrumental, a local
+  "Import .lrc file") and shows the source as "Added by you". Saving LRCLIB
+  lyrics unedited keeps their hash: the editor prefills and sends LRCLIB's
+  plain text, and the API keeps the stored bytes when the new text differs
+  only by normalization, so no translation is redone.
 - **Search.** `search_tsv` is a stored generated column,
   `to_tsvector('simple', search_fold(plain_lyrics))`, with a GIN index. The
   `simple` configuration fits Vietnamese (space-separated syllables, no
@@ -351,8 +384,11 @@ public page the full lyrics of the song playing now, and of no other song:
   away, or one held back by a reached cap, shows no translation, so the
   "Translating…" tag and the 10 s poll cannot run for a whole song. Credit:
   "Translated by Claude".
-- **Credit and caching.** Every answer carries `credit` ("Lyrics from
-  LRCLIB", <https://lrclib.net>). `Cache-Control: no-store`, so Cloudflare
+- **Credit and caching.** Every answer carries `credit`: `{ text: "Lyrics
+  from LRCLIB", url: "https://lrclib.net" }`, or for lyrics added by hand
+  `{ text: "Lyrics added by Bao", url: null }` (the page shows it as plain
+  text, the site's name for its owner). Manual lyrics are otherwise served
+  the same way (synced lines or plain text). `Cache-Control: no-store`, so Cloudflare
   never caches it. The current track's answer is kept in memory for 1 min
   (10 s while there are no lyrics, or the lyrics or translation are pending),
   and concurrent misses share one store read. So each replica reads the
@@ -676,15 +712,26 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),
   `admin_search_lyrics` (q, limit), `admin_translation_queue`,
   `admin_requeue_translation` (id), `admin_lyrics_queue`, `admin_requeue_lyrics`
-  (id; the two re-queues are the only write tools: they only reorder the
-  translation and lyrics queues, are marked not read-only, and are audited
-  as `translation.requeued` / `lyrics.requeued` by the MCP actor),
+  (id, replace_manual), `admin_set_lyrics` (id, synced, plain, instrumental)
+  and `admin_clear_manual_lyrics` (id). These four are the only write tools.
+  `admin_requeue_translation` only reorders the translation queue.
+  `admin_requeue_lyrics` reorders the lookup queue, and with
+  `replace_manual` lets LRCLIB replace lyrics added by hand.
+  `admin_set_lyrics` replaces the stored lyrics, and
+  `admin_clear_manual_lyrics` deletes lyrics added by hand. The last three are
+  marked destructive (the MCP hint is per tool, not per argument, so the
+  lyrics re-queue is marked for its replace_manual case). All four are marked
+  not read-only, send their non-path arguments as a JSON body (strings
+  untrimmed; the schema's `maxLength` counts characters, the API caps each
+  lyrics text at 200 000 bytes and answers `too_large` above it), and are audited as `translation.requeued` / `lyrics.requeued` /
+  `lyrics.manual_set` / `lyrics.manual_cleared` by the MCP actor; LRC line
+  errors are part of the tool error text,
   `admin_artists` (q, sort, order, limit,
   offset), `admin_playlists` (limit, offset), `admin_top_playlists` (period,
   limit, offset), `admin_top_playlist` (period, start), `admin_backups`,
   `admin_api_analytics` / `admin_page_analytics` (range, tz). Write routes, the
   SMTP settings, the MCP settings, `/auth/me`, `/audit` and `/config` are not
-  exposed (except the two re-queues). `mcpserver.PublicTools()` / `AdminTools()` list the names and
+  exposed (except the two re-queues and the manual lyrics routes). `mcpserver.PublicTools()` / `AdminTools()` list the names and
   descriptions for the dashboard.
 
 ## Brand assets

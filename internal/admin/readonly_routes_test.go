@@ -17,9 +17,12 @@ var readOnlyAllowed = map[string]bool{
 	"GET /top-playlists/{period}/{start}": true, "GET /backups": true, "GET /analytics": true,
 	"GET /analytics/pages": true, "GET /tracks/{id}/lyrics": true, "GET /lyrics/search": true,
 	"GET /lyrics/translation-queue": true, "GET /lyrics/queue": true,
-	// The only writes: they only reorder the translation and lyrics queues.
+	// Writes: the translation and lyrics re-queues, and manual lyrics.
 	"POST /tracks/{id}/translation/requeue": true,
 	"POST /tracks/{id}/lyrics/requeue":      true,
+	// Manual lyrics (admin_set_lyrics, admin_clear_manual_lyrics).
+	"PUT /tracks/{id}/lyrics":           true,
+	"DELETE /tracks/{id}/lyrics/manual": true,
 }
 
 var routeParam = regexp.MustCompile(`\{[^}]+\}`)
@@ -86,6 +89,9 @@ func TestReadOnlyHandlerExcludesEveryOtherAdminRoute(t *testing.T) {
 		}
 		path := routeParam.ReplaceAllString(rel, "x")
 		for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			if readOnlyAllowed[m+" "+rel] {
+				continue // an allowed write on the same path (PUT /tracks/{id}/lyrics)
+			}
 			rec := httptest.NewRecorder()
 			ro.ServeHTTP(rec, httptest.NewRequest(m, path, nil))
 			if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {

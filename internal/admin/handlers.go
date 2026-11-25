@@ -24,6 +24,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/heartbeat"
 	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/lrc"
 	"github.com/baoopn/spotify-tracker/internal/notify"
 	"github.com/baoopn/spotify-tracker/internal/settings"
 	"github.com/baoopn/spotify-tracker/internal/spotify"
@@ -118,6 +119,8 @@ type apiError struct {
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
 	Fields  map[string]string `json:"fields,omitempty"`
+	// Lines are per-line LRC errors (manual synced lyrics).
+	Lines []lrc.LineError `json:"lines,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

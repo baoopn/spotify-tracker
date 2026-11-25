@@ -160,7 +160,7 @@ func TestReleaseLyricsSQL(t *testing.T) {
 
 func TestRequeueLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).RequeueLyrics(context.Background(), "t1"); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).RequeueLyrics(context.Background(), "t1", false); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "INSERT INTO lyrics (track_id, status, source, requested_at)",

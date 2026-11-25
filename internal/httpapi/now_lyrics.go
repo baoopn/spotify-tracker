@@ -30,7 +30,10 @@ const (
 	nowLyricsMaxTrPlain  = 30_000           // runes of a plain translation
 	lyricsAttribution    = "Lyrics from LRCLIB"
 	lyricsAttributionURL = "https://lrclib.net"
-	translationCredit    = "Translated by Claude"
+	// manualAttribution credits lyrics the owner added by hand (no link);
+	// the public site names the owner "Bao" ("What Bao is listening to").
+	manualAttribution = "Lyrics added by Bao"
+	translationCredit = "Translated by Claude"
 )
 
 // Body statuses.
@@ -45,9 +48,21 @@ type nowLyricsStore interface {
 	NowLyrics(ctx context.Context, trackID string, caps store.TranslationCaps) (store.NowLyrics, error)
 }
 
+// lyricsCreditBody credits the lyrics source; URL is null when there is no
+// link (lyrics added by hand).
 type lyricsCreditBody struct {
-	Text string `json:"text"`
-	URL  string `json:"url"`
+	Text string  `json:"text"`
+	URL  *string `json:"url"`
+}
+
+// lyricsCredit is the credit for lyrics from source ("manual" or LRCLIB).
+// A pending body (no source yet) credits LRCLIB, which looks it up.
+func lyricsCredit(source string) lyricsCreditBody {
+	if source == "manual" {
+		return lyricsCreditBody{Text: manualAttribution}
+	}
+	u := lyricsAttributionURL
+	return lyricsCreditBody{Text: lyricsAttribution, URL: &u}
 }
 
 type lyricsLine struct {
@@ -196,7 +211,7 @@ func buildLyricsBody(trackID string, l store.NowLyrics, translation bool) *nowLy
 		TrackID: trackID,
 		Status:  l.Status,
 		Lines:   []lyricsLine{},
-		Credit:  lyricsCreditBody{Text: lyricsAttribution, URL: lyricsAttributionURL},
+		Credit:  lyricsCredit(l.Source),
 	}
 	switch l.Status {
 	case domain.LyricsInstrumental:

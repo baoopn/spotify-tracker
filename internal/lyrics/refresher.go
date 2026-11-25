@@ -263,8 +263,9 @@ func (r *Refresher) store(ctx context.Context, c domain.LyricsCandidate, l domai
 		r.deferTrack(ctx, c.TrackID, domain.LyricsError, r.retryAt(c), "store lyrics: "+err.Error())
 		return
 	case !stored:
-		// The lease expired and another worker took the track.
-		r.Log.InfoContext(ctx, "lyrics not stored (claim lost)", slog.String("track_id", c.TrackID))
+		// The lease expired and another worker took the track, or manual
+		// lyrics were saved meanwhile (they win; the lease was given back).
+		r.Log.InfoContext(ctx, "lyrics not stored (claim lost, or manual lyrics kept)", slog.String("track_id", c.TrackID))
 		return
 	case l.Status == domain.LyricsInstrumental:
 		s.instrumental++

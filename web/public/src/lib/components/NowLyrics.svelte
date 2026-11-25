@@ -39,11 +39,12 @@
 	const playing = $derived(!!trackId && np.is_playing);
 	const durationMs = $derived(np.track?.duration_ms ?? 0);
 
-	// The full lyrics, fetched once per track. Only for the track on screen:
-	// a late response for the previous song shows nothing.
+	// The full lyrics, fetched once per track, also while paused (a resume
+	// keeps the same answer). Only for the track on screen: a late response
+	// for the previous song shows nothing.
 	const query = createQuery(() => nowLyricsQuery(trackId, playing));
 	// Same helper as the hero's layout toggle, so the two never disagree.
-	const state = $derived(playing ? lyricsState(query.data, query, trackId) : 'none');
+	const state = $derived(lyricsState(query.data, query, trackId));
 	const data = $derived(query.data && query.data.track_id === trackId ? query.data : null);
 
 	const found = $derived(data?.status === 'found' ? data : null);
@@ -70,10 +71,11 @@
 	$effect(() => loadLyricsFonts(plain, ...lines.map((l) => l.text)));
 
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
-	// moves the highlight in between. Only needed for synced lines.
+	// moves the highlight in between. Only needed for synced lines. Paused:
+	// the highlight stays on the paused line (no clock, so no ticks).
 	const posMs = $derived(
-		playing && lines.length
-			? estimatePositionMs(np, live.serverNow(lyricClock.now), durationMs)
+		lines.length
+			? estimatePositionMs(np, live.serverNow(playing ? lyricClock.now : 0), durationMs)
 			: null
 	);
 	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);

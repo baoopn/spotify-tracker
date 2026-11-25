@@ -111,20 +111,44 @@ func TestNowLyricsNull(t *testing.T) {
 	st := &fakeLyrics{text: map[string]string{"t1": manyLines(20, 5000), "empty": "[ar:x]\nno time tags"}}
 	fresh := lyricsNow.Add(-2 * time.Second)
 	cases := map[string][]byte{
-		"null snapshot":  []byte("null"),
-		"paused":         snapshot(false, ms(10_000), fresh, "t1", 200_000),
-		"no track":       snapshot(true, ms(10_000), fresh, "", 0),
-		"no progress":    snapshot(true, nil, fresh, "t1", 200_000),
-		"stale":          snapshot(true, ms(10_000), lyricsNow.Add(-2*time.Minute), "t1", 200_000),
-		"past duration":  snapshot(true, ms(199_500), fresh, "t1", 200_000),
-		"no lyrics":      snapshot(true, ms(10_000), fresh, "other", 200_000),
-		"no timed lines": snapshot(true, ms(10_000), fresh, "empty", 200_000),
+		"null snapshot":   []byte("null"),
+		"paused stale":    snapshot(false, ms(10_000), lyricsNow.Add(-2*time.Minute), "t1", 200_000),
+		"paused no track": snapshot(false, ms(10_000), fresh, "", 0),
+		"paused past end": snapshot(false, ms(200_500), fresh, "t1", 200_000),
+		"no track":        snapshot(true, ms(10_000), fresh, "", 0),
+		"no progress":     snapshot(true, nil, fresh, "t1", 200_000),
+		"stale":           snapshot(true, ms(10_000), lyricsNow.Add(-2*time.Minute), "t1", 200_000),
+		"past duration":   snapshot(true, ms(199_500), fresh, "t1", 200_000),
+		"no lyrics":       snapshot(true, ms(10_000), fresh, "other", 200_000),
+		"no timed lines":  snapshot(true, ms(10_000), fresh, "empty", 200_000),
 	}
 	for name, snap := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec, body := getLyrics(t, lyricsHandler(st, snap), "/api/v1/now-playing/lyrics")
 			if rec.Code != http.StatusOK || body != nil || strings.TrimSpace(rec.Body.String()) != `{"data":null}` {
 				t.Errorf("got %d %s", rec.Code, rec.Body.String())
+			}
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("Cache-Control = %q", cc)
+			}
+		})
+	}
+}
+
+// A paused track keeps its lyrics while Spotify still reports it (the poller
+// refreshes fetched_at on every poll). The position does not advance while
+// paused, so a pause just before the end is not "past the duration".
+func TestNowLyricsPaused(t *testing.T) {
+	st := &fakeLyrics{text: map[string]string{"t1": manyLines(20, 5000)}}
+	for name, progress := range map[string]int64{"middle": 10_000, "near end": 199_500} {
+		t.Run(name, func(t *testing.T) {
+			snap := snapshot(false, ms(progress), lyricsNow.Add(-30*time.Second), "t1", 200_000)
+			rec, body := getLyrics(t, lyricsHandler(st, snap), "/api/v1/now-playing/lyrics")
+			if body == nil {
+				t.Fatalf("null: %s", rec.Body.String())
+			}
+			if body.TrackID != "t1" || body.Status != nowLyricsFound || !body.Synced || len(body.Lines) != 20 {
+				t.Errorf("body = %+v", body)
 			}
 			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 				t.Errorf("Cache-Control = %q", cc)

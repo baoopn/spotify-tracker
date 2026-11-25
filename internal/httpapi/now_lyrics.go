@@ -23,7 +23,7 @@ const (
 	nowLyricsMaxRunes    = 200              // per synced line
 	nowLyricsMaxPlain    = 20_000           // runes of plain text
 	nowLyricsMaxTotal    = 100_000          // runes over all synced lines; later lines are dropped
-	nowLyricsMaxAge      = 60 * time.Second // an older snapshot counts as not playing (poller down)
+	nowLyricsMaxAge      = 60 * time.Second // an older snapshot counts as idle (cleared, or poller down)
 	nowLyricsMemoTTL     = time.Minute      // found lyrics
 	nowLyricsEmptyTTL    = 10 * time.Second // nothing found yet, or lyrics / translation pending
 	nowLyricsMaxTrRunes  = 300              // per translated synced line
@@ -127,8 +127,9 @@ type playbackSnapshot struct {
 }
 
 // GET /api/v1/now-playing/lyrics — the lyrics of the track playing now.
-// Takes no parameters; {"data":null} when nothing is playing or there are
-// no lyrics.
+// Takes no parameters; also served while the track is paused. {"data":null}
+// when nothing is playing (idle, cleared or stale snapshot) or there are no
+// lyrics.
 func (h *Handler) nowPlayingLyrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	body, err := h.nowLyrics(r.Context())
@@ -156,13 +157,20 @@ func (h *Handler) nowLyrics(ctx context.Context) (*nowLyricsBody, error) {
 		return nil, fmt.Errorf("decode now playing: %w", err)
 	}
 	now := h.clock()
-	if np == nil || np.Track == nil || np.Track.ID == "" || !np.IsPlaying || np.ProgressMS == nil {
+	if np == nil || np.Track == nil || np.Track.ID == "" || np.ProgressMS == nil {
 		return nil, nil
 	}
+	// Playing or paused alike: the poller rewrites the snapshot (and its
+	// fetched_at) on every poll while Spotify still reports a current track,
+	// paused or not. A cleared snapshot (nothing playing) keeps the time of the
+	// clear, so it goes stale here, as does one the poller stopped updating.
 	if now.Sub(np.FetchedAt) > nowLyricsMaxAge {
 		return nil, nil
 	}
-	pos := max(0, *np.ProgressMS+max(0, now.Sub(np.FetchedAt).Milliseconds()))
+	pos := max(0, *np.ProgressMS)
+	if np.IsPlaying {
+		pos = max(0, *np.ProgressMS+max(0, now.Sub(np.FetchedAt).Milliseconds()))
+	}
 	if d := np.Track.DurationMS; d > 0 && pos > d {
 		return nil, nil // the track has ended; the next snapshot names the new one
 	}

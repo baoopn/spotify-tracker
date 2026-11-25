@@ -135,24 +135,23 @@ export function trackDetailQuery(id: string | null) {
 }
 
 /**
- * The full lyrics of the track playing now, fetched once per track. Keyed
- * by track so the previous song's lines never show; idle while paused or
- * without a track.
+ * The full lyrics of the current track (playing or paused), fetched once per
+ * track. Keyed by track so the previous song's lines never show, and so a
+ * resume reuses the paused answer; idle without a track.
  */
 export function nowLyricsQuery(trackId: string | null, playing: boolean) {
 	return queryOptions({
 		queryKey: queryKeys.nowLyrics(trackId),
-		queryFn:
-			trackId && playing
-				? ({ signal }): Promise<NowLyrics | null> => fetchNowLyrics(signal)
-				: skipToken,
+		queryFn: trackId
+			? ({ signal }): Promise<NowLyrics | null> => fetchNowLyrics(signal)
+			: skipToken,
 		// Poll only while something is on its way (never while the tab is
 		// hidden: refetchIntervalInBackground is off). null = no lyrics: a slow
-		// re-check, in case the answer came from a stale snapshot.
+		// re-check while playing, in case the answer came from a stale snapshot.
 		refetchInterval: (q) => {
 			const d = q.state.data;
 			if (d === undefined) return false;
-			if (d === null) return LYRICS_NONE_MS;
+			if (d === null) return playing ? LYRICS_NONE_MS : false;
 			return lyricsPending(d) || d.track_id !== trackId ? LYRICS_PENDING_MS : false;
 		},
 		refetchOnWindowFocus: false

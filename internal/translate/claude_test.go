@@ -72,12 +72,13 @@ var syncedReq = Request{TrackID: "t1", Title: "Song", Artist: "A", Kind: domain.
 
 func TestClaudeRequest(t *testing.T) {
 	api := &fakeAPI{status: 200, body: message("end_turn",
-		`{"source_language":"vi","en":["one","two"],"vi":null}`)}
+		`{"languages":["vi"],"source_language":"vi","en":["one","two"],"vi":null}`)}
 	res, err := newTestClaude(t, api).Translate(context.Background(), syncedReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(res.EN, "|") != "one||two" || res.VI != nil || res.Model != "claude-sonnet-5-5" ||
+	if strings.Join(res.EN, "|") != "one||two" || res.VI != nil || strings.Join(res.Languages, ",") != "vi" ||
+		res.Model != "claude-sonnet-5-5" ||
 		res.InputTokens != 1005 || res.OutputTokens != 40 {
 		t.Errorf("result = %+v", res)
 	}

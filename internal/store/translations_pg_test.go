@@ -127,7 +127,8 @@ func TestPGTranslationQueue(t *testing.T) {
 	}
 
 	// Results are written only by the claim holder.
-	tr := domain.Translation{Kind: domain.TranslationSynced, SourceLanguage: "vi", EN: []string{"one", "", "three"}, Model: "m"}
+	tr := domain.Translation{Kind: domain.TranslationSynced, SourceLanguage: "vi", Languages: []string{"vi"},
+		EN: []string{"one", "", "three"}, Model: "m"}
 	if ok, err := st.SetTranslation(ctx, "w2", "now", got[0].SourceHash, tr); err != nil || ok {
 		t.Fatalf("foreign set = %v, %v", ok, err)
 	}
@@ -189,7 +190,8 @@ func TestPGTranslationQueue(t *testing.T) {
 	caps := store.TranslationCaps{Daily: 2, Monthly: 10}
 	nl, err := st.NowLyrics(ctx, "now", caps)
 	if err != nil || nl.Status != domain.LyricsFound || nl.Translation == nil || nl.Translation.Status != domain.TranslationDone ||
-		strings.Join(nl.Translation.EN, "|") != "one||three" || nl.Translation.VI != nil {
+		strings.Join(nl.Translation.EN, "|") != "one||three" || nl.Translation.VI != nil ||
+		strings.Join(nl.Translation.Languages, ",") != "vi" {
 		t.Fatalf("now lyrics = %+v %+v, %v", nl, nl.Translation, err)
 	}
 	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id) VALUES ('nolyrics', 'ar')`) // lookupable
@@ -198,8 +200,19 @@ func TestPGTranslationQueue(t *testing.T) {
 	}
 	tl, err := st.TrackLyrics(ctx, "now", true, caps)
 	if err != nil || tl.Translation == nil || tl.Translation.Status != "done" || tl.Translation.Waiting ||
-		tl.Translation.EN == nil || len(strings.Split(*tl.Translation.EN, "\n")) != 3 {
+		tl.Translation.EN == nil || len(strings.Split(*tl.Translation.EN, "\n")) != 3 ||
+		strings.Join(tl.Translation.Languages, ",") != "vi" {
 		t.Fatalf("track lyrics = %+v, %v", tl.Translation, err)
+	}
+	// A mixed song keeps every language, main first; a translation from
+	// before the column has none (null).
+	exec(t, pool, `UPDATE lyrics_translations SET languages = ARRAY['ja','en','vi'] WHERE track_id = 'now'`)
+	if tl, _ := st.TrackLyrics(ctx, "now", false, caps); tl.Translation == nil || strings.Join(tl.Translation.Languages, ",") != "ja,en,vi" {
+		t.Errorf("mixed languages = %+v", tl.Translation)
+	}
+	exec(t, pool, `UPDATE lyrics_translations SET languages = NULL WHERE track_id = 'now'`)
+	if nl, _ := st.NowLyrics(ctx, "now", caps); nl.Translation == nil || nl.Translation.Languages != nil {
+		t.Errorf("legacy languages = %+v", nl.Translation)
 	}
 
 	// Admin: a track never queued is "not_queued" and not waiting (no

@@ -185,7 +185,7 @@ func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash
 	tag, err := q.db.Exec(ctx, `
 		UPDATE lyrics_translations tr SET
 			status = CASE WHEN tr.requested_at IS NULL THEN 'done' ELSE 'pending' END,
-			source_hash = $3, kind = $4, source_language = $5,
+			source_hash = $3, kind = $4, source_language = $5, languages = $13,
 			en_lines = $6, vi_lines = $7, en_text = $8, vi_text = $9, model = $10,
 			input_tokens = $11, output_tokens = $12, attempts = 0, last_error = NULL,
 			translated_at = now(), updated_at = now(), next_attempt_at = NULL,
@@ -194,7 +194,7 @@ func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash
 			AND EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = $2 AND l.status = 'found' AND `+srcHashSQL+` = $3)`,
 		owner, trackID, sourceHash, r.Kind, nullIfEmpty(r.SourceLanguage), r.EN, r.VI,
 		nullIfEmpty(r.ENText), nullIfEmpty(r.VIText), nullIfEmpty(r.Model),
-		clampInt32(r.InputTokens), clampInt32(r.OutputTokens))
+		clampInt32(r.InputTokens), clampInt32(r.OutputTokens), r.Languages)
 	if err != nil {
 		return false, fmt.Errorf("set translation %s: %w", trackID, err)
 	}

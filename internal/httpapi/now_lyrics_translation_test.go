@@ -41,7 +41,7 @@ func TestNowLyricsPending(t *testing.T) {
 func syncedTr(status string, en, vi []string) store.NowLyrics {
 	return store.NowLyrics{Status: domain.LyricsFound, Synced: "[00:01.00] một\n[00:02.00]\n[00:03.00] ba",
 		Translation: &store.NowTranslation{Status: status, Kind: domain.TranslationSynced, SourceLanguage: "vi",
-			EN: en, VI: vi}}
+			Languages: []string{"vi", "en"}, EN: en, VI: vi}}
 }
 
 func TestNowLyricsTranslation(t *testing.T) {
@@ -53,6 +53,7 @@ func TestNowLyricsTranslation(t *testing.T) {
 		_, body := getLyrics(t, h, target)
 		tr := body.Translation
 		if tr == nil || tr.Status != "done" || tr.SourceLanguage == nil || *tr.SourceLanguage != "vi" ||
+			strings.Join(tr.Languages, ",") != "vi,en" ||
 			tr.VI != nil || tr.EN == nil || strings.Join(tr.EN.Lines, "|") != "one||three" ||
 			tr.Credit.Text != "Translated by Claude" {
 			t.Fatalf("translation = %+v", tr)

@@ -39,7 +39,7 @@
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-sm font-medium text-ink" dir="auto" title={t.name}>{t.name}</p>
 			<p class="truncate text-xs text-ink-soft" dir="auto">
-				{artistNames(t.artists)}<span class="font-mono"> · {duration(t.duration_ms)}</span>
+				{artistNames(t.artists)}<span class="font-mono">{` · ${duration(t.duration_ms)}`}</span>
 			</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-1">

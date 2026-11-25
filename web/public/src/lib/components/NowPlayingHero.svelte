@@ -55,14 +55,13 @@
 	const year = $derived(releaseYear(track?.album?.release_date));
 	const cover = $derived(track?.album?.cover_image_url);
 
-	// Lyrics focus layout: offered while the song has lyrics to read, they are
-	// on their way (also while the server still answers for the previous
-	// song), or the request failed (focus shows Retry). Same query and helper
-	// as NowLyrics (shared cache, one request), so the two never disagree.
+	// Lyrics focus layout: offered while the song (playing or paused) has
+	// lyrics to read, they are on their way (also while the server still
+	// answers for the previous song), or the request failed (focus shows
+	// Retry). Same query and helper as NowLyrics (shared cache, one request),
+	// so the two never disagree.
 	const lyrics = createQuery(() => nowLyricsQuery(track?.id ?? null, playing));
-	const lyricsNow = $derived(
-		playing ? lyricsState(lyrics.data, lyrics, track?.id ?? null) : 'none'
-	);
+	const lyricsNow = $derived(lyricsState(lyrics.data, lyrics, track?.id ?? null));
 	const canFocus = $derived(
 		lyricsNow === 'loading' ||
 			lyricsNow === 'looking' ||
@@ -327,7 +326,7 @@
 
 					<div class="mt-6">{@render progress()}</div>
 
-					{#if playing && np}<NowLyrics {np} />{/if}
+					<NowLyrics {np} />
 
 					{@render spotifyButton('mt-7')}
 				</div>

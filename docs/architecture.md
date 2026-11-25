@@ -387,9 +387,20 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
 public page the full lyrics of the song playing now, and of no other song:
 
 - **Current track only.** It takes no parameters (a query string is ignored)
-  and reads the now-playing snapshot. It answers `{"data":null}` when nothing
-  plays, playback is paused, the snapshot is older than 60 s (poller down),
-  the estimated position is past the track's end, or no lyrics were found.
+  and reads the now-playing snapshot. It answers `{"data":null}` when there is
+  no current track, the snapshot is older than 60 s, the estimated position
+  is past the track's end, or no lyrics were found.
+- **Paused.** A paused track keeps its lyrics. While Spotify still reports a
+  current item, paused or not, the poller rewrites the snapshot and its
+  `fetched_at` on every poll, so a paused snapshot stays fresh. When Spotify
+  reports nothing, the poller clears playback: the snapshot keeps the last
+  track with `is_playing: false`, but `fetched_at` stays at the time of the
+  clear, so the 60 s rule ends the lyrics for an idle player as it does for a
+  poller that stopped. While paused the position does not advance (the
+  snapshot's `progress_ms`). The page keeps the lyrics card in both layouts
+  with the highlight frozen on the paused line, and does not poll while
+  paused unless the lyrics or translation are pending (no 30 s re-check of a
+  null answer either). Resuming reuses the same cached answer.
 - **Status.** The body has `status`: `found`, `instrumental`, or `pending`
   (no text). Pending follows the lookup queue and always ends: no lookup yet
   (no row, or `pending`) while the lyrics fetcher runs (`LYRICS_ENABLED`), a

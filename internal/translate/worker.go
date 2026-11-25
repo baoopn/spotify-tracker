@@ -370,7 +370,7 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		}
 		return 0, outcomeTransient
 	}
-	tr := domain.Translation{Kind: req.Kind, SourceLanguage: res.SourceLanguage, EN: res.EN, VI: res.VI,
+	tr := domain.Translation{Kind: req.Kind, SourceLanguage: res.SourceLanguage, Languages: res.Languages, EN: res.EN, VI: res.VI,
 		ENText: res.ENText, VIText: res.VIText, Model: res.Model,
 		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens}
 	stored, err := w.Store.SetTranslation(ctx, w.Owner, c.TrackID, c.SourceHash, tr)

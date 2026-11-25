@@ -31,8 +31,10 @@ type Request struct {
 // Result is a translation. For synced lyrics EN and VI have one entry per
 // request line (nil = the song is already in that language); for plain
 // lyrics ENText and VIText hold the text ("" = already in that language).
+// A language is left empty only when Languages is just that language.
 type Result struct {
-	SourceLanguage string
+	SourceLanguage string   // main language (ISO 639-1, or "und")
+	Languages      []string // every language in the lyrics, main first
 	EN, VI         []string
 	ENText, VIText string
 	Model          string // the model that answered (a fallback shows here)

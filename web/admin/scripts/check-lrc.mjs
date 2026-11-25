@@ -102,6 +102,7 @@ const tr = (over) => ({
 	stale: false,
 	kind: 'synced',
 	source_language: 'vi',
+	languages: ['vi'],
 	en: 'one\n\nthree',
 	vi: null,
 	model: 'm',
@@ -117,6 +118,11 @@ check('translation: languages shown', () => {
 	assert.deepEqual(availableLangs(null), []);
 	assert.deepEqual(availableLangs(tr()), ['en']);
 	assert.deepEqual(availableLangs(tr({ source_language: 'ko', vi: 'x' })), ['en', 'vi']);
+	assert.deepEqual(
+		availableLangs(tr({ languages: ['vi', 'en'], vi: 'x' })),
+		['en', 'vi'],
+		'mixed song: its main language is shown too'
+	);
 	assert.deepEqual(availableLangs(tr({ stale: true })), [], 'stale: being redone');
 	assert.deepEqual(availableLangs(tr({ status: 'pending' })), []);
 	assert.equal(pickLang('vi', ['en']), 'orig');

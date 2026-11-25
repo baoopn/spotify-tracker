@@ -70,7 +70,8 @@ assert.deepEqual(
 );
 assert.deepEqual(lineKeys([]), []);
 
-// Translations: only done ones, never the song's own language.
+// Translations: only done and present ones. A language is null only when
+// the song is all in it, so a mixed song shows its main language's too.
 const txt = { lines: ['a'], plain: null };
 assert.deepEqual(availableLangs(null), []);
 assert.deepEqual(
@@ -82,7 +83,8 @@ assert.deepEqual(availableLangs({ status: 'done', source_language: 'ko', en: txt
 	'vi'
 ]);
 assert.deepEqual(availableLangs({ status: 'done', source_language: 'vi', en: txt, vi: txt }), [
-	'en'
+	'en',
+	'vi'
 ]);
 assert.deepEqual(availableLangs({ status: 'done', source_language: 'en', en: null, vi: txt }), [
 	'vi'

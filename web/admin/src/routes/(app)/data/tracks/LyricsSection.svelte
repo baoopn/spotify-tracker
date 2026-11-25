@@ -9,6 +9,7 @@
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { parseLrc } from '#lib/lrc.js';
 	import { queries } from '#lib/queries.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
 	let { trackId }: { trackId: string } = $props();
@@ -64,20 +65,20 @@
 		>
 			{#if trLines}
 				{#each lines as line, i (i)}
-					<p class="min-h-[1lh]" dir="auto">
+					<p class="min-h-[1lh]" dir="auto" lang={scriptLang(line.text)}>
 						{line.text}
 						{#if trLines[i]}<span class="block text-muted" {lang}>{trLines[i]}</span>{/if}
 					</p>
 				{/each}
 			{:else if trPairs}
 				{#each trPairs as p, i (i)}
-					<p class="min-h-[1lh]" dir="auto">
+					<p class="min-h-[1lh]" dir="auto" lang={scriptLang(p.text)}>
 						{p.text}
 						{#if p.tr}<span class="block text-muted" {lang}>{p.tr}</span>{/if}
 					</p>
 				{/each}
 			{:else}
-				<div class="whitespace-pre-line">{l.plain}</div>
+				<div class="whitespace-pre-line" lang={scriptLang(l.plain)}>{l.plain}</div>
 				{#if trText}
 					<p class="mt-4 mb-1 text-xs font-semibold text-muted" {lang}>
 						{lang === 'vi' ? 'Bản dịch tiếng Việt' : 'English translation'}

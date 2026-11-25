@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { MediaQuery } from 'svelte/reactivity';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import type { LyricLine } from '#lib/types.js';
 
 	let {
@@ -25,6 +26,18 @@
 	let box = $state<HTMLDivElement>();
 	let pausedUntil = 0;
 	let placed = false; // the first scroll after mount jumps; later ones glide
+	/** CJK lines carry their language, so the matching font face comes first. */
+	const langs = $derived(lines.map((l) => scriptLang(l.text)));
+
+	// A web font arriving late (CJK faces load on demand) changes line heights:
+	// centre the active line again once it has swapped in.
+	let fontsLoaded = $state(0);
+	$effect(() => {
+		const fonts = document.fonts;
+		const bump = () => fontsLoaded++;
+		fonts.addEventListener('loadingdone', bump);
+		return () => fonts.removeEventListener('loadingdone', bump);
+	});
 
 	function userScrolled() {
 		pausedUntil = Date.now() + 5000;
@@ -37,6 +50,7 @@
 		const i = active;
 		void keys;
 		void translation; // lines grow taller when a translation shows
+		void fontsLoaded;
 		if (!box) {
 			placed = false;
 			return;
@@ -83,6 +97,7 @@
 		<p
 			data-i={i}
 			dir="auto"
+			lang={langs[i]}
 			aria-current={i === active ? 'true' : undefined}
 			class={[
 				'lyric-line break-words',

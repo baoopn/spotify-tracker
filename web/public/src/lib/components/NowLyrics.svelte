@@ -14,6 +14,7 @@
 		pickLang
 	} from '#lib/lyrics.js';
 	import { loadLyricsFonts } from '#lib/lyricsFonts.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
@@ -181,11 +182,12 @@
 		aria-label="Lyrics, scrollable"
 		tabindex="0"
 		dir="auto"
+		lang={pairs ? undefined : scriptLang(text)}
 		class={['overflow-y-auto font-lyrics break-words text-ink', ...cls]}
 	>
 		{#if pairs}
 			{#each pairs as p, i (i)}
-				<p class="min-h-[1lh]">
+				<p class="min-h-[1lh]" lang={scriptLang(p.text)}>
 					{p.text}
 					{#if p.tr}<span class="block text-[0.85em] opacity-75" {lang} dir="auto">{p.tr}</span
 						>{/if}

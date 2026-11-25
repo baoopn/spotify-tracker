@@ -12,6 +12,7 @@
 	import { activeIndex, parseLrc } from '#lib/lrc.js';
 	import type { Snapshot } from '#lib/now-playing.svelte.js';
 	import { queries } from '#lib/queries.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import { availableLangs, interleave, pickLang, translatedLines } from '#lib/translation.js';
 
 	let {
@@ -111,6 +112,7 @@
 				<p
 					data-i={i}
 					dir="auto"
+					lang={scriptLang(line.text)}
 					aria-current={i === active ? 'true' : undefined}
 					class={[
 						'lyric-line py-0.5',
@@ -136,13 +138,13 @@
 		>
 			{#if trPairs}
 				{#each trPairs as p, i (i)}
-					<p class="min-h-[1lh]" dir="auto">
+					<p class="min-h-[1lh]" dir="auto" lang={scriptLang(p.text)}>
 						{p.text}
 						{#if p.tr}<span class="block opacity-75" {lang}>{p.tr}</span>{/if}
 					</p>
 				{/each}
 			{:else}
-				<div class="whitespace-pre-line">{plain}</div>
+				<div class="whitespace-pre-line" lang={scriptLang(plain)}>{plain}</div>
 				{#if trText}
 					<p class="eyebrow mt-4 mb-1 text-ink-soft" {lang}>
 						{lang === 'vi' ? 'Bản dịch tiếng Việt' : 'English translation'}

@@ -7,6 +7,7 @@
 	import { errorMessage } from '#lib/api.js';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { lyricsQueryOk, queries } from '#lib/queries.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 
 	const LIMIT = 20;
 
@@ -49,7 +50,10 @@
 				>
 					<TrackCell track={m.track} />
 					{#if m.snippet}
-						<span class="line-clamp-2 font-lyrics text-sm break-words text-muted">{m.snippet}</span>
+						<span
+							class="line-clamp-2 font-lyrics text-sm break-words text-muted"
+							lang={scriptLang(m.snippet)}>{m.snippet}</span
+						>
 					{/if}
 					{#if m.phrase_match || m.has_synced}
 						<span class="flex flex-wrap gap-1.5">

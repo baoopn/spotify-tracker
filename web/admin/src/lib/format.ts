@@ -26,7 +26,7 @@ export function percent(ratio: number | null | undefined): string {
 	return ratio == null || Number.isNaN(ratio) ? '–' : pct.format(ratio);
 }
 
-const usdFmt = new Intl.NumberFormat(undefined, {
+const usdFmt = new Intl.NumberFormat('en-US', {
 	style: 'currency',
 	currency: 'USD',
 	minimumFractionDigits: 2,

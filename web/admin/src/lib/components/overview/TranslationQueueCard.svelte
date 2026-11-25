@@ -4,7 +4,7 @@
 	import Skeleton from '../Skeleton.svelte';
 	import { compact, num, usd } from '#lib/format.js';
 	import { queries } from '#lib/queries.js';
-	import { capRatio, estimateCost } from '#lib/translation.js';
+	import { capRatio, estimateCost, hasCap } from '#lib/translation.js';
 
 	// The Claude lyrics translation queue: songs are queued when they play,
 	// within a daily and a monthly cap of Claude calls.
@@ -50,7 +50,7 @@
 	const meters = $derived(
 		s
 			? [
-					{ id: 'tq-today', label: 'Calls today', used: s.calls_today, cap: s.daily_cap },
+					{ id: 'tq-today', label: 'Calls today (UTC)', used: s.calls_today, cap: s.daily_cap },
 					{ id: 'tq-month', label: 'This month', used: s.calls_month, cap: s.monthly_cap }
 				]
 			: []
@@ -78,34 +78,37 @@
 
 		<div class="flex flex-col gap-2.5">
 			{#each meters as m (m.id)}
+				{@const capped = hasCap(m.cap)}
 				{@const ratio = capRatio(m.used, m.cap)}
-				{@const full = m.cap > 0 && m.used >= m.cap}
+				{@const full = capped && m.used >= m.cap}
 				<div>
 					<div class="flex items-baseline justify-between gap-2 text-xs">
 						<span id="{m.id}-label" class="text-muted">{m.label}</span>
 						<span class="font-mono text-fg tabular-nums">
-							{num(m.used)} / {num(m.cap)}{#if full}<span class="text-danger">
-									· cap reached</span
-								>{/if}
+							{#if capped}{num(m.used)} / {num(m.cap)}{#if full}<span class="text-danger">
+										· cap reached</span
+									>{/if}{:else}{num(m.used)} · no cap{/if}
 						</span>
 					</div>
-					<div
-						class="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-3"
-						role="meter"
-						aria-labelledby="{m.id}-label"
-						aria-valuemin={0}
-						aria-valuemax={m.cap}
-						aria-valuenow={Math.min(m.used, m.cap)}
-						aria-valuetext="{num(m.used)} of {num(m.cap)} calls{full ? ', cap reached' : ''}"
-					>
+					{#if capped}
 						<div
-							class={[
-								'h-full rounded-full',
-								full ? 'bg-danger' : ratio >= 0.8 ? 'bg-warn' : 'bg-ink'
-							]}
-							style:width="{ratio * 100}%"
-						></div>
-					</div>
+							class="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-3"
+							role="meter"
+							aria-labelledby="{m.id}-label"
+							aria-valuemin={0}
+							aria-valuemax={m.cap}
+							aria-valuenow={Math.min(m.used, m.cap)}
+							aria-valuetext="{num(m.used)} of {num(m.cap)} calls{full ? ', cap reached' : ''}"
+						>
+							<div
+								class={[
+									'h-full rounded-full',
+									full ? 'bg-danger' : ratio >= 0.8 ? 'bg-warn' : 'bg-ink'
+								]}
+								style:width="{ratio * 100}%"
+							></div>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -116,16 +119,22 @@
 				{compact(s.tokens_month.input)} in · {compact(s.tokens_month.output)} out
 			</dd>
 			{#if cost != null}
-				<dt class="text-muted">Est. cost this month</dt>
+				<dt class="text-muted">Est. cost this month (at most)</dt>
 				<dd class="text-right font-mono text-fg tabular-nums" title={s.model}>{usd(cost)}</dd>
 			{/if}
 		</dl>
+		{#if cost != null}
+			<p class="-mt-2 text-xs text-muted">Cached input counted at full price.</p>
+		{/if}
 
-		<p class="text-xs text-muted">
-			{#if s.model}Model <span class="font-mono">{s.model}</span>{/if}{#if s.next_retry_at}{s.model
-					? SEP
-					: ''}Next retry <RelTime value={s.next_retry_at} />{/if}
-		</p>
+		{#if s.model || s.next_retry_at}
+			<p class="text-xs text-muted">
+				{#if s.model}Model <span class="font-mono">{s.model}</span
+					>{/if}{#if s.next_retry_at}{s.model ? SEP : ''}Next retry <RelTime
+						value={s.next_retry_at}
+					/>{/if}
+			</p>
+		{/if}
 		{#if !s.enabled}
 			<p class="text-xs text-muted">The translator is off (TRANSLATE_ENABLED=false).</p>
 		{/if}

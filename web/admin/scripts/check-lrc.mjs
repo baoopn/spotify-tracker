@@ -102,7 +102,8 @@ const {
 	interleave,
 	translationNote,
 	estimateCost,
-	capRatio
+	capRatio,
+	hasCap
 } = await import('../src/lib/translation.ts');
 const tr = (over) => ({
 	status: 'done',
@@ -160,6 +161,13 @@ check('translation: cost estimate and cap share', () => {
 	assert.equal(capRatio(40, 1000), 0.04);
 	assert.equal(capRatio(120, 100), 1, 'clamped');
 	assert.equal(capRatio(5, 0), 0, 'no cap');
+});
+
+check('translation: a cap of 0 or less is no cap (no meter)', () => {
+	assert.equal(hasCap(100), true);
+	assert.equal(hasCap(0), false);
+	assert.equal(hasCap(-1), false);
+	assert.equal(capRatio(5, -1), 0);
 });
 
 if (!process.exitCode) console.log(`${passed} lrc checks passed`);

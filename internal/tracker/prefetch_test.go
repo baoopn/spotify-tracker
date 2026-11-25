@@ -121,14 +121,22 @@ func TestPrefetchUpcomingStale(t *testing.T) {
 	}
 }
 
+// An empty queue while a song plays clears the list and tells the hook
+// (nil), so the lookups and the cache warm-up drop the old upcoming ids.
 func TestPrefetchUpcomingEmptyClears(t *testing.T) {
-	d := &fakeDeps{current: "cur", playing: true}
-	called := false
-	if _, err := prefetchUpcoming(context.Background(), d, PrefetchOptions{}, discard,
-		func([]string) { called = true }, "cur", nil, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if d.cleared != 1 || d.upNext != nil || called {
-		t.Errorf("cleared %d up next %s hook %v", d.cleared, d.upNext, called)
+	for name, items := range map[string][]domain.Upcoming{
+		"empty":        nil,
+		"only current": {up("cur", true), up("", true)},
+	} {
+		d := &fakeDeps{current: "cur", playing: true}
+		calls := 0
+		var got []string
+		if _, err := prefetchUpcoming(context.Background(), d, PrefetchOptions{}, discard,
+			func(ids []string) { calls++; got = ids }, "cur", items, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if d.cleared != 1 || d.upNext != nil || calls != 1 || got != nil {
+			t.Errorf("%s: cleared %d up next %s hook calls %d ids %v", name, d.cleared, d.upNext, calls, got)
+		}
 	}
 }

@@ -94,8 +94,13 @@ func prefetchUpcoming(ctx context.Context, d prefetchDeps, o PrefetchOptions, lo
 		return stored, nil
 	}
 	if len(items) == 0 {
+		// The queue emptied while the song plays: clear the list and the
+		// lookups keyed off it (lyrics, translation, cache warm-up).
 		if err := d.ClearUpNext(ctx); err != nil {
 			log.WarnContext(ctx, "clear up next failed", logging.Err(err))
+		}
+		if hook != nil {
+			hook(nil)
 		}
 		return stored, nil
 	}

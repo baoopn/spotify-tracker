@@ -189,9 +189,9 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   inserts a `pending` row for the tracks with no row that come next in line
   (at most one batch, tracks with a title and an artist), then leases rows
   with `SELECT ... FOR UPDATE SKIP LOCKED` (`claimed_by` / `claimed_until`,
-  `LYRICS_LEASE`, 15 min, at least one batch at 3 requests per track, each
+  `LYRICS_LEASE`, 20 min, at least one batch at 5 requests per track, each
   with the spacing and the 20 s request timeout:
-  3 × `LYRICS_BATCH` × (`LYRICS_SPACING` + 20 s), 11 min for the defaults). So API replicas never
+  5 × `LYRICS_BATCH` × (`LYRICS_SPACING` + 20 s), 18 min 20 s for the defaults). So API replicas never
   look up the same track, and a crashed worker's claim expires and is taken
   again. The pending rows are inserted in id order, so replicas inserting the
   same tracks cannot deadlock. A row is claimable when no live lease holds it
@@ -225,11 +225,13 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   every artist with synced lyrics. With an album and a duration (rounded
   seconds) the lookup tries, in order: `GET /api/get` with all credited
   artists joined by ", " (as LRCLIB writes them), `GET /api/get` with the
-  first artist only (skipped for a single artist), then `GET /api/search`
-  (track name and first artist). It stops at the first result with synced
-  lyrics. An exact match with only plain lyrics, or `instrumental`, is kept
+  first artist only (skipped for a single artist), the same two Gets with
+  the core title (see Titles below; skipped when it equals the name or would
+  drop a version tag), then `GET /api/search` with the core title and the
+  first artist, then with the full name. It stops at the first result with
+  synced lyrics. An exact match with only plain lyrics, or `instrumental`, is kept
   while the search runs; a search candidate replaces it only when it has
-  synced lyrics, the same folded track name, a duration within 2 s and a
+  synced lyrics, a matching track name (see Titles), a duration within 2 s and a
   credit naming the first artist (a cover by someone else or the featured
   artist alone does not count). So an instrumental exact match flips only to
   synced lyrics, never to plain. A failed Get does not end the lookup; when
@@ -237,25 +239,64 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   marked not found. When the search fails after an exact match was found
   (also on the 20 s request timeout), the exact match is stored; a rate
   limit or shutdown still retries the whole lookup. Without an exact match,
-  a search candidate must have the same folded track name (a version suffix
-  such as "(Live)" or "- Remastered" is ignored), an artist matching one of
-  the credited artists, and, when the duration is known, a duration within
-  2 s. Among those it prefers the exact name, then synced lyrics, then plain
-  lyrics, then the closest duration. Artist credits are split into names on
-  ",", "&", ";", "feat.", "ft.", "featuring" and "x" and folded; two names
+  a search candidate must have a matching track name (see Titles), an artist
+  matching one of the credited artists, and, when the duration is known, a
+  duration within 2 s; the album does not matter, so a song on an OST album
+  LRCLIB does not list is still found. Among those it prefers synced lyrics,
+  then plain lyrics, then the same normalized name over the same core title,
+  then the closest duration. Search results of both queries are pooled.
+  Artist credits are split into names on ",", "&", ";", "feat.", "ft.", "featuring" and "x" and folded; two names
   match when equal, or when the shorter (at least 3 letters) is whole words
   of the longer, so short names like "V" or "Ni" match only themselves.
   Text that is only markers ("[Instrumental]", "♪") counts as no lyrics. A
-  lookup sends at most 3 requests, and 3 only when the earlier ones found no
-  synced lyrics. The chosen entry's id is stored as `lrclib_id`. Songs stored
-  with plain lyrics before this matching are not looked up again on their
-  own: they change only when re-queued (admin "Look up again", MCP
+  lookup sends at most 5 requests (`lrclib.MaxRequestsPerLookup`); each
+  further request is sent only while no synced lyrics were found, and the
+  last search is the one dropped when a two-artist decorated title used all
+  four Gets. The chosen entry's id is stored as `lrclib_id`. Songs stored
+  with plain lyrics, or not found, before this matching are not looked up
+  again on their own: they change only when re-queued (admin "Look up again", MCP
   `admin_requeue_lyrics`) or on a normal not-found retry. Synced lyrics
   change the lyrics hash, so an existing translation is re-queued.
   Without an album or duration only search is used. NUL bytes are removed,
   line breaks normalized to `\n`, and each text is capped at 200 000 bytes.
   When only synced lyrics exist, plain text is derived by removing the
   timestamps; a record with no lyrics text left is `instrumental`.
+- **Titles.** Spotify names often carry decorations LRCLIB leaves out, or
+  the other way round: "假如风有颜色(电视剧《白色橄榄树》插曲)" is "假如风有颜色"
+  on LRCLIB (`internal/lrclib/title.go`). Names are compared normalized:
+  NFKC (full-width to half-width), folded like artist names, apostrophes
+  dropped ("Don’t" = "Dont"), other punctuation and symbols ("・", "·",
+  quotes, commas) as spaces, spaces collapsed. The core title also removes
+  every bracketed part (`()` `[]` `{}` `【】` `「」` `『』` `《》` `〈〉` `〔〕`
+  `〖〗` `«»`, full-width forms included, nested ones too) and trailing
+  " - …", "~…~" and "feat. …"/"ft. …" suffixes (followed by a name, so
+  "5 ft. 7" stays). A name made only of bracketed groups ("『ありがとう』",
+  "《X》(Live)") takes the inside of the first group as its title and the
+  other groups as removed parts, and stripping never empties a name. Two
+  names match when their normalized forms are equal, or their cores are
+  equal and so are their version tags. Version tags are read only from a
+  removed part made of tag phrases, apart from "version"/"ver."/"版", a
+  year, a "live at …" place and a remixer's name before "Remix": "(Live)",
+  " - Live at Wembley", "(Kygo Remix)", "(现场版)", "(Sped-Up)". So
+  " - Live Forever", "(From "Love Live!")" and a 《drama title》 nested in a
+  bracket have none, nor do featured-artist and producer parts ("feat. X",
+  "with X", "prod. X"). The families: live (Live, Concert, 现场, 演唱会,
+  ライブ), acoustic, piano (Piano Version, 钢琴版), remix (Remix, DJ, DJ版),
+  instrumental (Instrumental, Inst, Karaoke, Off Vocal, Beat, 伴奏, 纯音乐,
+  カラオケ), sped up or slowed, demo or reprise, and language versions
+  (粤语, 国语, 中文版, 英文版, English, Chinese, Japanese, Korean). So
+  "Song (Live)" matches "Song - Live" or "Song (Live at Wembley)" but never
+  the studio "Song", and a studio track never takes a live, karaoke or
+  remix entry: with only the other version on LRCLIB the track stays not
+  found (retried later, or add lyrics by hand). The same rule applies to
+  the core Get, the search pick and the replacement of an exact match. A
+  core-only match replaces an exact match only when both sides removed
+  nothing but harmless decorations: a remaster, "From …", OST, 插曲,
+  主题曲, 片尾曲, 片头曲, 电视剧, drama, TV size, a 《drama title》, a
+  featured artist or producer, a radio edit, an explicit, clean or single
+  version. So "Intro" is not replaced by "Intro (Song A)", nor
+  "Interlude - A" by "Interlude - B"; without an exact match a core match
+  is still taken.
 - **States.** `pending` waits for its first lookup (`fetched_at` null).
   `found` and `instrumental` are final (never overwritten by a later failure
   or not-found; only a successful re-lookup replaces them). A failed

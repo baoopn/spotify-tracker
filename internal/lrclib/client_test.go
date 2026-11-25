@@ -273,9 +273,12 @@ func TestPickNameAndArtist(t *testing.T) {
 		ok           bool
 	}{
 		{"Sẽ Là", "Dick", rec(1, "se la", "DICK"), true},
-		{"Sẽ Là", "Dick", rec(1, "Sẽ Là (Live)", "Dick"), true},
+		{"Sẽ Là", "Dick", rec(1, "Sẽ Là (Live)", "Dick"), false}, // a version tag on one side only
+		{"Sẽ Là (Live)", "Dick", rec(1, "Sẽ Là - Live", "Dick"), true},
+		{"Sẽ Là", "Dick", rec(1, "Sẽ Là (Official Audio)", "Dick"), true},
 		{"Sẽ Là - Remastered 2011", "Dick", rec(1, "Sẽ Là", "Dick"), true},
-		{"Sẽ Là", "Dick", rec(1, "Sẽ Là [Remix] - Radio Edit", "Dick, Xám"), true},
+		{"Sẽ Là", "Dick", rec(1, "Sẽ Là [Remix] - Radio Edit", "Dick, Xám"), false},
+		{"Sẽ Là", "Dick", rec(1, "Sẽ Là - Radio Edit", "Dick, Xám"), true},
 		{"Sẽ Là", "Dick ft. Xám", rec(1, "Sẽ Là", "Dick"), true},
 		{"Sẽ Là", "Dick", rec(1, "Sẽ Là Nữa", "Dick"), false},
 		{"Sẽ Là", "Dick", rec(1, "Sẽ Là", "Other"), false},
@@ -288,7 +291,7 @@ func TestPickNameAndArtist(t *testing.T) {
 		}
 	}
 	// The exact folded name wins over a suffixed one.
-	got := pick([]Record{rec(1, "Sẽ Là (Live)", "Dick"), rec(2, "Sẽ Là", "Dick")}, "Sẽ Là", []string{"Dick"}, 200, nil)
+	got := pick([]Record{rec(1, "Sẽ Là - Remastered", "Dick"), rec(2, "Sẽ Là", "Dick")}, "Sẽ Là", []string{"Dick"}, 200, nil)
 	if got == nil || got.ID != 2 {
 		t.Errorf("exact name = %+v", got)
 	}

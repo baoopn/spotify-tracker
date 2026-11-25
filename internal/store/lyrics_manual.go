@@ -48,8 +48,12 @@ func (q *Queries) SetManualLyrics(ctx context.Context, trackID string, l domain.
 		WITH old AS (
 			SELECT l.track_id, `+srcHashSQL+` AS hash FROM lyrics l WHERE l.track_id = $1 FOR UPDATE),
 		up AS (
+			-- The join makes up read old first: old holds the hash from before
+			-- this write (a CTE up does not depend on may run after it, and
+			-- then its locking read skips the row up already changed).
 			INSERT INTO lyrics AS l (track_id, status, source, plain_lyrics, synced_lyrics, manual_at, manual_by)
-			SELECT t.id, $2, 'manual', $3, $4, now(), $5 FROM tracks t WHERE t.id = $1
+			SELECT t.id, $2, 'manual', $3, $4, now(), $5 FROM tracks t LEFT JOIN old ON old.track_id = t.id
+			WHERE t.id = $1
 			ON CONFLICT (track_id) DO UPDATE SET status = EXCLUDED.status, source = 'manual', lrclib_id = NULL,
 				plain_lyrics = EXCLUDED.plain_lyrics, synced_lyrics = EXCLUDED.synced_lyrics,
 				attempts = 0, last_error = NULL, next_attempt_at = NULL,

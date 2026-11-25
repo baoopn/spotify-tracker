@@ -65,7 +65,8 @@ func TestSetManualLyricsSQL(t *testing.T) {
 	wantSQL(t, db.sql, "INSERT INTO lyrics AS l (track_id, status, source, plain_lyrics, synced_lyrics, manual_at, manual_by)",
 		"'manual'", "requested_at = NULL, claim_requested_at = NULL, replace_manual = false",
 		"l.plain_lyrics IS DISTINCT FROM EXCLUDED.plain_lyrics", "UPDATE lyrics_translations tr SET requested_at = now()",
-		"up.hash IS DISTINCT FROM old.hash", "up.hash <> tr.source_hash")
+		"up.hash IS DISTINCT FROM old.hash", "up.hash <> tr.source_hash",
+		"FROM tracks t LEFT JOIN old ON old.track_id = t.id") // up reads old first: old has the hash from before
 	if strings.Contains(db.sql, "claimed_by") || strings.Contains(db.sql, "INSERT INTO lyrics_translations") {
 		t.Error("a manual set must keep a live claim and never create a translation row")
 	}

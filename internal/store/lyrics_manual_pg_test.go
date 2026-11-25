@@ -287,3 +287,99 @@ func TestPGManualLyricsClear(t *testing.T) {
 		t.Errorf("unknown duration = %v", err)
 	}
 }
+
+// The "changed versus before" guard: a stale translation (the lyrics were
+// translated from an older text) is not re-queued when a manual save keeps
+// the stored text; a changed text re-queues it.
+func TestPGManualLyricsStaleTranslationSameText(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	seed(t, pool, "s", time.Hour)
+	exec(t, pool, `INSERT INTO lyrics_translations (track_id, status, kind, source_hash, model)
+		VALUES ('s', 'done', 'synced', md5('an older text'), 'm')`)
+	var synced, plain string
+	_ = pool.QueryRow(ctx, `SELECT synced_lyrics, plain_lyrics FROM lyrics WHERE track_id = 's'`).Scan(&synced, &plain)
+	same := domain.Lyrics{Status: domain.LyricsFound, Synced: synced, Plain: plain}
+	stored, retr, err := st.SetManualLyrics(ctx, "s", same, "me")
+	if err != nil || !stored || retr {
+		t.Fatalf("same text = stored %v, retranslate %v, %v; want stored, no re-translate", stored, retr, err)
+	}
+	if trRequested(t, pool, "s") {
+		t.Error("the same text re-queued a stale translation")
+	}
+	if src, _, _, _, _ := manualRow(t, pool, "s"); src != "manual" {
+		t.Errorf("source = %s", src)
+	}
+	if _, retr, err := st.SetManualLyrics(ctx, "s", manual, "me"); err != nil || !retr || !trRequested(t, pool, "s") {
+		t.Errorf("changed text: retranslate %v, %v", retr, err)
+	}
+}
+
+// A replace_manual lookup that fails keeps the request and is retried; the
+// retry's result then replaces the manual lyrics.
+func TestPGManualLyricsReplaceRetried(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	bare(t, pool, "m", time.Minute)
+	if _, _, err := st.SetManualLyrics(ctx, "m", manual, "me"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.RequeueLyrics(ctx, "m", true); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); !eq(ids(got), []string{"m"}) {
+		t.Fatalf("claim = %v", ids(got))
+	}
+	if err := st.DeferLyrics(ctx, "w1", "m", domain.LyricsError, time.Now().Add(time.Hour), "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if src, s, p, _, rep := manualRow(t, pool, "m"); src != "manual" || s != domain.LyricsFound || p != manual.Plain || !rep {
+		t.Fatalf("after the failure = %s %s %q replace=%v; want the manual lyrics and the request kept", src, s, p, rep)
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); len(got) != 0 {
+		t.Fatalf("claimed before the retry is due: %v", ids(got))
+	}
+	exec(t, pool, `UPDATE lyrics SET next_attempt_at = now() - interval '1 second' WHERE track_id = 'm'`)
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); !eq(ids(got), []string{"m"}) {
+		t.Fatalf("retry claim = %v", ids(got))
+	}
+	if ok, _, err := st.SetLyrics(ctx, "w1", "m", found); !ok || err != nil {
+		t.Fatalf("set = %v, %v", ok, err)
+	}
+	if src, _, p, _, rep := manualRow(t, pool, "m"); src != "lrclib" || p != found.Plain || rep {
+		t.Errorf("after the retry = %s %q replace=%v", src, p, rep)
+	}
+}
+
+// A manual save while a replace_manual lookup holds the track wins: the
+// request ends, and the lookup's result is not stored.
+func TestPGManualLyricsSaveDuringReplace(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	bare(t, pool, "m", time.Minute)
+	if _, _, err := st.SetManualLyrics(ctx, "m", manual, "me"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.RequeueLyrics(ctx, "m", true); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); !eq(ids(got), []string{"m"}) {
+		t.Fatalf("claim = %v", ids(got))
+	}
+	edited := domain.Lyrics{Status: domain.LyricsFound, Plain: "sửa lại"}
+	if stored, _, err := st.SetManualLyrics(ctx, "m", edited, "me"); !stored || err != nil {
+		t.Fatalf("save = %v, %v", stored, err)
+	}
+	if _, by, _ := lyricsRow(t, pool, "m"); by == nil || *by != "w1" {
+		t.Errorf("the live lease was broken: claimed by %v", by)
+	}
+	if ok, _, err := st.SetLyrics(ctx, "w1", "m", found); ok || err != nil {
+		t.Errorf("late set = %v, %v; want not stored", ok, err)
+	}
+	if src, _, p, _, rep := manualRow(t, pool, "m"); src != "manual" || p != "sửa lại" || rep {
+		t.Errorf("after the lookup = %s %q replace=%v", src, p, rep)
+	}
+	if _, by, _ := lyricsRow(t, pool, "m"); by != nil {
+		t.Errorf("lease kept: %v", *by)
+	}
+}

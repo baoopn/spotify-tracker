@@ -9,6 +9,7 @@
 	import SpotifyTokenCard from '#lib/components/overview/SpotifyTokenCard.svelte';
 	import BackupsCard from '#lib/components/overview/BackupsCard.svelte';
 	import LyricsQueueCard from '#lib/components/overview/LyricsQueueCard.svelte';
+	import TranslationQueueCard from '#lib/components/overview/TranslationQueueCard.svelte';
 	import ServiceList from '#lib/components/overview/ServiceList.svelte';
 	import EnrichmentProgress from '#lib/components/overview/EnrichmentProgress.svelte';
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
@@ -78,6 +79,7 @@
 			{/if}
 			<BackupsCard />
 			<LyricsQueueCard />
+			<TranslationQueueCard />
 		</div>
 	</div>
 

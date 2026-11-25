@@ -104,8 +104,16 @@ check('activeIndex', () => {
 });
 
 // Translations (src/lib/translation.ts).
-const { availableLangs, pickLang, translatedLines, interleave, translationNote } =
-	await import('../src/lib/translation.ts');
+const {
+	availableLangs,
+	pickLang,
+	translatedLines,
+	interleave,
+	translationNote,
+	estimateCost,
+	capRatio,
+	hasCap
+} = await import('../src/lib/translation.ts');
 const tr = (over) => ({
 	status: 'done',
 	stale: false,
@@ -233,6 +241,24 @@ check('lrcSourceLines: the editor preview rows', () => {
 		]
 	);
 	assert.equal(formatLrcTime(61_230), '1:01.23');
+});
+
+check('translation: cost estimate and cap share', () => {
+	// claude-sonnet-5-5: $2 in / $10 out per million tokens.
+	assert.equal(estimateCost('claude-sonnet-5-5', { input: 1_000_000, output: 100_000 }), 3);
+	assert.equal(estimateCost('claude-sonnet-5-5', { input: 0, output: 0 }), 0);
+	assert.equal(estimateCost('some-other-model', { input: 1, output: 1 }), null, 'unknown price');
+	assert.equal(estimateCost(undefined, { input: 1, output: 1 }), null, 'older API: no model');
+	assert.equal(capRatio(40, 1000), 0.04);
+	assert.equal(capRatio(120, 100), 1, 'clamped');
+	assert.equal(capRatio(5, 0), 0, 'no cap');
+});
+
+check('translation: a cap of 0 or less is no cap (no meter)', () => {
+	assert.equal(hasCap(100), true);
+	assert.equal(hasCap(0), false);
+	assert.equal(hasCap(-1), false);
+	assert.equal(capRatio(5, -1), 0);
 });
 
 if (!process.exitCode) console.log(`${passed} lrc checks passed`);

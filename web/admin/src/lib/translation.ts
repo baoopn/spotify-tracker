@@ -62,3 +62,31 @@ export function translationNote(t: TrackTranslation | null | undefined): string 
 	}
 	return null;
 }
+
+/**
+ * Claude prices in US dollars per million tokens (docs/deployment.md). Add a
+ * row when TRANSLATE_MODEL changes; an unknown model shows no estimate.
+ */
+export const MODEL_PRICES: Readonly<Record<string, { input: number; output: number }>> = {
+	'claude-sonnet-5-5': { input: 2, output: 10 }
+};
+
+/** Estimated US dollars for the tokens, or null when the model has no known price. */
+export function estimateCost(
+	model: string | null | undefined,
+	tokens: { input: number; output: number } | null | undefined
+): number | null {
+	const price = model ? MODEL_PRICES[model] : undefined;
+	if (!price || !tokens) return null;
+	return (tokens.input * price.input + tokens.output * price.output) / 1_000_000;
+}
+
+/** A cap of 0 or less means no cap (TRANSLATE_DAILY_CAP / TRANSLATE_MONTHLY_CAP). */
+export function hasCap(cap: number): boolean {
+	return cap > 0;
+}
+
+/** Share of a cap used, 0..1 (0 when there is no cap). */
+export function capRatio(used: number, cap: number): number {
+	return hasCap(cap) ? Math.max(0, Math.min(1, used / cap)) : 0;
+}

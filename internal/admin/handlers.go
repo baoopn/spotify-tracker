@@ -76,6 +76,7 @@ type TranslationInfo struct {
 	Enabled    bool
 	DailyCap   int
 	MonthlyCap int
+	Model      string // the configured Claude model (TRANSLATE_MODEL)
 	Nudge      func() // nil when the translator is off
 }
 

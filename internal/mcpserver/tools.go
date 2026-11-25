@@ -137,7 +137,7 @@ var adminTools = []toolDef{
 	{name: "admin_translation_queue", title: "Lyrics translation queue (admin)", path: "/lyrics/translation-queue",
 		desc: "The Claude lyrics translation queue: counts of queued, in_progress, done, skipped, refused, error " +
 			"(retry scheduled) and given_up songs, next_retry_at, and calls_today / calls_month against daily_cap / " +
-			"monthly_cap. Songs are queued when they play."},
+			"monthly_cap, tokens_month and the configured model. Songs are queued when they play."},
 	{name: "admin_requeue_translation", title: "Re-queue a lyrics translation (admin)",
 		path: "/tracks/{id}/translation/requeue", method: "POST",
 		desc: "Put one track's lyrics translation at the front of the queue, clearing a refused, failed, given-up " +

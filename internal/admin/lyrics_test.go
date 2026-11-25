@@ -162,7 +162,7 @@ func TestSearchLyricsHandler(t *testing.T) {
 
 func TestTranslationQueueHandler(t *testing.T) {
 	a := lyricsAPI(&fakeLyrics{})
-	a.Translation = TranslationInfo{Enabled: true, DailyCap: 100, MonthlyCap: 1000}
+	a.Translation = TranslationInfo{Enabled: true, DailyCap: 100, MonthlyCap: 1000, Model: "claude-sonnet-5-5"}
 	rec := getLyrics(ReadOnlyHandler(a), "/lyrics/translation-queue")
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
@@ -176,6 +176,9 @@ func TestTranslationQueueHandler(t *testing.T) {
 	}
 	if body["enabled"] != true {
 		t.Errorf("enabled = %v", body["enabled"])
+	}
+	if body["model"] != "claude-sonnet-5-5" {
+		t.Errorf("model = %v", body["model"])
 	}
 }
 

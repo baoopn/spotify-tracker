@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './lib/theme/brand.css';
 @import './lib/theme/tokens.css';
+@import './lib/theme/lyrics-font.css';
 
 /* `dark:` follows the resolved theme on <html>, not just the OS setting. */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
@@ -35,6 +36,8 @@
 	--font-sans: 'Inter Variable', var(--baoopn-font-body);
 	--font-display: 'Outfit Variable', var(--baoopn-font-display);
 	--font-mono: 'JetBrains Mono Variable', var(--baoopn-font-mono);
+	/* Lyrics, titles and artists in any language: lib/theme/lyrics-font.css. */
+	--font-lyrics: var(--lyrics-stack);
 
 	--radius-brand: var(--baoopn-radius);
 	--shadow-*: initial;

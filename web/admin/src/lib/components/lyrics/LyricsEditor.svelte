@@ -13,6 +13,7 @@
 		type LrcLineError
 	} from '#lib/lrc.js';
 	import { qk } from '#lib/queries.js';
+	import { scriptLang } from '#lib/scriptLang.js';
 	import { toasts } from '#lib/toast.svelte.js';
 	import type { ManualLyricsInput, TrackLyrics } from '#lib/types.js';
 
@@ -343,7 +344,7 @@
 			<h4 class="mt-3 mb-1 text-xs font-semibold text-muted" id="{uid}-preview">Preview</h4>
 			<ol
 				aria-labelledby="{uid}-preview"
-				class="max-h-72 overflow-y-auto rounded-lg bg-paper-2 py-1 text-sm"
+				class="max-h-72 overflow-y-auto rounded-lg bg-paper-2 py-1 font-lyrics text-sm"
 			>
 				{#each rows as r (r.line)}
 					{@const lineErrors = errorsByLine.get(r.line)}
@@ -362,7 +363,8 @@
 							</span>
 							<span
 								class={['min-w-0 break-words', r.kind === 'meta' ? 'text-muted' : 'text-fg']}
-								dir="auto">{r.text || '♪'}</span
+								dir="auto"
+								lang={scriptLang(r.text)}>{r.text || '♪'}</span
 							>
 							{#each lineErrors ?? [] as e, i (i)}
 								<span class="col-start-3 text-xs font-medium text-danger">{e.message}</span>

@@ -22,24 +22,29 @@ const lyricsSoon = `interval '2 minutes'`
 // lyricsLeasedSQL is true while a worker holds the lyrics row l.
 const lyricsLeasedSQL = `COALESCE(l.claimed_until >= now(), false)`
 
+// lyricsRequestedSQL is true when the lyrics row l was re-queued: waiting
+// (requested_at), or taken by a claim (claim_requested_at; with an expired
+// lease the worker crashed and the re-queue still counts).
+const lyricsRequestedSQL = `(l.requested_at IS NOT NULL OR l.claim_requested_at IS NOT NULL)`
+
 // lyricsClaimableSQL is true when the lyrics row l can be claimed: no live
-// lease, and it waits (pending), was re-queued, or its retry is due.
+// lease, and it waits (pending), was re-queued, or its retry is due
+// (not_found, error, or a failed re-lookup of stored lyrics).
 const lyricsClaimableSQL = `(l.claimed_until IS NULL OR l.claimed_until < now())
-	AND (l.status = 'pending' OR l.requested_at IS NOT NULL
-		OR (l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()))`
+	AND (l.status = 'pending' OR ` + lyricsRequestedSQL + ` OR l.next_attempt_at <= now())`
 
 // lyricsWaitingSQL is true when the lyrics row l will be looked up soon:
 // leased now, pending, re-queued, or a retry due within lyricsSoon.
-const lyricsWaitingSQL = `(` + lyricsLeasedSQL + ` OR l.status = 'pending' OR l.requested_at IS NOT NULL
-	OR COALESCE(l.status IN ('not_found', 'error') AND l.next_attempt_at <= now() + ` + lyricsSoon + `, false))`
+const lyricsWaitingSQL = `(` + lyricsLeasedSQL + ` OR l.status = 'pending' OR ` + lyricsRequestedSQL + `
+	OR COALESCE(l.next_attempt_at <= now() + ` + lyricsSoon + `, false))`
 
 // lyricsQueuedSQL is true when the lyrics row l waits for a worker now (no
 // lease): pending, re-queued, or a retry that is due.
-const lyricsQueuedSQL = `(NOT ` + lyricsLeasedSQL + ` AND (l.status = 'pending' OR l.requested_at IS NOT NULL
-	OR COALESCE(l.status IN ('not_found', 'error') AND l.next_attempt_at <= now(), false)))`
+const lyricsQueuedSQL = `(NOT ` + lyricsLeasedSQL + ` AND (l.status = 'pending' OR ` + lyricsRequestedSQL + `
+	OR COALESCE(l.next_attempt_at <= now(), false)))`
 
 // lookupableSQL is true when track t can be looked up: it has a title and a
-// credited artist.
+// credited artist. Other tracks never get a lookup (nor a pending status).
 const lookupableSQL = `t.name <> '' AND EXISTS (SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 	WHERE ta.track_id = t.id)`
 
@@ -52,19 +57,22 @@ const lastPlayedSQL = `LEFT JOIN LATERAL (SELECT MAX(h.played_at) AS last_played
 // playing now, then the upcoming songs), then re-queued tracks (newest
 // request first), then by last play (never played last), new tracks before
 // retries. Tracks with no lyrics row get a 'pending' row first (at most limit
-// per call, in the same order). Rows locked or leased by another worker are
-// skipped.
+// per call, chosen in the same order and inserted in id order, so replicas
+// inserting the same tracks cannot deadlock). Rows locked or leased by
+// another worker are skipped.
 func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []string, lease time.Duration, limit int) ([]domain.LyricsCandidate, error) {
 	if priority == nil {
 		priority = []string{}
 	}
 	_, err := q.db.Exec(ctx, `
 		INSERT INTO lyrics (track_id, status, source)
-		SELECT t.id, 'pending', 'lrclib' FROM tracks t
-		`+lastPlayedSQL+`
-		WHERE `+lookupableSQL+` AND NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = t.id)
-		ORDER BY COALESCE(array_position($1::text[], t.id), 2147483647), p.last_played DESC NULLS LAST, t.id
-		LIMIT $2
+		SELECT c.id, 'pending', 'lrclib' FROM (
+			SELECT t.id FROM tracks t
+			`+lastPlayedSQL+`
+			WHERE `+lookupableSQL+` AND NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = t.id)
+			ORDER BY COALESCE(array_position($1::text[], t.id), 2147483647), p.last_played DESC NULLS LAST, t.id
+			LIMIT $2) c
+		ORDER BY c.id
 		ON CONFLICT (track_id) DO NOTHING`, priority, limit)
 	if err != nil {
 		return nil, fmt.Errorf("queue lyrics lookups: %w", err)
@@ -73,7 +81,8 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 		WITH pick AS (
 			SELECT l.track_id, t.name, a.name AS artist, COALESCE(al.name, '') AS album, t.duration_ms,
 				CASE WHEN l.status = 'pending' THEN '' ELSE l.status END AS status, l.attempts,
-				COALESCE(array_position($2::text[], l.track_id), 2147483647) AS prio, l.requested_at, p.last_played
+				COALESCE(array_position($2::text[], l.track_id), 2147483647) AS prio,
+				COALESCE(l.requested_at, l.claim_requested_at) AS requested_at, p.last_played
 			FROM lyrics l
 			JOIN tracks t ON t.id = l.track_id
 			JOIN LATERAL (SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
@@ -81,12 +90,13 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 			LEFT JOIN albums al ON al.id = t.album_id
 			`+lastPlayedSQL+`
 			WHERE t.name <> '' AND `+lyricsClaimableSQL+`
-			ORDER BY COALESCE(array_position($2::text[], l.track_id), 2147483647), l.requested_at DESC NULLS LAST,
+			ORDER BY COALESCE(array_position($2::text[], l.track_id), 2147483647),
+				COALESCE(l.requested_at, l.claim_requested_at) DESC NULLS LAST,
 				p.last_played DESC NULLS LAST, (l.status = 'pending') DESC, l.track_id
 			LIMIT $4
 			FOR UPDATE OF l SKIP LOCKED)
 		UPDATE lyrics l SET claimed_by = $1, claimed_until = now() + $3::interval,
-			claim_requested_at = l.requested_at, requested_at = NULL
+			claim_requested_at = COALESCE(l.requested_at, l.claim_requested_at), requested_at = NULL
 		FROM pick WHERE l.track_id = pick.track_id
 		RETURNING pick.track_id, pick.name, pick.artist, pick.album, pick.duration_ms, pick.status, pick.attempts,
 			pick.prio, pick.requested_at, pick.last_played`, owner, priority, lease, limit)
@@ -183,17 +193,21 @@ func (q *Queries) SetLyrics(ctx context.Context, owner, trackID string, l domain
 // (error), to be retried at next, and releases the lease. attempts counts
 // lookups in a row with the same status (it restarts at 1 when the status
 // changes). Stored lyrics (found or instrumental, re-queued for a fresh
-// lookup) are never overwritten: only the lookup time and error are kept.
-// It writes only while owner holds the claim.
+// lookup) are never overwritten: a failed re-lookup keeps them and is
+// retried at next (attempts counts failed re-lookups, for the backoff); a
+// re-lookup that finds nothing keeps them and ends. last_error is always
+// the last lookup's. It writes only while owner holds the claim.
 func (q *Queries) DeferLyrics(ctx context.Context, owner, trackID, status string, next time.Time, lastErr string) error {
 	if status != domain.LyricsNotFound && status != domain.LyricsError {
 		return fmt.Errorf("defer lyrics %s: invalid status %q", trackID, status)
 	}
 	_, err := q.db.Exec(ctx, `
 		UPDATE lyrics l SET
-			attempts = CASE WHEN l.status IN ('found', 'instrumental') THEN l.attempts
+			attempts = CASE WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN 0
+				WHEN l.status IN ('found', 'instrumental') THEN l.attempts + 1
 				WHEN l.status = $3 THEN l.attempts + 1 ELSE 1 END,
-			next_attempt_at = CASE WHEN l.status IN ('found', 'instrumental') THEN l.next_attempt_at ELSE $4 END,
+			next_attempt_at = CASE WHEN l.status IN ('found', 'instrumental') AND $3::text = 'not_found' THEN NULL
+				ELSE $4::timestamptz END,
 			status = CASE WHEN l.status IN ('found', 'instrumental') THEN l.status ELSE $3 END,
 			last_error = $5, fetched_at = now(),
 			claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
@@ -243,7 +257,7 @@ func (q *Queries) RequeueLyrics(ctx context.Context, trackID string) (bool, erro
 type LyricsQueue struct {
 	Queued       int64      `json:"queued"`      // waiting for a worker, backlog included
 	Requested    int64      `json:"requested"`   // of queued: re-queued by an admin
-	Backlog      int64      `json:"backlog"`     // of queued: never looked up, no row yet
+	Backlog      int64      `json:"backlog"`     // of queued: never looked up (no row yet, or pending)
 	InProgress   int64      `json:"in_progress"` // leased by a worker now
 	Found        int64      `json:"found"`
 	Instrumental int64      `json:"instrumental"`
@@ -258,21 +272,21 @@ func (q *Queries) LyricsQueueSummary(ctx context.Context) (LyricsQueue, error) {
 	var s LyricsQueue
 	err := q.db.QueryRow(ctx, `
 		WITH l AS (
-			SELECT l.status, l.requested_at, l.next_attempt_at, l.fetched_at,
+			SELECT l.status, `+lyricsRequestedSQL+` AS requested, l.next_attempt_at, l.fetched_at,
 				`+lyricsLeasedSQL+` AS leased, `+lyricsQueuedSQL+` AS queued
 			FROM lyrics l),
 		b AS (SELECT count(*) AS n FROM tracks t
 			WHERE `+lookupableSQL+` AND NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = t.id))
 		SELECT
 			(SELECT count(*) FROM l WHERE queued) + b.n,
-			(SELECT count(*) FROM l WHERE queued AND requested_at IS NOT NULL),
-			b.n,
+			(SELECT count(*) FROM l WHERE queued AND requested),
+			b.n + (SELECT count(*) FROM l WHERE queued AND status = 'pending'),
 			(SELECT count(*) FROM l WHERE leased),
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'found'),
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'instrumental'),
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'not_found'),
 			(SELECT count(*) FROM l WHERE NOT leased AND NOT queued AND status = 'error'),
-			(SELECT min(next_attempt_at) FROM l WHERE status IN ('not_found', 'error') AND next_attempt_at > now()),
+			(SELECT min(next_attempt_at) FROM l WHERE next_attempt_at > now()),
 			(SELECT max(fetched_at) FROM l)
 		FROM b`).Scan(&s.Queued, &s.Requested, &s.Backlog, &s.InProgress, &s.Found, &s.Instrumental,
 		&s.NotFound, &s.Error, &s.NextRetryAt, &s.LastLookupAt)

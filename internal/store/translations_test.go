@@ -67,11 +67,13 @@ func TestClaimTranslationsSQL(t *testing.T) {
 	}
 	wantSQL(t, db.sql,
 		"(tr.claimed_until IS NULL OR tr.claimed_until < now())",
-		"tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> "+srcHashSQL,
+		"tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.claim_requested_at IS NOT NULL",
+		"OR tr.source_hash <> "+srcHashSQL,
 		"tr.status = 'error' AND tr.next_attempt_at <= now()",
-		"ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647), tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST",
+		"ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647),",
+		"COALESCE(tr.requested_at, tr.claim_requested_at) DESC NULLS LAST, p.last_played DESC NULLS LAST",
 		"FOR UPDATE OF tr SKIP LOCKED",
-		"claim_requested_at = tr.requested_at, requested_at = NULL",
+		"claim_requested_at = COALESCE(tr.requested_at, tr.claim_requested_at), requested_at = NULL",
 		"JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'")
 	if strings.Contains(db.sql, "LEFT JOIN lyrics_translations") {
 		t.Error("the claim must read queued rows only (no backfill)")

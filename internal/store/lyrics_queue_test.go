@@ -52,22 +52,23 @@ func TestClaimLyricsSQL(t *testing.T) {
 	wantSQL(t, ins, "INSERT INTO lyrics (track_id, status, source)", "'pending'",
 		"NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = t.id)", "t.name <> ''",
 		"ORDER BY COALESCE(array_position($1::text[], t.id), 2147483647), p.last_played DESC NULLS LAST",
-		"LIMIT $2", "ON CONFLICT (track_id) DO NOTHING")
+		"LIMIT $2) c\n\t\tORDER BY c.id", "ON CONFLICT (track_id) DO NOTHING")
 	if !reflect.DeepEqual(db.args[0], []any{[]string{"now", "next"}, 5}) {
 		t.Errorf("insert args = %v", db.args[0])
 	}
 	wantSQL(t, claim, "FOR UPDATE OF l SKIP LOCKED", lyricsClaimableSQL,
-		"ORDER BY COALESCE(array_position($2::text[], l.track_id), 2147483647), l.requested_at DESC NULLS LAST,",
+		"ORDER BY COALESCE(array_position($2::text[], l.track_id), 2147483647),",
+		"COALESCE(l.requested_at, l.claim_requested_at) DESC NULLS LAST,",
 		"p.last_played DESC NULLS LAST, (l.status = 'pending') DESC, l.track_id",
 		"claimed_by = $1, claimed_until = now() + $3::interval",
-		"claim_requested_at = l.requested_at, requested_at = NULL", "LIMIT $4",
+		"claim_requested_at = COALESCE(l.requested_at, l.claim_requested_at), requested_at = NULL", "LIMIT $4",
 		"CASE WHEN l.status = 'pending' THEN '' ELSE l.status END")
 	if a := db.args[1]; len(a) != 4 || a[0] != "w1" || a[2] != 10*time.Minute || a[3] != 5 {
 		t.Errorf("claim args = %v", a)
 	}
 	wantSQL(t, lyricsClaimableSQL, "l.claimed_until IS NULL OR l.claimed_until < now()",
-		"l.status = 'pending' OR l.requested_at IS NOT NULL",
-		"l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()")
+		"l.status = 'pending' OR (l.requested_at IS NOT NULL OR l.claim_requested_at IS NOT NULL)",
+		"OR l.next_attempt_at <= now()")
 
 	// A nil priority is an empty array, not NULL.
 	db = &allDB{}

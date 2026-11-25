@@ -19,10 +19,13 @@ const srcHashSQL = `md5(COALESCE(l.synced_lyrics, '') || E'\x1f' || COALESCE(l.p
 // The translation queue is lyrics_translations itself. A row exists only for
 // songs that were queued: played while the feature is on (now playing, or a
 // recent play) or re-queued by an admin. The library is never backfilled.
-// A row is claimable when it waits (pending), is stale (the lyrics changed),
-// or failed and its retry is due, and no live lease holds it.
+// A row is claimable when it waits (pending), was re-queued, is stale (the
+// lyrics changed), or failed and its retry is due, and no live lease holds
+// it. claim_requested_at set with an expired lease is a re-queue whose
+// worker crashed: it stays re-queued.
 const claimableSQL = `(tr.claimed_until IS NULL OR tr.claimed_until < now())
-	AND (tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> ` + srcHashSQL + `
+	AND (tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.claim_requested_at IS NOT NULL
+		OR tr.source_hash <> ` + srcHashSQL + `
 		OR (tr.status = 'error' AND tr.next_attempt_at <= now()))`
 
 // TranslationCaps are the Claude call caps (0 = none of that kind); a
@@ -52,7 +55,8 @@ const translationSoon = `interval '2 minutes'`
 func trWaitingSQL(noRow string) string {
 	return `CASE WHEN tr.track_id IS NULL THEN ` + noRow + `
 	ELSE (tr.claimed_until IS NOT NULL AND tr.claimed_until >= now())
-		OR ((tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> ` + srcHashSQL + `
+		OR ((tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.claim_requested_at IS NOT NULL
+			OR tr.source_hash <> ` + srcHashSQL + `
 			OR (tr.status = 'error' AND tr.next_attempt_at <= now() + ` + translationSoon + `))
 			AND NOT cap.reached) END`
 }
@@ -107,7 +111,8 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner string, priority 
 			SELECT tr.track_id, t.name, COALESCE(a.name, '') AS artist, COALESCE(l.synced_lyrics, '') AS synced,
 				COALESCE(l.plain_lyrics, '') AS plain, `+srcHashSQL+` AS hash, tr.status, tr.attempts,
 				tr.source_hash <> `+srcHashSQL+` AS stale,
-				COALESCE(array_position($2::text[], tr.track_id), 2147483647) AS prio, tr.requested_at, p.last_played
+				COALESCE(array_position($2::text[], tr.track_id), 2147483647) AS prio,
+				COALESCE(tr.requested_at, tr.claim_requested_at) AS requested_at, p.last_played
 			FROM lyrics_translations tr
 			JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'
 			JOIN tracks t ON t.id = tr.track_id
@@ -116,11 +121,12 @@ func (q *Queries) ClaimTranslations(ctx context.Context, owner string, priority 
 			LEFT JOIN LATERAL (SELECT MAX(h.played_at) AS last_played FROM listening_history h
 				WHERE h.track_id = tr.track_id) p ON true
 			WHERE `+claimableSQL+`
-			ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647), tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST, tr.track_id
+			ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647),
+				COALESCE(tr.requested_at, tr.claim_requested_at) DESC NULLS LAST, p.last_played DESC NULLS LAST, tr.track_id
 			LIMIT $4
 			FOR UPDATE OF tr SKIP LOCKED)
 		UPDATE lyrics_translations tr SET claimed_by = $1, claimed_until = now() + $3::interval,
-			claim_requested_at = tr.requested_at, requested_at = NULL
+			claim_requested_at = COALESCE(tr.requested_at, tr.claim_requested_at), requested_at = NULL
 		FROM pick WHERE tr.track_id = pick.track_id
 		RETURNING pick.track_id, pick.name, pick.artist, pick.synced, pick.plain, pick.hash,
 			CASE WHEN pick.stale THEN '' ELSE pick.status END, CASE WHEN pick.stale THEN 0 ELSE pick.attempts END,
@@ -283,7 +289,8 @@ func (q *Queries) TranslationQueueSummary(ctx context.Context, now time.Time) (T
 	day := now.UTC().Truncate(24 * time.Hour)
 	err := q.db.QueryRow(ctx, `
 		WITH tr AS (
-			SELECT tr.*, tr.source_hash <> `+srcHashSQL+` AS stale,
+			SELECT tr.*, (tr.source_hash <> `+srcHashSQL+` OR tr.requested_at IS NOT NULL
+				OR tr.claim_requested_at IS NOT NULL) AS redo,
 				(tr.claimed_until IS NOT NULL AND tr.claimed_until >= now()) AS leased
 			FROM lyrics_translations tr JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'),
 		u AS (SELECT COALESCE(SUM(calls) FILTER (WHERE day = $1::date), 0) AS today,
@@ -292,14 +299,14 @@ func (q *Queries) TranslationQueueSummary(ctx context.Context, now time.Time) (T
 			FROM translation_usage
 			WHERE day >= date_trunc('month', $1::date) AND day < date_trunc('month', $1::date) + interval '1 month')
 		SELECT
-			(SELECT count(*) FROM tr WHERE NOT leased AND (status = 'pending' OR stale
+			(SELECT count(*) FROM tr WHERE NOT leased AND (status = 'pending' OR redo
 				OR (status = 'error' AND next_attempt_at <= now()))),
 			(SELECT count(*) FROM tr WHERE leased),
-			(SELECT count(*) FROM tr WHERE NOT leased AND NOT stale AND status = 'done'),
-			(SELECT count(*) FROM tr WHERE NOT leased AND NOT stale AND status = 'skipped'),
-			(SELECT count(*) FROM tr WHERE NOT leased AND NOT stale AND status = 'refused'),
-			(SELECT count(*) FROM tr WHERE NOT leased AND NOT stale AND status = 'error' AND next_attempt_at > now()),
-			(SELECT count(*) FROM tr WHERE NOT leased AND NOT stale AND status = 'error' AND next_attempt_at IS NULL),
+			(SELECT count(*) FROM tr WHERE NOT leased AND NOT redo AND status = 'done'),
+			(SELECT count(*) FROM tr WHERE NOT leased AND NOT redo AND status = 'skipped'),
+			(SELECT count(*) FROM tr WHERE NOT leased AND NOT redo AND status = 'refused'),
+			(SELECT count(*) FROM tr WHERE NOT leased AND NOT redo AND status = 'error' AND next_attempt_at > now()),
+			(SELECT count(*) FROM tr WHERE NOT leased AND NOT redo AND status = 'error' AND next_attempt_at IS NULL),
 			(SELECT min(next_attempt_at) FROM tr WHERE status = 'error' AND next_attempt_at > now()),
 			u.today, u.month, u.tin, u.tout
 		FROM u`, day).Scan(&s.Queued, &s.InProgress, &s.Done, &s.Skipped, &s.Refused, &s.Error, &s.GivenUp,

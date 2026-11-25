@@ -369,16 +369,180 @@ func TestPGLyricsQueueSummary(t *testing.T) {
 		t.Fatal("requeue")
 	}
 	exec(t, pool, `UPDATE lyrics SET claimed_by = 'w', claimed_until = now() + interval '5 minutes' WHERE track_id = 'f1'`)
+	bare(t, pool, "p1", 0) // a pending row never looked up counts as backlog
+	exec(t, pool, `INSERT INTO lyrics (track_id, status, source) VALUES ('p1', 'pending', 'lrclib')`)
 
 	s, err := st.LyricsQueueSummary(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Queued != 3 || s.Requested != 1 || s.Backlog != 2 || s.InProgress != 1 || s.Found != 0 ||
+	if s.Queued != 4 || s.Requested != 1 || s.Backlog != 3 || s.InProgress != 1 || s.Found != 0 ||
 		s.Instrumental != 1 || s.NotFound != 1 || s.Error != 1 {
 		t.Errorf("summary = %+v", s)
 	}
 	if s.NextRetryAt == nil || time.Until(*s.NextRetryAt) > 3*time.Hour || s.LastLookupAt == nil {
 		t.Errorf("next retry %v, last lookup %v", s.NextRetryAt, s.LastLookupAt)
+	}
+}
+
+// A re-queue survives a worker that crashed while holding it: once the lease
+// expires the track is still first in line (lyrics and translations).
+func TestPGRequeueSurvivesCrashedClaim(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	seed(t, pool, "asked", 5*time.Hour)
+	bare(t, pool, "recent", time.Minute)
+	if ok, _ := st.RequeueLyrics(ctx, "asked"); !ok {
+		t.Fatal("requeue lyrics")
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1); !eq(ids(got), []string{"asked"}) {
+		t.Fatalf("first claim = %v", ids(got))
+	}
+	// w1 crashes: no release; the lease runs out.
+	exec(t, pool, `UPDATE lyrics SET claimed_until = now() - interval '1 second' WHERE track_id = 'asked'`)
+	tl, _ := st.TrackLyrics(ctx, "asked", false, store.TranslationCaps{Daily: 1})
+	if !tl.Queued || tl.LookingUp || tl.RequestedAt == nil {
+		t.Errorf("after the crash = %+v; want queued with the request", tl)
+	}
+	got, err := st.ClaimLyrics(ctx, "w2", nil, 10*time.Minute, 1)
+	if err != nil || !eq(ids(got), []string{"asked"}) {
+		t.Fatalf("reclaim = %v, %v; want the re-queued track before the recent play", ids(got), err)
+	}
+	// The request is still held by the new claim; a result clears it.
+	if ok, _, _ := st.SetLyrics(ctx, "w2", "asked", found); !ok {
+		t.Fatal("set")
+	}
+	if _, _, req := lyricsRow(t, pool, "asked"); req {
+		t.Error("requested after the result")
+	}
+	var claimReq bool
+	_ = pool.QueryRow(ctx, `SELECT claim_requested_at IS NOT NULL FROM lyrics WHERE track_id = 'asked'`).Scan(&claimReq)
+	if claimReq {
+		t.Error("claim_requested_at left after the result")
+	}
+
+	// Translations: the same.
+	seed(t, pool, "tr1", 5*time.Hour)
+	seed(t, pool, "tr2", time.Minute)
+	for _, id := range []string{"tr1", "tr2"} {
+		if _, err := st.EnqueueTranslation(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(t, pool, `UPDATE lyrics_translations SET status = 'done' WHERE track_id IN ('tr1', 'tr2')`)
+	if ok, _ := st.RequeueTranslation(ctx, "tr1"); !ok {
+		t.Fatal("requeue translation")
+	}
+	if c, _ := st.ClaimTranslations(ctx, "t1", nil, 10*time.Minute, 1); len(c) != 1 || c[0].TrackID != "tr1" {
+		t.Fatalf("translation claim = %+v", c)
+	}
+	exec(t, pool, `UPDATE lyrics_translations SET claimed_until = now() - interval '1 second' WHERE track_id = 'tr1'`)
+	sum, err := st.TranslationQueueSummary(ctx, time.Now())
+	if err != nil || sum.Queued < 1 {
+		t.Errorf("translation summary = %+v, %v; the crashed re-queue is queued", sum, err)
+	}
+	c, err := st.ClaimTranslations(ctx, "t2", nil, 10*time.Minute, 5)
+	if err != nil || len(c) == 0 || c[0].TrackID != "tr1" {
+		t.Fatalf("translation reclaim = %+v, %v", c, err)
+	}
+}
+
+// Changed lyrics re-queue refused, skipped and given-up translations too.
+func TestPGLyricsChangeRetranslatesSettled(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"refused", "skipped", "givenup"} {
+		seed(t, pool, id, time.Hour)
+		if _, err := st.EnqueueTranslation(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(t, pool, `UPDATE lyrics_translations SET status = 'refused' WHERE track_id = 'refused'`)
+	exec(t, pool, `UPDATE lyrics_translations SET status = 'skipped' WHERE track_id = 'skipped'`)
+	exec(t, pool, `UPDATE lyrics_translations SET status = 'error', attempts = 5, next_attempt_at = NULL WHERE track_id = 'givenup'`)
+	if c, _ := st.ClaimTranslations(ctx, "t1", nil, 10*time.Minute, 5); len(c) != 0 {
+		t.Fatalf("settled translations claimed: %+v", c)
+	}
+	for _, id := range []string{"refused", "skipped", "givenup"} {
+		if ok, _ := st.RequeueLyrics(ctx, id); !ok {
+			t.Fatal(id)
+		}
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); len(got) != 3 {
+		t.Fatalf("lyrics claim = %v", ids(got))
+	}
+	for _, id := range []string{"refused", "skipped", "givenup"} {
+		changed := domain.Lyrics{Status: domain.LyricsFound, Plain: "new " + id}
+		if ok, re, err := st.SetLyrics(ctx, "w1", id, changed); err != nil || !ok || !re {
+			t.Fatalf("%s = %v %v %v", id, ok, re, err)
+		}
+	}
+	c, err := st.ClaimTranslations(ctx, "t1", nil, 10*time.Minute, 5)
+	if err != nil || len(c) != 3 {
+		t.Fatalf("translation claim = %+v, %v; want all three", c, err)
+	}
+	for _, x := range c {
+		if x.Status != "" || x.Attempts != 0 {
+			t.Errorf("%s: status %q attempts %d; a stale translation starts over", x.TrackID, x.Status, x.Attempts)
+		}
+	}
+}
+
+// A failed re-lookup of stored lyrics keeps them and retries with the error
+// backoff; a re-lookup that finds nothing keeps them and ends.
+func TestPGFailedRelookupKeepsLyrics(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	seed(t, pool, "keep", time.Hour)
+	if ok, _ := st.RequeueLyrics(ctx, "keep"); !ok {
+		t.Fatal("requeue")
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1); !eq(ids(got), []string{"keep"}) {
+		t.Fatalf("claim = %v", ids(got))
+	}
+	if err := st.DeferLyrics(ctx, "w1", "keep", domain.LyricsError, time.Now().Add(time.Hour), "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	tl, _ := st.TrackLyrics(ctx, "keep", false, store.TranslationCaps{Daily: 1})
+	if tl.Status != domain.LyricsFound || tl.Plain == nil || tl.NextAttemptAt == nil || tl.LastError != "timeout" ||
+		tl.Attempts != 1 || tl.Queued {
+		t.Fatalf("after a failed re-lookup = %+v", tl)
+	}
+	exec(t, pool, `UPDATE lyrics SET next_attempt_at = now() - interval '1 second' WHERE track_id = 'keep'`)
+	got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 1)
+	if !eq(ids(got), []string{"keep"}) || got[0].Status != domain.LyricsFound || got[0].Attempts != 1 {
+		t.Fatalf("retry claim = %+v", got)
+	}
+	if err := st.DeferLyrics(ctx, "w1", "keep", domain.LyricsNotFound, time.Now().Add(720*time.Hour), ""); err != nil {
+		t.Fatal(err)
+	}
+	tl, _ = st.TrackLyrics(ctx, "keep", false, store.TranslationCaps{Daily: 1})
+	if tl.Status != domain.LyricsFound || tl.NextAttemptAt != nil || tl.LastError != "" || tl.Attempts != 0 {
+		t.Errorf("after a not-found re-lookup = %+v", tl)
+	}
+	if got, _ := st.ClaimLyrics(ctx, "w1", nil, 10*time.Minute, 5); len(got) != 0 {
+		t.Errorf("claimed again = %v", ids(got))
+	}
+}
+
+// A track that can never be looked up (no artist) is never pending; a
+// pending row reports no source.
+func TestPGUnlookupableNeverPending(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	exec(t, pool, `INSERT INTO tracks (id, name, duration_ms) VALUES ('noartist', 'x', 1)`)
+	caps := store.TranslationCaps{Daily: 1}
+	if got, err := st.NowLyrics(ctx, "noartist", caps); err != nil || got.Status != "" {
+		t.Errorf("now lyrics = %q, %v", got.Status, err)
+	}
+	tl, err := st.TrackLyrics(ctx, "noartist", false, caps)
+	if err != nil || tl.Status != domain.LyricsPending || tl.Waiting || tl.Queued {
+		t.Errorf("track lyrics = %+v, %v", tl, err)
+	}
+	bare(t, pool, "p", time.Minute)
+	exec(t, pool, `INSERT INTO lyrics (track_id, status, source) VALUES ('p', 'pending', 'lrclib')`)
+	tl, _ = st.TrackLyrics(ctx, "p", false, caps)
+	if tl.Source != "" || !tl.Queued || !tl.Waiting {
+		t.Errorf("pending row = %+v", tl)
 	}
 }

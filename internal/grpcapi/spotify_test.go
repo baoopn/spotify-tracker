@@ -3,6 +3,7 @@ package grpcapi
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,7 +36,7 @@ func (s *slowTokens) GetAccessToken(ctx context.Context, r *trackerv1.GetAccessT
 		return nil, s.err
 	}
 	return &trackerv1.GetAccessTokenResponse{
-		AccessToken: "tok" + string(rune('0'+n)), ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
+		AccessToken: "tok" + strconv.Itoa(int(n)), ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
 	}, nil
 }
 

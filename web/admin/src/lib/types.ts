@@ -127,6 +127,24 @@ export type Overview = {
 	spotify: SpotifyStatus;
 	services: ServiceHealth[];
 	version: string;
+	/** The next tracks of the Spotify queue (queue prefetch); private, null when none. */
+	up_next: UpNext | null;
+};
+
+export type UpNext = {
+	fetched_at: string;
+	for_track_id: string;
+	items: UpNextItem[];
+};
+
+export type UpNextItem = {
+	position: number;
+	track_id: string;
+	name: string;
+	duration_ms: number;
+	artists: { id: string; name: string }[];
+	album_name: string;
+	cover_image_url: string;
 };
 
 // ---------- spotify ----------

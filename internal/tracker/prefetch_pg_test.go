@@ -98,20 +98,45 @@ func upcoming(id string, prefetch bool) domain.Upcoming {
 	}
 }
 
+// setPlaying stores id as the song playing now (current_playback), as the
+// poller's playback report would before the queue arrives.
+func setPlaying(t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO tracks (id, name, duration_ms) VALUES ($1, 'Now', 200000) ON CONFLICT (id) DO NOTHING`,
+		`INSERT INTO current_playback (track_id, is_playing, progress_ms, fetched_at) VALUES ($1, true, 1000, now())
+		 ON CONFLICT (id) DO UPDATE SET track_id = EXCLUDED.track_id, is_playing = true`,
+	} {
+		if _, err := pool.Exec(ctx, q, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestPGPrefetchUpcoming(t *testing.T) {
 	svc, st, pool := pgService(t)
 	ctx := context.Background()
 	var hooked []string
 	svc.OnUpcoming(func(ids []string) { hooked = append(hooked, ids...) })
 	listenBefore := count(t, pool, `SELECT count(*) FROM listen_state WHERE track_id <> '' OR last_seen IS NOT NULL`)
+	items := []domain.Upcoming{upcoming(pgNext, true), upcoming(pgLater, false), upcoming(pgCurrent, true)}
 
-	ids, err := svc.PrefetchUpcoming(ctx, pgCurrent, []domain.Upcoming{
-		upcoming(pgNext, true), upcoming(pgLater, false), upcoming(pgCurrent, true),
-	}, time.Now())
+	// Nothing playing: the rows are stored, but the stale list is not acted on.
+	ids, err := svc.PrefetchUpcoming(ctx, pgCurrent, items, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(ids, []string{pgNext}) || !slices.Equal(hooked, []string{pgNext}) {
+	if !slices.Equal(ids, []string{pgNext}) || len(hooked) != 0 {
+		t.Fatalf("idle: ids %v hooked %v", ids, hooked)
+	}
+
+	setPlaying(t, pool, pgCurrent)
+	ids, err = svc.PrefetchUpcoming(ctx, pgCurrent, items, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ids, []string{pgNext}) || !slices.Equal(hooked, []string{pgNext, pgLater}) {
 		t.Fatalf("ids %v hooked %v", ids, hooked)
 	}
 	// Catalog only: never a play, a feature row, the listen or now playing.
@@ -127,11 +152,13 @@ func TestPGPrefetchUpcoming(t *testing.T) {
 	for _, q := range []string{
 		`SELECT count(*) FROM listening_history`,
 		`SELECT count(*) FROM track_features`,
-		`SELECT count(*) FROM current_playback`,
 	} {
 		if n := count(t, pool, q); n != 0 {
 			t.Errorf("%s = %d, want 0", q, n)
 		}
+	}
+	if n := count(t, pool, `SELECT count(*) FROM current_playback WHERE track_id = $1`, pgCurrent); n != 1 {
+		t.Errorf("current_playback changed (rows for the song playing now = %d)", n)
 	}
 	if n := count(t, pool, `SELECT count(*) FROM listen_state WHERE track_id <> '' OR last_seen IS NOT NULL`); n != listenBefore {
 		t.Errorf("listen_state changed: %d -> %d", listenBefore, n)

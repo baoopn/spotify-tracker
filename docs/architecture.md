@@ -375,10 +375,10 @@ default (`QUEUE_PREFETCH_ENABLED`).
   next song (position 0), whatever `QUEUE_PREFETCH_DEPTH` is, when
   `QUEUE_PREFETCH_TRANSLATE` is on (see [Lyrics translation](#lyrics-translation)).
   An upcoming list expires after 15 minutes without a refresh, is cleared
-  when playback goes idle, and a song leaves it once it plays, so stale ids
-  never outrank admin re-queues. With `QUEUE_PREFETCH_DETAILS` the
-  album-details and artist-image jobs wake, and their never-checked-first
-  order picks the new album and artists.
+  when playback goes idle or the queue empties, and a song leaves it once it
+  plays, so stale ids never outrank admin re-queues. With
+  `QUEUE_PREFETCH_DETAILS` the album-details and artist-image jobs wake, and
+  their never-checked-first order picks the new album and artists.
 - **Cache.** The public now-playing lyrics memo holds several tracks (8).
   Upcoming tracks whose lyrics are stored (or just found) are built into it
   ahead of time with a 10-minute TTL, so the first request after the switch

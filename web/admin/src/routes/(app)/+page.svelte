@@ -51,7 +51,7 @@
 	</div>
 {:else}
 	<div class="grid items-start gap-8 lg:grid-cols-3">
-		<div class="lg:col-span-2">
+		<div class="min-w-0 lg:col-span-2">
 			{#if d}
 				<NowPlayingCard initial={d.now_playing} />
 				<UpNextCard upNext={d.up_next} currentTrackId={d.now_playing?.track?.id ?? null} />

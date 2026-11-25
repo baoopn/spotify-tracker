@@ -1,7 +1,7 @@
 <script lang="ts">
 	import AlbumArt from '../AlbumArt.svelte';
 	import { artistNames, duration } from '#lib/format.js';
-	import type { UpNext } from '#lib/types.js';
+	import type { UpNext, UpNextItem } from '#lib/types.js';
 
 	// The next tracks of the Spotify queue, prefetched (catalog, lyrics,
 	// translation) before they play. Private: only shown here. A list read
@@ -13,6 +13,10 @@
 	const items = $derived(
 		upNext && currentTrackId && upNext.for_track_id === currentTrackId ? upNext.items : []
 	);
+
+	function byline(item: UpNextItem): string {
+		return artistNames(item.artists) + (item.album_name ? ` · ${item.album_name}` : '');
+	}
 </script>
 
 {#if items.length}
@@ -26,12 +30,17 @@
 				<li class="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
 					<AlbumArt src={item.cover_image_url} size={40} />
 					<div class="min-w-0 flex-1">
-						<p class="truncate text-sm font-medium text-fg" dir="auto">{item.name}</p>
-						<p class="truncate text-xs text-muted" dir="auto">
-							{artistNames(item.artists)}{item.album_name ? ` · ${item.album_name}` : ''}
+						<p class="truncate text-sm font-medium text-fg" dir="auto" title={item.name}>
+							{item.name}
+						</p>
+						<p class="truncate text-xs text-muted" dir="auto" title={byline(item)}>
+							{byline(item)}
 						</p>
 					</div>
-					<span class="shrink-0 font-mono text-xs text-muted">{duration(item.duration_ms)}</span>
+					<span class="shrink-0 font-mono text-xs text-muted">
+						<span class="sr-only">Duration</span>
+						{duration(item.duration_ms)}
+					</span>
 				</li>
 			{/each}
 		</ol>

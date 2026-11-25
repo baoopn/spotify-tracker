@@ -26,6 +26,20 @@ export function percent(ratio: number | null | undefined): string {
 	return ratio == null || Number.isNaN(ratio) ? '–' : pct.format(ratio);
 }
 
+const usdFmt = new Intl.NumberFormat(undefined, {
+	style: 'currency',
+	currency: 'USD',
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 2
+});
+
+/** US dollars, e.g. "$0.48"; amounts under a cent show as "< $0.01". */
+export function usd(n: number | null | undefined): string {
+	if (n == null || Number.isNaN(n)) return '–';
+	if (n > 0 && n < 0.005) return `< ${usdFmt.format(0.01)}`;
+	return usdFmt.format(n);
+}
+
 export function ms(n: number | null | undefined): string {
 	if (n == null || Number.isNaN(n)) return '–';
 	if (n >= 1000) return `${nf1.format(n / 1000)} s`;

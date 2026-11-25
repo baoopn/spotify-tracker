@@ -292,6 +292,7 @@ type TrackTranslation = {
 };
 type TranslationQueue = {
   enabled: boolean; daily_cap: number; monthly_cap: number;
+  model: string;        // TRANSLATE_MODEL, e.g. "claude-sonnet-5-5"
   queued: number;       // waiting, stale, or a retry that is due
   in_progress: number;  // leased by a worker now
   done: number; skipped: number; refused: number;

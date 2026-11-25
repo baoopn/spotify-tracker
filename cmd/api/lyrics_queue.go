@@ -66,7 +66,7 @@ func hookLyricsQueue(svc *tracker.Service, lr *lyrics.Refresher, tr *translate.W
 		adminAPI.LyricsNudge = lr.Nudge
 	}
 	adminAPI.Translation = admin.TranslationInfo{Enabled: tr != nil, DailyCap: cfg.Translate.DailyCap,
-		MonthlyCap: cfg.Translate.MonthlyCap}
+		MonthlyCap: cfg.Translate.MonthlyCap, Model: cfg.Translate.Model}
 	if tr != nil {
 		adminAPI.Translation.Nudge = tr.Nudge
 	}

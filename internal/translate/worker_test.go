@@ -208,7 +208,7 @@ func (f *fakeTranslator) Translate(_ context.Context, r Request) (Result, error)
 			en[i] = "EN " + l
 		}
 	}
-	return Result{SourceLanguage: "vi", EN: en, Model: "claude-opus-5-5", InputTokens: 10, OutputTokens: 5}, nil
+	return Result{SourceLanguage: "vi", EN: en, Model: "claude-sonnet-5-5", InputTokens: 10, OutputTokens: 5}, nil
 }
 
 func testWorker(st Store, tr Translator, log *slog.Logger) *Worker {

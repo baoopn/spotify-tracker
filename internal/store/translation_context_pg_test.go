@@ -19,15 +19,16 @@ func TestPGTranslationContext(t *testing.T) {
 	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('full', 'feat', 1)`)
 	exec(t, pool, `INSERT INTO track_features (track_id, status, genres)
 		VALUES ('full', 'enriched', '[{"root":"pop","sub":["dance pop"]}]')`)
-	exec(t, pool, `INSERT INTO lyrics_translations (track_id, status, source_hash, source_language)
-		VALUES ('full', 'done', 'h', 'vi')`)
+	// An artist with unknown (NULL) genres adds nothing.
+	exec(t, pool, `INSERT INTO artists (id, name) VALUES ('nog', 'No Genres')`)
+	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('full', 'nog', 2)`)
 
 	c, err := st.TranslationContext(ctx, "full")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(c.Artists, []string{"Artist", "Guest"}) || c.Album != "The Album" || c.AlbumType != "single" ||
-		c.ReleaseDate != "2018-05-12" || !c.Explicit || c.DurationMs != 245900 || c.Language != "vi" {
+	if !slices.Equal(c.Artists, []string{"Artist", "Guest", "No Genres"}) || c.Album != "The Album" || c.AlbumType != "single" ||
+		c.ReleaseDate != "2018-05-12" || !c.Explicit || c.DurationMs != 245900 {
 		t.Errorf("context = %+v", c)
 	}
 	// Artist genres in credit order, once each.
@@ -45,8 +46,14 @@ func TestPGTranslationContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Artists) != 0 || c.Album != "" || len(c.ArtistGenres) != 0 || c.Genres != nil || c.Explicit || c.Language != "" {
+	if len(c.Artists) != 0 || c.Album != "" || len(c.ArtistGenres) != 0 || c.Genres != nil || c.Explicit {
 		t.Errorf("bare context = %+v", c)
+	}
+	// Only artists with NULL genres: no artist genres, artists still listed.
+	exec(t, pool, `INSERT INTO tracks (id, name, duration_ms) VALUES ('nullg', 'y', 1)`)
+	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id) VALUES ('nullg', 'nog')`)
+	if c, err = st.TranslationContext(ctx, "nullg"); err != nil || len(c.ArtistGenres) != 0 || len(c.Artists) != 1 {
+		t.Errorf("null genres = %+v, %v", c, err)
 	}
 	if c, err = st.TranslationContext(ctx, "missing"); err != nil || c.Album != "" {
 		t.Errorf("missing = %+v, %v", c, err)

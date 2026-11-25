@@ -313,8 +313,8 @@ now-playing lyrics and in the admin.
   the song is already in is stored as null. Before the lyrics, the user
   message holds a `<song>` block read by `TranslationContext` (a separate
   read, not part of the claim): title, all credited artists, album, album
-  type, release year, artist genres, enrichment genres, explicit flag,
-  length and the language of an earlier translation; unknown fields are left
+  type, release year, artist genres, enrichment genres, explicit flag
+  and length; unknown fields are left
   out, and a failed read sends the song without them. The system prompt stays
   fixed, so it still caches. `<lyrics>` and `<song>` tags in any field or the
   text are neutralized, so song text and metadata cannot leave their block.

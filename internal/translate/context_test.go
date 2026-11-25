@@ -3,8 +3,10 @@ package translate
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
 )
@@ -61,16 +63,15 @@ func TestUserMessageContext(t *testing.T) {
 			AlbumType:    "single",
 			ReleaseDate:  "2018-05-12",
 			ArtistGenres: []string{"v-pop", "vietnamese hip hop"},
-			Genres:       []domain.Genre{{Root: "pop", Sub: []string{"dance pop", "k-pop"}}, {Root: "hip hop"}, {Root: " "}},
+			Genres:       []domain.Genre{{Root: "pop", Sub: []string{"dance pop", "k-pop"}}, {Root: "hip hop"}, {Root: " "}, {Root: "Pop", Sub: []string{"x"}}},
 			Explicit:     true,
 			DurationMs:   245_900,
-			Language:     "VI",
 		}}
 	msg := userMessage(r, []string{"dòng một"})
 	want := "<song>\nTitle: Chạy Ngay Đi\nArtists: Sơn Tùng M-TP, Snoop Dogg\nAlbum: Chạy Ngay Đi\n" +
 		"Album type: single\nRelease year: 2018\nArtist genres: v-pop, vietnamese hip hop\n" +
 		"Track genres: pop (dance pop, k-pop); hip hop\nExplicit: yes\nLength: 4:05\n" +
-		"Earlier detected language: vi\n</song>\nFormat: synced, 1 numbered lines\n\n<lyrics>\n1| dòng một\n</lyrics>"
+		"</song>\nFormat: synced, 1 numbered lines\n\n<lyrics>\n1| dòng một\n</lyrics>"
 	if msg != want {
 		t.Errorf("message:\n%s\nwant:\n%s", msg, want)
 	}
@@ -79,7 +80,7 @@ func TestUserMessageContext(t *testing.T) {
 // Unknown fields are left out; the claim's artist is the fallback.
 func TestUserMessageEmptyContext(t *testing.T) {
 	msg := userMessage(Request{Title: "T", Artist: "A", Kind: domain.TranslationPlain, Plain: "x",
-		Song: domain.TranslationContext{ReleaseDate: "unknown", Language: "und", AlbumType: "  "}}, nil)
+		Song: domain.TranslationContext{ReleaseDate: "unknown", AlbumType: "  "}}, nil)
 	want := "<song>\nTitle: T\nArtists: A\n</song>\nFormat: plain text\n\n<lyrics>\nx\n</lyrics>"
 	if msg != want {
 		t.Errorf("message:\n%s\nwant:\n%s", msg, want)
@@ -126,9 +127,46 @@ func TestContextLists(t *testing.T) {
 	if got := strings.Count(joinList(many), ",") + 1; got != maxContextItems {
 		t.Errorf("items = %d", got)
 	}
+	// A long list ends on a whole item, within the field limit.
+	long := []string{strings.Repeat("a", 90), strings.Repeat("b", 90), strings.Repeat("c", 90)}
+	if got := joinList(long); got != long[0]+", "+long[1] {
+		t.Errorf("long list = %q", got)
+	}
 	for in, want := range map[string]string{"2018": "2018", "2018-05": "2018", "": "", "0000": "", "x2018": ""} {
 		if got := releaseYear(in); got != want {
 			t.Errorf("releaseYear(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// orderStore records the order of context reads and call reservations.
+type orderStore struct {
+	*fakeStore
+	order []string
+}
+
+func (o *orderStore) TranslationContext(ctx context.Context, id string) (domain.TranslationContext, error) {
+	o.order = append(o.order, "context "+id)
+	return o.fakeStore.TranslationContext(ctx, id)
+}
+
+func (o *orderStore) ReserveTranslationCall(ctx context.Context, day time.Time, d, m int) (bool, error) {
+	o.order = append(o.order, "reserve")
+	return o.fakeStore.ReserveTranslationCall(ctx, day, d, m)
+}
+
+// The context is read before the call is reserved, only for songs that are
+// sent; a failed read reserves exactly one call, like a successful one.
+func TestWorkerContextBeforeReserve(t *testing.T) {
+	long := strings.Repeat("[00:01.00] x\n", maxSendLines+1)
+	st := &orderStore{fakeStore: newFakeStore(cand("ctxerr", "[00:01.00] một"), cand("big", long), cand("a", "[00:01.00] hai"))}
+	tr := &fakeTranslator{}
+	testWorker(st, tr, nil).RunOnce(context.Background())
+	want := []string{"context ctxerr", "reserve", "context a", "reserve"}
+	if !slices.Equal(st.order, want) {
+		t.Errorf("order = %v, want %v", st.order, want)
+	}
+	if st.calls != 2 || len(tr.order) != 2 {
+		t.Errorf("reserved calls = %d, translated = %v", st.calls, tr.order)
 	}
 }

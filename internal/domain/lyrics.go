@@ -73,7 +73,6 @@ type TranslationContext struct {
 	Genres       []Genre // enrichment (Soundcharts) genres of the track
 	Explicit     bool
 	DurationMs   int32
-	Language     string // source_language of an earlier translation, "" when none
 }
 
 // Translation is a finished translation. For synced lyrics EN and VI hold

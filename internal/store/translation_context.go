@@ -13,8 +13,8 @@ import (
 
 // TranslationContext reads what the database knows about a track for its
 // translation request: credited artists, album, release date, artist genres
-// (Spotify), enrichment genres (only once enriched), explicit flag, duration
-// and the source language of an earlier translation. A missing track gives
+// (Spotify), enrichment genres (only once enriched), explicit flag and
+// duration. A missing track gives
 // an empty context and no error. It reads only; the claim is not involved.
 func (q *Queries) TranslationContext(ctx context.Context, trackID string) (domain.TranslationContext, error) {
 	var c domain.TranslationContext
@@ -30,13 +30,12 @@ func (q *Queries) TranslationContext(ctx context.Context, trackID string) (domai
 				FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
 				CROSS JOIN LATERAL unnest(ar.genres) AS g
 				WHERE ta.track_id = t.id GROUP BY g) x), '{}'),
-			tf.genres, t.explicit, t.duration_ms, COALESCE(tr.source_language, '')
+			tf.genres, t.explicit, t.duration_ms
 		FROM tracks t
 		LEFT JOIN albums al ON al.id = t.album_id
 		LEFT JOIN track_features tf ON tf.track_id = t.id AND tf.status = 'enriched'
-		LEFT JOIN lyrics_translations tr ON tr.track_id = t.id
 		WHERE t.id = $1`, trackID).Scan(&c.Artists, &c.Album, &c.AlbumType, &c.ReleaseDate,
-		&c.ArtistGenres, &genres, &c.Explicit, &c.DurationMs, &c.Language)
+		&c.ArtistGenres, &genres, &c.Explicit, &c.DurationMs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.TranslationContext{}, nil
 	}

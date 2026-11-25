@@ -62,6 +62,20 @@ type TranslationCandidate struct {
 	Attempts   int32
 }
 
+// TranslationContext is what the database knows about a song, sent with its
+// lyrics so the translation fits the song. Every field may be empty.
+type TranslationContext struct {
+	Artists      []string // credited artists in order (the first is the main artist)
+	Album        string
+	AlbumType    string // album, single or compilation
+	ReleaseDate  string // Spotify precision varies: YYYY, YYYY-MM or YYYY-MM-DD
+	ArtistGenres []string
+	Genres       []Genre // enrichment (Soundcharts) genres of the track
+	Explicit     bool
+	DurationMs   int32
+	Language     string // source_language of an earlier translation, "" when none
+}
+
 // Translation is a finished translation. For synced lyrics EN and VI hold
 // one entry per parsed LRC line; for plain lyrics ENText and VIText hold the
 // text. A nil / empty language means the song is already in that language.

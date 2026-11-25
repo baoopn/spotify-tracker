@@ -41,7 +41,7 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func message(stop, text string) string {
 	b, _ := json.Marshal(map[string]any{
-		"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+		"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5",
 		"content":     []map[string]any{{"type": "text", "text": text}},
 		"stop_reason": stop, "stop_sequence": nil,
 		"stop_details": map[string]any{"type": "refusal", "category": "cyber", "explanation": "x"},
@@ -64,7 +64,7 @@ func newTestClaude(t *testing.T, api *fakeAPI) *Claude {
 	t.Helper()
 	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
-	return NewClaude(testKey, "claude-opus-5-5", "low", option.WithBaseURL(srv.URL))
+	return NewClaude(testKey, "claude-sonnet-5-5", "low", option.WithBaseURL(srv.URL))
 }
 
 var syncedReq = Request{TrackID: "t1", Title: "Song", Artist: "A", Kind: domain.TranslationSynced,
@@ -77,12 +77,12 @@ func TestClaudeRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(res.EN, "|") != "one||two" || res.VI != nil || res.Model != "claude-opus-5-5" ||
+	if strings.Join(res.EN, "|") != "one||two" || res.VI != nil || res.Model != "claude-sonnet-5-5" ||
 		res.InputTokens != 1005 || res.OutputTokens != 40 {
 		t.Errorf("result = %+v", res)
 	}
 	req := api.request
-	if req["model"] != "claude-opus-5-5" || req["thinking"] != nil || req["tool_choice"] != nil ||
+	if req["model"] != "claude-sonnet-5-5" || req["thinking"] != nil || req["tool_choice"] != nil ||
 		req["fallbacks"] != "default" || req["temperature"] != nil {
 		t.Errorf("request = %v", req)
 	}
@@ -100,6 +100,19 @@ func TestClaudeRequest(t *testing.T) {
 	last, _ := msgs[len(msgs)-1].(map[string]any)
 	if len(msgs) != 1 || last["role"] != "user" {
 		t.Errorf("messages = %v", msgs)
+	}
+	// The song's context goes in the user message, after the cached prefix.
+	content, _ := last["content"].([]any)
+	block, _ := content[0].(map[string]any)
+	text, _ := block["text"].(string)
+	if !strings.HasPrefix(text, "<song>\nTitle: Song\nArtists: A\n</song>\n") || strings.Contains(systemPrompt, "Title: ") {
+		t.Errorf("user message = %q", text)
+	}
+	if cc, _ := first["cache_control"].(map[string]any); cc["type"] != "ephemeral" {
+		t.Errorf("cache_control = %v", first["cache_control"])
+	}
+	if _, ok := req["thinking"]; ok {
+		t.Error("thinking must be left unset for claude-sonnet-5-5")
 	}
 	if !strings.Contains(api.headers.Get("anthropic-beta"), "server-side-fallback-2026-07-01") {
 		t.Errorf("anthropic-beta = %q", api.headers.Get("anthropic-beta"))

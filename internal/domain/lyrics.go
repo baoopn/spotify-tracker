@@ -78,10 +78,12 @@ type TranslationContext struct {
 
 // Translation is a finished translation. For synced lyrics EN and VI hold
 // one entry per parsed LRC line; for plain lyrics ENText and VIText hold the
-// text. A nil / empty language means the song is already in that language.
+// text. A nil / empty language means the song is already all in that
+// language. Languages lists every language in the lyrics, main first.
 type Translation struct {
 	Kind           string
 	SourceLanguage string
+	Languages      []string
 	EN, VI         []string
 	ENText, VIText string
 	Model          string

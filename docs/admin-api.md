@@ -278,10 +278,12 @@ type TrackTranslation = {
                              // due within minutes, and no cap reached (poll only then);
                              // false when translation is off or never queued
   kind: 'synced' | 'plain' | null;
-  source_language: string | null; // ISO 639-1, or "und"
+  source_language: string | null; // main language: ISO 639-1, or "und"
+  languages: string[] | null;     // every language in the lyrics, main first;
+                                  // null when translated before it was stored
   // Synced: one line per line of the parsed LRC (internal/lrc, src/lib/lrc.ts),
   // joined with "\n"; split it to line it up. Plain: the text.
-  // null = the song is already in that language.
+  // null = the song is all in that language (a mixed song has both).
   en: string | null;
   vi: string | null;
   model: string;             // the model that answered

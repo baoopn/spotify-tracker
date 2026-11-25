@@ -5,10 +5,13 @@ import type { TrackTranslation } from './types';
 /** A lyrics view: the original words or a translation. */
 export type LyricsLang = 'orig' | 'en' | 'vi';
 
-/** Translations that can be shown: done, current, not the song's own language. */
+/**
+ * Translations that can be shown: done, current and present. A language is
+ * null only when the song is all in it, so a mixed song keeps both.
+ */
 export function availableLangs(t: TrackTranslation | null | undefined): ('en' | 'vi')[] {
 	if (!t || t.status !== 'done' || t.stale) return [];
-	return (['en', 'vi'] as const).filter((l) => t[l] != null && t.source_language !== l);
+	return (['en', 'vi'] as const).filter((l) => t[l] != null);
 }
 
 /** The language to show: the preference when the song has it, else the original. */

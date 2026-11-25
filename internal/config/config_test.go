@@ -227,7 +227,7 @@ func TestLoadAPILyrics(t *testing.T) {
 	}
 	l := cfg.Lyrics
 	if !l.Enabled || l.APIURL != "https://lrclib.net" || l.Interval != time.Minute || l.Batch != 10 ||
-		l.Spacing != 2*time.Second || l.NotFoundRetry != 720*time.Hour {
+		l.Spacing != 2*time.Second || l.NotFoundRetry != 720*time.Hour || l.Lease != 10*time.Minute {
 		t.Errorf("defaults = %+v", l)
 	}
 
@@ -239,7 +239,7 @@ func TestLoadAPILyrics(t *testing.T) {
 
 	for k, v := range map[string]string{
 		"LYRICS_API_URL": "lrclib.net", "LYRICS_INTERVAL": "5s", "LYRICS_BATCH": "101",
-		"LYRICS_SPACING": "500ms", "LYRICS_NOT_FOUND_RETRY": "1h",
+		"LYRICS_SPACING": "500ms", "LYRICS_NOT_FOUND_RETRY": "1h", "LYRICS_LEASE": "1m",
 	} {
 		set()
 		t.Setenv(k, v)
@@ -254,6 +254,23 @@ func TestLoadAPILyrics(t *testing.T) {
 			t.Errorf("%s=%s with LYRICS_ENABLED=false: %v", k, v, err)
 		}
 		t.Setenv("LYRICS_ENABLED", "true")
+	}
+
+	// The lease must outlast one batch (100 lookups × 10s > 10m).
+	long := func(lease string) error {
+		set()
+		for k, v := range map[string]string{"LYRICS_API_URL": "https://lrclib.net", "LYRICS_INTERVAL": "1m",
+			"LYRICS_NOT_FOUND_RETRY": "720h", "LYRICS_BATCH": "100", "LYRICS_SPACING": "10s", "LYRICS_LEASE": lease} {
+			t.Setenv(k, v)
+		}
+		_, err := Load[API]()
+		return err
+	}
+	if err := long("10m"); err == nil || !strings.Contains(err.Error(), "LYRICS_LEASE") {
+		t.Errorf("short lease = %v, want a LYRICS_LEASE error", err)
+	}
+	if err := long("30m"); err != nil {
+		t.Errorf("30m lease: %v", err)
 	}
 }
 

@@ -211,6 +211,9 @@ type Lyrics struct {
 	Spacing time.Duration `env:"LYRICS_SPACING" envDefault:"2s"`
 	// NotFoundRetry is when a track with no lyrics found is checked again.
 	NotFoundRetry time.Duration `env:"LYRICS_NOT_FOUND_RETRY" envDefault:"720h"`
+	// Lease is how long a worker holds a claimed batch; a crashed worker's
+	// claims expire after it.
+	Lease time.Duration `env:"LYRICS_LEASE" envDefault:"10m"`
 }
 
 func (l *Lyrics) validate() error {
@@ -231,6 +234,10 @@ func (l *Lyrics) validate() error {
 		return fmt.Errorf("LYRICS_SPACING must be between 1s and 1m")
 	case l.NotFoundRetry < 24*time.Hour || l.NotFoundRetry > 8760*time.Hour:
 		return fmt.Errorf("LYRICS_NOT_FOUND_RETRY must be between 24h and 8760h")
+	case l.Lease < 5*time.Minute || l.Lease > time.Hour:
+		return fmt.Errorf("LYRICS_LEASE must be between 5m and 1h")
+	case l.Lease <= time.Duration(l.Batch)*l.Spacing:
+		return fmt.Errorf("LYRICS_LEASE must be longer than LYRICS_BATCH × LYRICS_SPACING (one batch)")
 	}
 	return nil
 }

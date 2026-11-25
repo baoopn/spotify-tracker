@@ -75,10 +75,10 @@ type Refresher struct {
 }
 
 // New returns a Refresher with production defaults: batches of 10 a minute
-// leased for 10 minutes, not-found tracks re-checked after 30 days, failures
+// leased for 15 minutes, not-found tracks re-checked after 30 days, failures
 // retried after 1h, doubling up to 7 days.
 func New(st Store, src Source, owner string, log *slog.Logger) *Refresher {
-	return &Refresher{Store: st, Source: src, Log: log, Owner: owner, Lease: 10 * time.Minute,
+	return &Refresher{Store: st, Source: src, Log: log, Owner: owner, Lease: 15 * time.Minute,
 		Interval: time.Minute, Batch: 10, NotFoundRetry: 30 * 24 * time.Hour, MinBackoff: time.Hour,
 		MaxBackoff: 7 * 24 * time.Hour, MaxPause: time.Hour, wake: make(chan struct{}, 1)}
 }

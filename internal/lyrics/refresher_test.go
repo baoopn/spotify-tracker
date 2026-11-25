@@ -77,12 +77,14 @@ type result struct {
 type fakeSource struct {
 	res    map[string]result
 	calls  []string
-	cancel context.CancelFunc // called on the first lookup when set
-	during func(id string)    // called on every lookup when set
+	got    []domain.LyricsCandidate // every candidate looked up
+	cancel context.CancelFunc       // called on the first lookup when set
+	during func(id string)          // called on every lookup when set
 }
 
 func (f *fakeSource) Lookup(_ context.Context, c domain.LyricsCandidate) (*domain.Lyrics, error) {
 	f.calls = append(f.calls, c.TrackID)
+	f.got = append(f.got, c)
 	if f.cancel != nil {
 		f.cancel()
 	}
@@ -112,7 +114,7 @@ func cands(ids ...string) []domain.LyricsCandidate {
 
 func TestDefaults(t *testing.T) {
 	r := New(nil, nil, "w", nil)
-	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour || r.Lease != 10*time.Minute ||
+	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour || r.Lease != 15*time.Minute ||
 		r.MinBackoff != time.Hour || r.MaxBackoff != 168*time.Hour || r.MaxPause != time.Hour {
 		t.Errorf("defaults = %+v", r)
 	}
@@ -150,6 +152,21 @@ func TestRunOnceOutcomes(t *testing.T) {
 	}
 	if strings.ToValidUTF8(d.msg, "?") != d.msg {
 		t.Error("truncated message is not valid UTF-8")
+	}
+}
+
+// The source gets every credited artist, in credit order.
+func TestLookupGetsAllArtists(t *testing.T) {
+	c := domain.LyricsCandidate{TrackID: "duo", Name: "Song", Artist: "VƯƠNG BÌNH",
+		Artists: []string{"VƯƠNG BÌNH", "Lâm Bảo Ngọc"}, Album: "X", DurationMS: 308_000}
+	st := &fakeStore{cands: []domain.LyricsCandidate{c}}
+	src := &fakeSource{res: map[string]result{"duo": {l: &domain.Lyrics{Status: domain.LyricsFound, LRCLibID: 40346691, Plain: "x"}}}}
+	newTest(st, src).RunOnce(context.Background())
+	if len(src.got) != 1 || src.got[0].Artist != "VƯƠNG BÌNH" || !slices.Equal(src.got[0].Artists, c.Artists) {
+		t.Fatalf("looked up %+v", src.got)
+	}
+	if st.set["duo"].LRCLibID != 40346691 {
+		t.Errorf("set = %+v", st.set)
 	}
 }
 

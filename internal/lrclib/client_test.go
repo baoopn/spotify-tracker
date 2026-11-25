@@ -258,7 +258,7 @@ func TestEmptyRecordIsNotFound(t *testing.T) {
 		}
 	}
 	// Search candidates without an id are skipped too.
-	if r := pick([]Record{{TrackName: "Song", ArtistName: "A", PlainLyrics: ptr("x")}}, "Song", "A", 0); r != nil {
+	if r := pick([]Record{{TrackName: "Song", ArtistName: "A", PlainLyrics: ptr("x")}}, "Song", []string{"A"}, 0, nil); r != nil {
 		t.Errorf("picked a record without id: %+v", r)
 	}
 }
@@ -282,13 +282,13 @@ func TestPickNameAndArtist(t *testing.T) {
 		{"Sẽ Là", "Dick", rec(1, "Sẽ Là", ""), false},
 		{"(Intro)", "Dick", rec(1, "(intro)", "Dick"), true},
 	} {
-		got := pick([]Record{tc.r}, tc.name, tc.artist, 200)
+		got := pick([]Record{tc.r}, tc.name, []string{tc.artist}, 200, nil)
 		if (got != nil) != tc.ok {
 			t.Errorf("%q/%q vs %q/%q: picked %v, want %v", tc.name, tc.artist, tc.r.TrackName, tc.r.ArtistName, got != nil, tc.ok)
 		}
 	}
 	// The exact folded name wins over a suffixed one.
-	got := pick([]Record{rec(1, "Sẽ Là (Live)", "Dick"), rec(2, "Sẽ Là", "Dick")}, "Sẽ Là", "Dick", 200)
+	got := pick([]Record{rec(1, "Sẽ Là (Live)", "Dick"), rec(2, "Sẽ Là", "Dick")}, "Sẽ Là", []string{"Dick"}, 200, nil)
 	if got == nil || got.ID != 2 {
 		t.Errorf("exact name = %+v", got)
 	}

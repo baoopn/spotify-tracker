@@ -546,3 +546,26 @@ func TestPGUnlookupableNeverPending(t *testing.T) {
 		t.Errorf("pending row = %+v", tl)
 	}
 }
+
+// A claim carries every credited artist in credit order (position, then
+// name), the first as Artist.
+func TestPGLyricsClaimAllArtists(t *testing.T) {
+	st, pool := pgStore(t)
+	exec(t, pool, `INSERT INTO artists (id, name) VALUES ('a1', 'VƯƠNG BÌNH'), ('a2', 'Lâm Bảo Ngọc'), ('a3', 'Zed')`)
+	exec(t, pool, `INSERT INTO tracks (id, name, duration_ms) VALUES ('duo', 'Song', 308000)`)
+	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('duo', 'a3', 1), ('duo', 'a2', 0), ('duo', 'a1', 0)`)
+	bare(t, pool, "solo", 0)
+	got, err := st.ClaimLyrics(context.Background(), "w1", []string{"duo", "solo"}, 10*time.Minute, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("claim = %v", ids(got))
+	}
+	if c := got[0]; c.Artist != "Lâm Bảo Ngọc" || !eq(c.Artists, []string{"Lâm Bảo Ngọc", "VƯƠNG BÌNH", "Zed"}) {
+		t.Errorf("duo = %q %q", c.Artist, c.Artists)
+	}
+	if c := got[1]; c.Artist != "Artist" || !eq(c.Artists, []string{"Artist"}) {
+		t.Errorf("solo = %q %q", c.Artist, c.Artists)
+	}
+}

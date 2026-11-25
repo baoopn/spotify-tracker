@@ -79,14 +79,15 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 	}
 	rows, err := q.db.Query(ctx, `
 		WITH pick AS (
-			SELECT l.track_id, t.name, a.name AS artist, COALESCE(al.name, '') AS album, t.duration_ms,
+			SELECT l.track_id, t.name, a.names AS artists, COALESCE(al.name, '') AS album, t.duration_ms,
 				CASE WHEN l.status = 'pending' THEN '' ELSE l.status END AS status, l.attempts,
 				COALESCE(array_position($2::text[], l.track_id), 2147483647) AS prio,
 				COALESCE(l.requested_at, l.claim_requested_at) AS requested_at, p.last_played
 			FROM lyrics l
 			JOIN tracks t ON t.id = l.track_id
-			JOIN LATERAL (SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
-				WHERE ta.track_id = t.id ORDER BY ta.position, ar.name LIMIT 1) a ON true
+			JOIN LATERAL (SELECT array_agg(ar.name ORDER BY ta.position, ar.name) AS names
+				FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+				WHERE ta.track_id = t.id HAVING count(*) > 0) a ON true
 			LEFT JOIN albums al ON al.id = t.album_id
 			`+lastPlayedSQL+`
 			WHERE t.name <> '' AND `+lyricsClaimableSQL+`
@@ -98,7 +99,7 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 		UPDATE lyrics l SET claimed_by = $1, claimed_until = now() + $3::interval,
 			claim_requested_at = COALESCE(l.requested_at, l.claim_requested_at), requested_at = NULL
 		FROM pick WHERE l.track_id = pick.track_id
-		RETURNING pick.track_id, pick.name, pick.artist, pick.album, pick.duration_ms, pick.status, pick.attempts,
+		RETURNING pick.track_id, pick.name, pick.artists, pick.album, pick.duration_ms, pick.status, pick.attempts,
 			pick.prio, pick.requested_at, pick.last_played`, owner, priority, lease, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claim lyrics: %w", err)
@@ -113,9 +114,12 @@ func (q *Queries) ClaimLyrics(ctx context.Context, owner string, priority []stri
 	var got []claimed
 	for rows.Next() {
 		var x claimed
-		if err := rows.Scan(&x.c.TrackID, &x.c.Name, &x.c.Artist, &x.c.Album, &x.c.DurationMS, &x.c.Status,
+		if err := rows.Scan(&x.c.TrackID, &x.c.Name, &x.c.Artists, &x.c.Album, &x.c.DurationMS, &x.c.Status,
 			&x.c.Attempts, &x.prio, &x.requested, &x.played); err != nil {
 			return nil, err
+		}
+		if len(x.c.Artists) > 0 {
+			x.c.Artist = x.c.Artists[0]
 		}
 		got = append(got, x)
 	}

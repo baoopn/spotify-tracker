@@ -96,16 +96,25 @@ func (t *TokenSource) cached() (string, bool) {
 func (t *TokenSource) fetch(ctx context.Context, force bool) (string, error) {
 	resp, err := t.client.GetAccessToken(ctx, &trackerv1.GetAccessTokenRequest{ForceRefresh: force})
 	if err != nil {
-		if status.Code(err) == codes.FailedPrecondition {
+		precondition := status.Code(err) == codes.FailedPrecondition
+		// A forced refresh means Spotify rejected the cached token: drop it,
+		// so later calls fetch again instead of reusing it.
+		if precondition || force {
 			t.mu.Lock()
-			t.token = ""
+			t.token, t.expires = "", time.Time{}
 			t.mu.Unlock()
+		}
+		if precondition {
 			return "", errors.Join(ErrSpotifyAuth, errors.New(status.Convert(err).Message()))
 		}
 		return "", err
 	}
+	tok, exp := resp.GetAccessToken(), resp.GetExpiresAt().AsTime()
 	t.mu.Lock()
-	t.token, t.expires = resp.GetAccessToken(), resp.GetExpiresAt().AsTime()
+	// A slower fetch must not replace a newer token stored meanwhile.
+	if t.token == "" || exp.After(t.expires) {
+		t.token, t.expires = tok, exp
+	}
 	t.mu.Unlock()
-	return resp.GetAccessToken(), nil
+	return tok, nil
 }

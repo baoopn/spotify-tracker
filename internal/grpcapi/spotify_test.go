@@ -101,3 +101,68 @@ func TestTokenSourceAuthError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// scriptTokens answers each call with the next scripted reply.
+type scriptTokens struct {
+	mu      sync.Mutex
+	replies []tokenReply
+	calls   int
+}
+
+type tokenReply struct {
+	tok string
+	exp time.Time
+	err error
+}
+
+func (s *scriptTokens) GetAccessToken(context.Context, *trackerv1.GetAccessTokenRequest, ...grpc.CallOption) (*trackerv1.GetAccessTokenResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.replies[s.calls]
+	s.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &trackerv1.GetAccessTokenResponse{AccessToken: r.tok, ExpiresAt: timestamppb.New(r.exp)}, nil
+}
+
+// A failed forced refresh drops the cached token (Spotify rejected it), so
+// the next call fetches again instead of reusing it.
+func TestTokenSourceForcedFailureClears(t *testing.T) {
+	hour := time.Now().Add(time.Hour)
+	c := &scriptTokens{replies: []tokenReply{
+		{tok: "old", exp: hour},
+		{err: status.Error(codes.Unavailable, "down")},
+		{tok: "new", exp: hour.Add(time.Minute)},
+	}}
+	ts := NewTokenSource(c)
+	if tok, err := ts.AccessToken(context.Background(), false); err != nil || tok != "old" {
+		t.Fatalf("first = %q, %v", tok, err)
+	}
+	if _, err := ts.AccessToken(context.Background(), true); err == nil {
+		t.Fatal("forced refresh did not fail")
+	}
+	if tok, err := ts.AccessToken(context.Background(), false); err != nil || tok != "new" {
+		t.Errorf("after the failed refresh = %q, %v (want a new fetch)", tok, err)
+	}
+}
+
+// A fetch that returns a token expiring sooner than the cached one does not
+// replace it.
+func TestTokenSourceKeepsNewerToken(t *testing.T) {
+	later := time.Now().Add(2 * time.Hour)
+	c := &scriptTokens{replies: []tokenReply{
+		{tok: "newer", exp: later},
+		{tok: "older", exp: later.Add(-time.Hour)},
+	}}
+	ts := NewTokenSource(c)
+	if _, err := ts.fetch(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.fetch(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if tok, ok := ts.cached(); !ok || tok != "newer" {
+		t.Errorf("cached = %q, %v", tok, ok)
+	}
+}

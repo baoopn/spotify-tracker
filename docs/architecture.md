@@ -418,8 +418,11 @@ now-playing lyrics and in the admin.
   already in the target, proper nouns, numbers, common loanwords ("VIP") and
   pure vocalisations are copied. `languages` lists every language found,
   main first (`source_language`, stored in `lyrics_translations.languages`).
-  A target may be null only when `languages` is just that language; a null
-  target in a mixed song is an invalid answer (an `error`, retried). Before the lyrics, the user
+  A language counts only when a full phrase or line is in it (loanwords,
+  names and ad-libs do not). A target should be null only when `languages`
+  is just that language; a null target in a mixed song is still stored as
+  none (no retry, it costs credit) and logged as a warning with the track
+  id. Structurally bad answers (line count, codes) are `error`s, retried. Before the lyrics, the user
   message holds a `<song>` block read by `TranslationContext` (a separate
   read, not part of the claim): title, all credited artists, album, album
   type, release year, artist genres, enrichment genres, explicit flag

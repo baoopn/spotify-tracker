@@ -370,6 +370,10 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		}
 		return 0, outcomeTransient
 	}
+	if len(res.MixedNull) > 0 {
+		w.Log.WarnContext(ctx, "translation left a language out of a mixed song", slog.String("track_id", c.TrackID),
+			slog.String("missing", strings.Join(res.MixedNull, ",")), slog.String("languages", strings.Join(res.Languages, ",")))
+	}
 	tr := domain.Translation{Kind: req.Kind, SourceLanguage: res.SourceLanguage, Languages: res.Languages, EN: res.EN, VI: res.VI,
 		ENText: res.ENText, VIText: res.VIText, Model: res.Model,
 		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens}

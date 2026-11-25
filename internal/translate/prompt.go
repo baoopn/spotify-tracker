@@ -19,7 +19,7 @@ The <song> block can hold the title, the credited artists (the first is the main
 - Read all the lyrics before you translate. Decide what the song is about, who sings to whom, and how formal or casual it is. The title, album and genres hint at the theme, mood and register.
 - Follow the conventions of the genre. Rap and hip hop: keep the slang, swagger, wordplay and attitude, and render slang with natural slang of the same strength. Ballads: keep the tender, poetic, emotional register. K-pop and V-pop: keep hooks short and catchy; copy pure vocalisations unchanged.
 
-languages: the ISO 639-1 codes of every language in the lyrics, such as "en", "vi", "ko", "ja", "zh", "es" or "fr", the language of most lines first. List a language even when it appears in only one line or one phrase. Proper nouns, numbers and vocalisations do not count as a language. Use ["und"] only when there are no real words.
+languages: the ISO 639-1 codes of every language in the lyrics, such as "en", "vi", "ko", "ja", "zh", "es" or "fr", the language of most lines first. List a language when at least one full phrase or line is in it, even if only one. Words kept as written do not count as a language: proper nouns, brand names, numbers, loanwords such as "OK", "baby", "fan" or "VIP", ad-libs and vocalisations. Use ["und"] only when there are no real words.
 
 source_language: the first item of languages.
 
@@ -29,11 +29,11 @@ en and vi: the lyrics translated into English and into Vietnamese. Songs often s
 - Keep as written only: words already in the target language; proper nouns (names of people, places, brands and groups, the song title and the artist); numbers; and short loanwords that listeners of the target language use as they are, such as "VIP", "OK", "DJ" or "fan" in Vietnamese. A full phrase or sentence is never a loanword: translate it.
 - Vocalisations with no meaning, such as "oh", "yeah", "ayy", "uh" or "la la", stay as written. Short ad-libs that do mean something, such as "what?", "let's go", "come on" or "yes!", are translated like any other words.
 - Never choose what to translate by the main language of the song. A song that is mostly English still needs a Vietnamese line for every English line, and an English line for every line in another language.
-- Set en to null only when every line is already in English or has no words to translate. Set vi to null only when every line is already in Vietnamese or has no words to translate. When even one line or phrase is in another language, give the full translation: every line, translated or copied.
+- Set en to null only when languages is just "en": every phrase is in English, and the rest is only words kept as written. Set vi to null only when languages is just "vi" in the same way. When even one phrase or line is in another language, give the full translation: every line, translated or copied.
 
 Examples of mixed lines (made up, for the rule only):
 - "君の声 in the VIP tonight" gives vi "Giọng em trong khu VIP đêm nay" and en "Your voice in the VIP tonight".
-- "Money on my mind, yeah" gives vi "Trong đầu chỉ có tiền, yeah" and en "Money on my mind, yeah" (already English).
+- "Paper boats on a silver river, yeah" gives vi "Thuyền giấy trên dòng sông bạc, yeah" and en "Paper boats on a silver river, yeah" (already English).
 - "Em đi đâu đấy? Don't leave me tonight" gives en "Where are you going? Don't leave me tonight" and vi "Em đi đâu đấy? Đừng bỏ anh đêm nay".
 
 Numbered lines (synced lyrics):
@@ -280,7 +280,9 @@ func parseAnswer(r Request, raw string, idx []int) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	out := Result{SourceLanguage: lang, Languages: langs}
+	// The main language is the first real one ("und" is dropped when
+	// other languages are listed).
+	out := Result{SourceLanguage: langs[0], Languages: langs}
 	for _, t := range []struct {
 		code string
 		raw  json.RawMessage
@@ -291,8 +293,11 @@ func parseAnswer(r Request, raw string, idx []int) (Result, error) {
 			continue // all in this language: no translation, whatever was sent
 		}
 		if isNull(t.raw) {
-			// A mixed song needs every target that is not its only language.
-			return Result{}, &InvalidOutputError{Reason: t.code + " missing (lyrics are not all " + t.code + ")"}
+			// The prompt asks for every target that is not the song's only
+			// language. A null one anyway is stored as none (as before) and
+			// reported, not retried: a retry costs credit and may say the same.
+			out.MixedNull = append(out.MixedNull, t.code)
+			continue
 		}
 		if r.Kind == domain.TranslationSynced {
 			var lines []string

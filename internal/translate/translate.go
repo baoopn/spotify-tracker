@@ -35,6 +35,9 @@ type Request struct {
 type Result struct {
 	SourceLanguage string   // main language (ISO 639-1, or "und")
 	Languages      []string // every language in the lyrics, main first
+	// MixedNull lists the targets the model left null although Languages
+	// has other languages too (stored as none; the worker logs a warning).
+	MixedNull      []string
 	EN, VI         []string
 	ENText, VIText string
 	Model          string // the model that answered (a fallback shows here)

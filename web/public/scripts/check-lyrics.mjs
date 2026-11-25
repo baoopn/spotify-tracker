@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {
 	availableLangs,
+	creditHref,
 	currentIndex,
 	interleave,
 	lineKeys,
@@ -142,5 +143,14 @@ assert.equal(lyricsState(undefined, failedQ, 't1'), 'failed');
 assert.equal(lyricsState(nl({ track_id: 't0' }), failedQ, 't1'), 'failed', 'old song, then error');
 assert.equal(lyricsState(undefined, retrying, 't1'), 'loading', 'retry running');
 assert.equal(lyricsState(nl({}), failedQ, 't1'), 'readable', 'a failed refetch keeps the lyrics');
+
+// creditHref: https links only; manual lyrics (url null) get plain text.
+assert.equal(
+	creditHref({ text: 'Lyrics from LRCLIB', url: 'https://lrclib.net' }),
+	'https://lrclib.net'
+);
+assert.equal(creditHref({ text: 'Lyrics added by Bao', url: null }), null, 'manual lyrics');
+assert.equal(creditHref({ text: 'x', url: '' }), null, 'empty url');
+assert.equal(creditHref({ text: 'x', url: 'javascript:alert(1)' }), null, 'not https');
 
 console.log('lyrics checks passed');

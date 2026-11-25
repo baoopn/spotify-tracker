@@ -105,3 +105,11 @@ export function lyricsState(
 	// Nothing for this track yet: wait, unless the request failed for good.
 	return q.isError && !q.isFetching ? 'failed' : 'loading';
 }
+
+/**
+ * The link of a lyrics credit: only an https URL. Lyrics the owner added by
+ * hand have none (`url: null`), so the credit is plain text.
+ */
+export function creditHref(credit: NowLyrics['credit']): string | null {
+	return credit.url && /^https:\/\//i.test(credit.url) ? credit.url : null;
+}

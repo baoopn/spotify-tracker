@@ -7,14 +7,14 @@
 	import NowLyrics from './NowLyrics.svelte';
 	import RelTime from './RelTime.svelte';
 	import { estimatePositionMs } from '#lib/playback.js';
-	import { tick } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { frameClock, secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear, spotifyUrl, toDate } from '#lib/format.js';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
-	import { lyricsLayout, type LyricsLayout } from '#lib/lyricsLayout.svelte.js';
+	import { lyricsLayout } from '#lib/lyricsLayout.svelte.js';
+	import { lyricsState } from '#lib/lyrics.js';
 	import { historyQuery, loadStatus, nowLyricsQuery, nowPlayingQuery } from '#lib/queries.js';
 
 	/** A paused track this old counts as "not listening". */
@@ -50,31 +50,22 @@
 	const year = $derived(releaseYear(track?.album?.release_date));
 	const cover = $derived(track?.album?.cover_image_url);
 
-	// Lyrics focus layout: offered while the song has lyrics to read, or they
-	// are on their way. Same query as NowLyrics (shared cache, one request).
+	// Lyrics focus layout: offered while the song has lyrics to read, they are
+	// on their way (also while the server still answers for the previous
+	// song), or the request failed (focus shows Retry). Same query and helper
+	// as NowLyrics (shared cache, one request), so the two never disagree.
 	const lyrics = createQuery(() => nowLyricsQuery(track?.id ?? null, playing));
-	const ld = $derived(lyrics.data && lyrics.data.track_id === track?.id ? lyrics.data : null);
+	const lyricsNow = $derived(
+		playing ? lyricsState(lyrics.data, lyrics, track?.id ?? null) : 'none'
+	);
 	const canFocus = $derived(
-		playing &&
-			(ld
-				? ld.status === 'pending' ||
-					(ld.status === 'found' && (ld.synced ? ld.lines.length > 0 : !!ld.plain))
-				: lyrics.isPending && !lyrics.isError)
+		lyricsNow === 'loading' ||
+			lyricsNow === 'looking' ||
+			lyricsNow === 'readable' ||
+			lyricsNow === 'failed'
 	);
 	// No lyrics: the standard card, without changing the saved choice.
 	const focus = $derived(canFocus && lyricsLayout.value === 'lyrics');
-
-	// Keep the pressed toggle where it was on screen (the layouts differ in
-	// height), and keep keyboard focus on it.
-	async function setLayout(v: LyricsLayout, from: HTMLElement) {
-		const before = from.getBoundingClientRect().top;
-		lyricsLayout.value = v;
-		await tick();
-		const group = document.querySelector<HTMLElement>('[data-layout-toggle]');
-		if (!group) return;
-		window.scrollBy({ top: group.getBoundingClientRect().top - before, behavior: 'instant' });
-		group.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
-	}
 
 	// Last played, for the idle state: the newest history entry, or the stale paused track.
 	const lastPlayed = $derived(
@@ -105,7 +96,10 @@
 			{playing ? 'Now playing' : 'Paused'}
 		</p>
 		{#if canFocus}
-			<LayoutToggle value={focus ? 'lyrics' : 'standard'} onchange={setLayout} />
+			<LayoutToggle
+				value={focus ? 'lyrics' : 'standard'}
+				onchange={(v) => (lyricsLayout.value = v)}
+			/>
 		{/if}
 	</div>
 {/snippet}
@@ -195,14 +189,18 @@
 	</div>
 {/snippet}
 
+{#snippet spotifyIcon()}
+	<svg viewBox="0 0 24 24" class="size-5" fill="currentColor" aria-hidden="true">
+		<path
+			d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.3-1.8-8.8-1a.6.6 0 1 1-.3-1.2c3.8-.9 7.1-.5 9.8 1.1.3.2.4.6.2.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.7-1.7-6.9-2.2-10.2-1.2a.8.8 0 1 1-.4-1.5c3.7-1.1 8.4-.6 11.5 1.4.3.2.4.7.1 1Zm.1-2.8C14.6 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.3-.9 13 1.3a.9.9 0 0 1-.9 1.6Z"
+		/>
+	</svg>
+{/snippet}
+
 {#snippet spotifyButton(cls: string)}
 	{#if trackUrl}
 		<a href={trackUrl} target="_blank" rel="noopener noreferrer" class={['btn btn-primary', cls]}>
-			<svg viewBox="0 0 24 24" class="size-5" fill="currentColor" aria-hidden="true">
-				<path
-					d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.3-1.8-8.8-1a.6.6 0 1 1-.3-1.2c3.8-.9 7.1-.5 9.8 1.1.3.2.4.6.2.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.7-1.7-6.9-2.2-10.2-1.2a.8.8 0 1 1-.4-1.5c3.7-1.1 8.4-.6 11.5 1.4.3.2.4.7.1 1Zm.1-2.8C14.6 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.3-.9 13 1.3a.9.9 0 0 1-.9 1.6Z"
-				/>
-			</svg>
+			{@render spotifyIcon()}
 			Listen on Spotify
 		</a>
 	{/if}
@@ -244,73 +242,88 @@
 				>Try again</button
 			>
 		</div>
-	{:else if track && focus && np}
-		<!-- Lyrics focus: a compact, sticky now-playing column; the lyrics take
-		     the main area. Stacks on phones (header row, then the lyrics). -->
-		<div class="focus-hero">
-			<div class="min-w-0 md:sticky md:top-6">
-				{@render statusRow()}
-				<div class="mt-4 flex items-center gap-4 md:block">
-					{@render coverArt(
-						'print size-20 rounded-[12px] [--print:var(--spot-now)] sm:size-24 md:size-auto md:w-full md:max-w-[16rem] md:rounded-brand'
-					)}
-					<div class="min-w-0 md:mt-5">
-						{@render title('text-xl sm:text-2xl md:text-3xl')}
-						<p class="mt-1 truncate font-medium md:mt-2 md:text-lg md:whitespace-normal">
-							<ArtistLinks artists={track.artists} />
-						</p>
+	{:else if track && np}
+		<!-- One status row for both layouts: the same node at the same place,
+		     so the layout toggle never moves and keeps keyboard focus. -->
+		<div class="mb-6">{@render statusRow()}</div>
+		{#if focus}
+			<!-- Lyrics focus: a compact, sticky now-playing column; the lyrics take
+			     the main area. Stacks below lg (header row, then the lyrics). -->
+			<div class="focus-hero">
+				<div class="min-w-0 lg:sticky lg:top-6">
+					<div class="flex items-center gap-4 lg:block">
+						{@render coverArt(
+							'print size-20 rounded-[12px] [--print:var(--spot-now)] sm:size-24 lg:size-auto lg:w-full lg:max-w-[min(16rem,32svh)] lg:rounded-brand'
+						)}
+						<div class="min-w-0 flex-1 lg:mt-5">
+							{@render title('text-xl sm:text-2xl lg:text-3xl')}
+							<p class="mt-1 truncate font-medium lg:mt-2 lg:text-lg lg:whitespace-normal">
+								<ArtistLinks artists={track.artists} />
+							</p>
+						</div>
+						{#if trackUrl}
+							<!-- Phones and tablets: the full button sits in the column on lg. -->
+							<a
+								href={trackUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="btn btn-primary btn-icon shrink-0 lg:hidden"
+								aria-label="Listen on Spotify"
+								title="Listen on Spotify"
+							>
+								{@render spotifyIcon()}
+							</a>
+						{/if}
 					</div>
+					<div class="mt-4 lg:mt-6">{@render progress()}</div>
+					{@render spotifyButton('mt-6 hidden lg:inline-flex')}
 				</div>
-				<div class="mt-4 md:mt-6">{@render progress()}</div>
-				{@render spotifyButton('mt-6 hidden md:inline-flex')}
+				<div class="min-w-0">
+					<NowLyrics {np} focus />
+				</div>
 			</div>
-			<div class="min-w-0">
-				<NowLyrics {np} focus />
+		{:else}
+			<div class="hero">
+				{@render coverArt('print w-full rounded-brand [--print:var(--spot-now)]')}
+
+				<div class="min-w-0">
+					{@render title('text-4xl sm:text-5xl lg:text-6xl')}
+
+					<p class="mt-3 text-lg font-medium break-words sm:text-xl">
+						<ArtistLinks artists={track.artists} />
+					</p>
+
+					<dl
+						class="mt-6 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 border-t border-rule pt-4 text-sm"
+					>
+						{#if track.album}
+							{@render credit('Album')}
+							<dd class="min-w-0 break-words">
+								{#if albumUrl}
+									<a href={albumUrl} target="_blank" rel="noopener noreferrer" class="link"
+										>{track.album.name}</a
+									>
+								{:else}
+									{track.album.name}
+								{/if}
+							</dd>
+						{/if}
+						{#if year}
+							{@render credit('Year')}
+							<dd class="font-mono tabular-nums">{year}</dd>
+						{/if}
+						{@render credit('Length')}
+						<dd class="font-mono tabular-nums">{duration(durationMs)}</dd>
+					</dl>
+
+					<div class="mt-6">{@render progress()}</div>
+
+					{#if playing && np}<NowLyrics {np} />{/if}
+
+					{@render spotifyButton('mt-7')}
+				</div>
 			</div>
-		</div>
-	{:else if track}
-		<div class="hero">
-			{@render coverArt('print w-full rounded-brand [--print:var(--spot-now)]')}
-
-			<div class="min-w-0">
-				{@render statusRow()}
-
-				{@render title('mt-5 text-4xl sm:text-5xl lg:text-6xl')}
-
-				<p class="mt-3 text-lg font-medium break-words sm:text-xl">
-					<ArtistLinks artists={track.artists} />
-				</p>
-
-				<dl
-					class="mt-6 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 border-t border-rule pt-4 text-sm"
-				>
-					{#if track.album}
-						{@render credit('Album')}
-						<dd class="min-w-0 break-words">
-							{#if albumUrl}
-								<a href={albumUrl} target="_blank" rel="noopener noreferrer" class="link"
-									>{track.album.name}</a
-								>
-							{:else}
-								{track.album.name}
-							{/if}
-						</dd>
-					{/if}
-					{#if year}
-						{@render credit('Year')}
-						<dd class="font-mono tabular-nums">{year}</dd>
-					{/if}
-					{@render credit('Length')}
-					<dd class="font-mono tabular-nums">{duration(durationMs)}</dd>
-				</dl>
-
-				<div class="mt-6">{@render progress()}</div>
-
-				{#if playing && np}<NowLyrics {np} />{/if}
-
-				{@render spotifyButton('mt-7')}
-			</div>
-		</div>
+		{/if}
 	{:else}
 		<div class="hero">
 			<img
@@ -386,9 +399,9 @@
 		display: grid;
 		gap: 1.5rem;
 	}
-	@media (min-width: 48rem) {
+	@media (min-width: 64rem) {
 		.focus-hero {
-			grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+			grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
 			gap: 3rem;
 			align-items: start;
 		}

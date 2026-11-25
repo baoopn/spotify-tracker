@@ -1,6 +1,6 @@
 // Synced-lyrics helpers (pure, no runes).
 
-import type { LyricLine } from './types';
+import type { LyricLine, NowLyrics } from './types';
 
 /** Index of the line playing at `posMs` (last line started at or before it), or -1. */
 export function currentIndex(lines: readonly LyricLine[], posMs: number): number {
@@ -63,4 +63,45 @@ export function interleave(
 	const b = translation.split('\n');
 	if (a.length !== b.length) return null;
 	return a.map((text, i) => ({ text, tr: b[i] }));
+}
+
+/**
+ * Where the lyrics of the track on screen stand:
+ * - loading: no answer for this track yet (first fetch, or the server still
+ *   answers for the previous song and will be asked again)
+ * - looking: the server is still looking them up
+ * - readable: synced lines or plain text to show
+ * - instrumental: no words
+ * - failed: the request failed and no retry is running
+ * - none: no lyrics for this song (or no track)
+ */
+export type LyricsState = 'loading' | 'looking' | 'readable' | 'instrumental' | 'failed' | 'none';
+
+/** Lyrics data the page can render: synced lines, else plain text. */
+export function lyricsView(d: NowLyrics): { lines: NowLyrics['lines']; plain: string | null } {
+	const lines = d.status === 'found' && d.synced ? d.lines : [];
+	const plain = d.status === 'found' && !lines.length && d.plain ? d.plain : null;
+	return { lines, plain };
+}
+
+/**
+ * One answer for the hero and the lyrics panel, so they never disagree.
+ * `data` is the query's data: undefined before the first answer, null when
+ * the server has no lyrics. Data for another track counts as loading.
+ */
+export function lyricsState(
+	data: NowLyrics | null | undefined,
+	q: { isPending: boolean; isFetching: boolean; isError: boolean },
+	trackId: string | null
+): LyricsState {
+	if (!trackId) return 'none';
+	if (data === null) return 'none';
+	if (data && data.track_id === trackId) {
+		if (data.status === 'pending') return 'looking';
+		if (data.status === 'instrumental') return 'instrumental';
+		const v = lyricsView(data);
+		return v.lines.length || v.plain != null ? 'readable' : 'none';
+	}
+	// Nothing for this track yet: wait, unless the request failed for good.
+	return q.isError && !q.isFetching ? 'failed' : 'loading';
 }

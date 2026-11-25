@@ -4,7 +4,15 @@
 	import LyricsList from './LyricsList.svelte';
 	import { lyricClock } from '#lib/clock.svelte.js';
 	import { live } from '#lib/live.svelte.js';
-	import { availableLangs, currentIndex, interleave, lineKeys, pickLang } from '#lib/lyrics.js';
+	import {
+		availableLangs,
+		currentIndex,
+		interleave,
+		lineKeys,
+		lyricsState,
+		lyricsView,
+		pickLang
+	} from '#lib/lyrics.js';
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
@@ -31,20 +39,21 @@
 	// The full lyrics, fetched once per track. Only for the track on screen:
 	// a late response for the previous song shows nothing.
 	const query = createQuery(() => nowLyricsQuery(trackId, playing));
+	// Same helper as the hero's layout toggle, so the two never disagree.
+	const state = $derived(playing ? lyricsState(query.data, query, trackId) : 'none');
 	const data = $derived(query.data && query.data.track_id === trackId ? query.data : null);
 
 	const found = $derived(data?.status === 'found' ? data : null);
-	const lines = $derived(found?.synced ? found.lines : []);
+	const view = $derived(found ? lyricsView(found) : { lines: [], plain: null });
+	const lines = $derived(view.lines);
 	const keys = $derived(lineKeys(lines));
-	const plain = $derived(!lines.length && found?.plain ? found.plain : null);
-	const instrumental = $derived(data?.status === 'instrumental');
+	const plain = $derived(view.plain);
+	const instrumental = $derived(state === 'instrumental');
 	/** The lookup is still to come: the server says so, ask again soon. */
-	const looking = $derived(data?.status === 'pending');
+	const looking = $derived(state === 'looking');
 	/** No answer for this song yet (first fetch, or the previous song's data). */
-	const loading = $derived(
-		playing && !data && (query.isPending || query.isFetching) && !query.isError
-	);
-	const failed = $derived(playing && !data && query.isError && !query.isFetching);
+	const loading = $derived(state === 'loading');
+	const failed = $derived(state === 'failed');
 
 	// Translation: one shared preference; a song without it shows the original.
 	const tr = $derived(found?.translation ?? null);
@@ -65,11 +74,13 @@
 	const active = $derived(lines.length && posMs != null ? currentIndex(lines, posMs) : -1);
 
 	/** Something to read: synced lines or plain text. */
-	const readable = $derived(playing && (lines.length > 0 || plain != null));
-	const shown = $derived(readable || (playing && (instrumental || looking || loading || failed)));
+	const readable = $derived(state === 'readable');
+	const shown = $derived(state !== 'none');
 
 	/** Every state holds the same box, so nothing jumps when lyrics arrive. */
-	const box = $derived(focus ? 'h-[65dvh] md:h-[70dvh]' : 'h-64');
+	// svh, not dvh: the box keeps its height when the phone toolbar hides.
+	// 55svh on phones leaves room to scroll the page around it.
+	const box = $derived(focus ? 'h-[55svh] lg:h-[70svh]' : 'h-64');
 </script>
 
 {#if shown}

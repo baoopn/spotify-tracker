@@ -58,6 +58,8 @@ export type TopPlaylistsParams = { period: TopPlaylistPeriod | ''; page: number;
 
 export const qk = {
 	overview: ['overview'] as const,
+	player: ['player'] as const,
+	playerSearch: (q: string) => ['player', 'search', q] as const,
 	spotify: ['spotify', 'status'] as const,
 	emailSettings: ['settings', 'email'] as const,
 	backups: ['backups'] as const,
@@ -112,6 +114,28 @@ export const queries = {
 			queryKey: qk.overview,
 			queryFn: ({ signal }) => api.overview({ signal }),
 			refetchInterval: REFRESH.live
+		}),
+
+	/**
+	 * The owner's player: every 3 s while the tab is visible, every 30 s when
+	 * hidden (so the card is close to right when the tab comes back).
+	 */
+	player: () =>
+		queryOptions({
+			queryKey: qk.player,
+			queryFn: ({ signal }) => api.player({ signal }),
+			refetchInterval: () =>
+				typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 30_000 : 3_000,
+			refetchIntervalInBackground: true
+		}),
+
+	playerSearch: (q: string) =>
+		queryOptions({
+			queryKey: qk.playerSearch(q),
+			queryFn: ({ signal }) => api.playerSearch(q, 8, { signal }),
+			enabled: q.length > 0,
+			staleTime: 60_000,
+			refetchOnWindowFocus: false
 		}),
 
 	spotify: () =>

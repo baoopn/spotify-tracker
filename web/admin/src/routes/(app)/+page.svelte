@@ -5,7 +5,7 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import NowPlayingCard from '#lib/components/overview/NowPlayingCard.svelte';
-	import UpNextCard from '#lib/components/overview/UpNextCard.svelte';
+	import PlayerCard from '#lib/components/overview/PlayerCard.svelte';
 	import SpotifyTokenCard from '#lib/components/overview/SpotifyTokenCard.svelte';
 	import BackupsCard from '#lib/components/overview/BackupsCard.svelte';
 	import LyricsQueueCard from '#lib/components/overview/LyricsQueueCard.svelte';
@@ -56,7 +56,6 @@
 		<div class="min-w-0 lg:col-span-2">
 			{#if d}
 				<NowPlayingCard initial={d.now_playing} />
-				<UpNextCard upNext={d.up_next} currentTrackId={d.now_playing?.track?.id ?? null} />
 			{:else}
 				<div class="card-print flex gap-5 p-5">
 					<Skeleton class="size-32" />
@@ -68,6 +67,7 @@
 					</div>
 				</div>
 			{/if}
+			<PlayerCard />
 		</div>
 		<div class="flex flex-col gap-8">
 			{#if d}

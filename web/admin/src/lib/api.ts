@@ -44,6 +44,10 @@ import type {
 	TrackRow,
 	TrackSort,
 	Playlist,
+	PlayBody,
+	PlayerTrack,
+	PlayerView,
+	RepeatState,
 	RecentPlaylist,
 	ServerZone,
 	V1Item,
@@ -156,6 +160,9 @@ async function parseError(res: Response): Promise<ApiError> {
 	return new ApiError(res.status, code, message, fields, lines);
 }
 
+/** 403 codes that are Spotify refusals (player), not a lost admin session. */
+const NOT_AUTH_403 = new Set(['premium_required', 'player_restricted']);
+
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const method = opts.method ?? 'GET';
 	const useAuth = opts.auth ?? path.startsWith(ADMIN_API);
@@ -182,7 +189,11 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
 	if (!res.ok) {
 		const err = await parseError(res);
-		if ((res.status === 401 || res.status === 403) && useAuth && !opts.silentAuthErrors) {
+		if (
+			(res.status === 401 || (res.status === 403 && !NOT_AUTH_403.has(err.code))) &&
+			useAuth &&
+			!opts.silentAuthErrors
+		) {
 			onAuthFailure(res.status, err);
 		}
 		throw err;
@@ -201,6 +212,12 @@ function topPlaylistPath(period: TopPlaylistPeriod, start: string): string {
 
 type Signal = { signal?: AbortSignal };
 
+type Ok = { ok: true };
+
+function playerCmd(cmd: string, body: object = {}) {
+	return request<Ok>(`${ADMIN_API}/player/${cmd}`, { method: 'POST', body });
+}
+
 export const api = {
 	// auth
 	config: () => request<AdminConfig>(`${ADMIN_API}/config`, { auth: false }),
@@ -215,6 +232,25 @@ export const api = {
 	spotifyAuthorize: () =>
 		request<SpotifyAuthorizeResponse>(`${ADMIN_API}/spotify/authorize`, { method: 'POST' }),
 	spotifyTest: () => request<SpotifyTestResponse>(`${ADMIN_API}/spotify/test`, { method: 'POST' }),
+
+	// player (the owner's Spotify player; device_id omitted = the active device)
+	player: ({ signal }: Signal = {}) => request<PlayerView>(`${ADMIN_API}/player`, { signal }),
+	playerSearch: (q: string, limit = 8, { signal }: Signal = {}) =>
+		request<{ data: PlayerTrack[] }>(`${ADMIN_API}/player/search`, {
+			query: { q, limit },
+			signal
+		}).then((r) => r.data),
+	playerPlay: (body: PlayBody = {}) => playerCmd('play', body),
+	playerPause: () => playerCmd('pause'),
+	playerNext: () => playerCmd('next'),
+	playerPrevious: () => playerCmd('previous'),
+	playerSeek: (position_ms: number) => playerCmd('seek', { position_ms }),
+	playerVolume: (volume_percent: number) => playerCmd('volume', { volume_percent }),
+	playerShuffle: (state: boolean) => playerCmd('shuffle', { state }),
+	playerRepeat: (state: RepeatState) => playerCmd('repeat', { state }),
+	/** play false keeps the current playing state. */
+	playerTransfer: (device_id: string, play = false) => playerCmd('transfer', { device_id, play }),
+	playerQueue: (uri: string) => playerCmd('queue', { uri }),
 
 	// email
 	emailSettings: ({ signal }: Signal = {}) =>

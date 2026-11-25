@@ -236,8 +236,8 @@ func (l *Lyrics) validate() error {
 		return fmt.Errorf("LYRICS_NOT_FOUND_RETRY must be between 24h and 8760h")
 	case l.Lease < 5*time.Minute || l.Lease > time.Hour:
 		return fmt.Errorf("LYRICS_LEASE must be between 5m and 1h")
-	case l.Lease <= time.Duration(l.Batch)*l.Spacing:
-		return fmt.Errorf("LYRICS_LEASE must be longer than LYRICS_BATCH × LYRICS_SPACING (one batch)")
+	case l.Lease < 2*time.Duration(l.Batch)*l.Spacing:
+		return fmt.Errorf("LYRICS_LEASE must be at least 2 × LYRICS_BATCH × LYRICS_SPACING (twice one batch)")
 	}
 	return nil
 }

@@ -98,7 +98,7 @@ var t0 = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 func newTest(st *fakeStore, src *fakeSource) *Refresher {
 	r := New(st, src, "w1", slog.New(slog.DiscardHandler))
 	r.now = func() time.Time { return t0 }
-	r.sleep = func(context.Context, time.Duration) bool { return true }
+	r.sleep = func(context.Context, time.Duration, <-chan struct{}) bool { return true }
 	return r
 }
 
@@ -225,7 +225,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	st := &fakeStore{listErr: errors.New("db down")}
 	r := newTest(st, &fakeSource{})
 	var waits []time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool {
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool {
 		waits = append(waits, d)
 		cancel()
 		return false
@@ -243,7 +243,7 @@ func TestRunUsesRateLimitPause(t *testing.T) {
 	src := &fakeSource{res: map[string]result{"a": {err: &lrclib.RateLimitError{RetryAfter: 10 * time.Minute}}}}
 	r := newTest(st, src)
 	var got time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool { got = d; return false }
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool { got = d; return false }
 	_ = r.Run(context.Background())
 	if got != 10*time.Minute {
 		t.Errorf("wait = %s, want the Retry-After pause", got)
@@ -289,7 +289,8 @@ func TestRetryAtUsesErrorAttemptsOnly(t *testing.T) {
 		attempts int32
 		want     time.Duration
 	}{{"", 0, time.Hour}, {domain.LyricsNotFound, 5, time.Hour}, {domain.LyricsError, 1, 2 * time.Hour},
-		{domain.LyricsError, 3, 8 * time.Hour}} {
+		{domain.LyricsError, 3, 8 * time.Hour}, {domain.LyricsFound, 0, time.Hour}, {domain.LyricsFound, 2, 4 * time.Hour},
+		{domain.LyricsInstrumental, 1, 2 * time.Hour}} {
 		got := r.retryAt(domain.LyricsCandidate{Status: tc.status, Attempts: tc.attempts}).Sub(t0)
 		if got != tc.want {
 			t.Errorf("%s/%d = %s, want %s", tc.status, tc.attempts, got, tc.want)
@@ -324,7 +325,7 @@ func TestBadBatchPauseGrowsAndResets(t *testing.T) {
 	}
 	// Run waits for the pause.
 	var waited time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool { waited = d; return false }
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool { waited = d; return false }
 	_ = r.Run(context.Background())
 	if waited != 4*time.Minute {
 		t.Errorf("Run waited %s, want 4m", waited)
@@ -516,5 +517,37 @@ func TestNudgeSignals(t *testing.T) {
 	r.Nudge()
 	if len(r.wake) != 1 {
 		t.Errorf("wake signals = %d, want 1", len(r.wake))
+	}
+}
+
+// A rate-limit pause shorter than Interval still waits Interval, and no wake
+// (a new song or a re-queue) can start a batch inside the Retry-After window.
+func TestRateLimitPauseIgnoresWake(t *testing.T) {
+	st := &fakeStore{cands: cands("a")}
+	src := &fakeSource{res: map[string]result{"a": {err: &lrclib.RateLimitError{RetryAfter: 5 * time.Second}}}}
+	r := newTest(st, src)
+	var waits []time.Duration
+	var wakes []bool
+	r.sleep = func(_ context.Context, d time.Duration, wake <-chan struct{}) bool {
+		waits, wakes = append(waits, d), append(wakes, wake != nil)
+		r.Wake("other")
+		r.Nudge()
+		return len(waits) < 2
+	}
+	_ = r.Run(context.Background())
+	if len(waits) != 2 || waits[0] != time.Minute || wakes[0] {
+		t.Errorf("waits %v wakes %v; want 1m without a wake channel", waits, wakes)
+	}
+	// No pause: the normal wait can be cut short by a wake.
+	st2 := &fakeStore{}
+	r2 := newTest(st2, &fakeSource{})
+	var gotWake bool
+	r2.sleep = func(_ context.Context, _ time.Duration, wake <-chan struct{}) bool {
+		gotWake = wake != nil
+		return false
+	}
+	_ = r2.Run(context.Background())
+	if !gotWake {
+		t.Error("the normal wait must listen for wakes")
 	}
 }

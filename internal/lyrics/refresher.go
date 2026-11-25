@@ -71,7 +71,7 @@ type Refresher struct {
 	gen        uint64    // bumped by a new song or a Nudge: a running batch stops
 	badBatches int       // batches in a row that ended on maxTransient errors
 	now        func() time.Time
-	sleep      func(ctx context.Context, d time.Duration) bool
+	sleep      func(ctx context.Context, d time.Duration, wake <-chan struct{}) bool
 }
 
 // New returns a Refresher with production defaults: batches of 10 a minute
@@ -169,12 +169,14 @@ func (r *Refresher) priorityList() []string {
 	return out
 }
 
-// Run processes batches until ctx is done.
+// Run processes batches until ctx is done. A wake starts the next batch
+// early, except during a pause (rate limit or bad batches): then it waits at
+// least Interval, and neither Wake nor Nudge cuts the pause short.
 func (r *Refresher) Run(ctx context.Context) error {
 	for {
 		wait, wake := r.Interval, r.wake
-		if pause := r.RunOnce(ctx); pause > wait {
-			wait, wake = pause, nil // a rate limit or bad batch pause is not cut short
+		if pause := r.RunOnce(ctx); pause > 0 {
+			wait, wake = max(pause, r.Interval), nil
 		}
 		if !r.wait(ctx, wait, wake) {
 			return nil
@@ -293,10 +295,12 @@ func (r *Refresher) release(cands []domain.LyricsCandidate) {
 }
 
 // retryAt is when a failed lookup of c is retried: MinBackoff after the first
-// error, doubling per earlier error (a not-found record restarts the count).
+// error, doubling per earlier error (a not-found record restarts the count;
+// for stored lyrics attempts counts failed re-lookups).
 func (r *Refresher) retryAt(c domain.LyricsCandidate) time.Time {
 	n := int32(1)
-	if c.Status == domain.LyricsError {
+	switch c.Status {
+	case domain.LyricsError, domain.LyricsFound, domain.LyricsInstrumental:
 		n = c.Attempts + 1
 	}
 	return r.clock().Add(backoff(n, r.MinBackoff, r.MaxBackoff))
@@ -345,7 +349,7 @@ func (r *Refresher) clock() time.Time {
 // wait sleeps for d; a signal on wake (nil = none) ends it early.
 func (r *Refresher) wait(ctx context.Context, d time.Duration, wake <-chan struct{}) bool {
 	if r.sleep != nil {
-		return r.sleep(ctx, d)
+		return r.sleep(ctx, d, wake)
 	}
 	t := time.NewTimer(d)
 	defer t.Stop()

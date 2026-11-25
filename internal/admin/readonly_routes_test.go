@@ -16,9 +16,10 @@ var readOnlyAllowed = map[string]bool{
 	"GET /tracks/{id}": true, "GET /artists": true, "GET /playlists": true, "GET /top-playlists": true,
 	"GET /top-playlists/{period}/{start}": true, "GET /backups": true, "GET /analytics": true,
 	"GET /analytics/pages": true, "GET /tracks/{id}/lyrics": true, "GET /lyrics/search": true,
-	"GET /lyrics/translation-queue": true,
-	// The one write: it only reorders the translation queue.
+	"GET /lyrics/translation-queue": true, "GET /lyrics/queue": true,
+	// The only writes: they only reorder the translation and lyrics queues.
 	"POST /tracks/{id}/translation/requeue": true,
+	"POST /tracks/{id}/lyrics/requeue":      true,
 }
 
 var routeParam = regexp.MustCompile(`\{[^}]+\}`)

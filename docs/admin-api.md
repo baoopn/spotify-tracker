@@ -205,6 +205,8 @@ The token is never logged or audited.
 | GET | `/admin/api/tracks/{id}/lyrics` | `synced` (`true`\|`false`, default false) | `TrackLyrics` (see [Lyrics](#lyrics)) |
 | GET | `/admin/api/lyrics/translation-queue` | – | `TranslationQueue` (see [Lyrics](#lyrics)) |
 | POST | `/admin/api/tracks/{id}/translation/requeue` | – | `202 { queued: true }`; `404 no_lyrics` when the track has no found lyrics |
+| GET | `/admin/api/lyrics/queue` | – | `LyricsQueue` (see [Lyrics](#lyrics)) |
+| POST | `/admin/api/tracks/{id}/lyrics/requeue` | – | `202 { queued: true }`; `404 not_found` when the track is unknown or has no title or artist |
 | GET | `/admin/api/lyrics/search` | `q` (2–200 characters, at least one letter or digit), `limit` (1–50, default 10) | `{ data: LyricsMatch[] }` |
 | POST | `/admin/api/tracks/{id}/enrich` | – | `202 { "queued": true }` (resets to pending and queues) |
 | POST | `/admin/api/enrichment/retry-failed` | – | `{ "requeued": 12 }` |
@@ -250,7 +252,7 @@ admin-only now-playing lyrics route. Credit LRCLIB wherever lyrics are shown.
 type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';
 type TrackLyrics = {
   track_id: string;
-  status: LyricsStatus;      // pending = not looked up yet (no row)
+  status: LyricsStatus;      // pending = not looked up yet (no row, or a pending queue row)
   source: string;            // "lrclib", "" when pending
   lrclib_id: number | null;
   plain: string | null;      // only when status is found
@@ -258,9 +260,13 @@ type TrackLyrics = {
   has_synced: boolean;
   attempts: number;          // failed lookups since the last success
   last_error: string;
-  fetched_at: string | null; // last lookup
+  fetched_at: string | null; // last lookup; null before the first
   next_attempt_at: string | null; // next retry (not_found / error)
-  waiting: boolean;          // a lookup is due soon (pending with the fetcher on, or an error retried within minutes)
+  waiting: boolean;          // a lookup is due soon: pending, queued, being looked up, re-queued, or a
+                             // not_found / error retried within minutes (false when the fetcher is off)
+  queued: boolean;           // waiting for a lookup worker (pending, re-queued, or a retry that is due)
+  looking_up: boolean;       // a lookup worker holds the track now (lease)
+  requested_at: string | null; // an admin re-queue that has not finished
   translation: TrackTranslation | null; // only when status is found
 };
 type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
@@ -294,6 +300,18 @@ type TranslationQueue = {
   calls_today: number; calls_month: number;      // Claude calls (UTC)
   tokens_month: { input: number; output: number };
 };
+type LyricsQueue = {         // exclusive counts: a queued or leased track counts only there
+  enabled: boolean;          // LYRICS_ENABLED
+  queued: number;            // waiting for a worker, requested and backlog included
+  requested: number;         // of queued: re-queued by an admin
+  backlog: number;           // of queued: never looked up (no row yet)
+  in_progress: number;       // leased by a worker now
+  found: number; instrumental: number;
+  not_found: number;         // retry scheduled
+  error: number;             // failed, retry scheduled
+  next_retry_at: string | null;
+  last_lookup_at: string | null;
+};
 type LyricsMatch = { track: TrackView; snippet: string; phrase_match: boolean; has_synced: boolean };
 ```
 
@@ -301,8 +319,23 @@ Translations (Claude) are queued when a song plays, never for the whole
 library (see [architecture](architecture.md#lyrics-translation)).
 `POST /tracks/{id}/translation/requeue` puts the track first and clears a
 refused, failed, given-up or done translation; it is audited
-(`translation.requeued`) and is the one write route the MCP server can reach
-(`admin_requeue_translation`). The admin overview polls the song playing now
+(`translation.requeued`) and reachable from MCP (`admin_requeue_translation`).
+
+Lyrics lookups (LRCLIB) are a queue too, over the whole library: the song
+playing now, the upcoming songs, re-queues, recent plays, then the rest (see
+[architecture](architecture.md#lyrics)). `POST /tracks/{id}/lyrics/requeue`
+puts the track first whatever its status (not looked up, `not_found`,
+`error`, or `found`: stale lyrics are fetched again; stored lyrics stay
+served until then). A track a worker holds keeps its lease and is looked up
+again afterwards. When the new lyrics differ from the stored ones and the
+track has a translation, that translation goes to the front of the
+translation queue (it uses Claude credit); unchanged lyrics are not
+translated again, and a track that was never translated gets no
+translation row. It is audited (`lyrics.requeued`) and reachable from MCP
+(`admin_requeue_lyrics`); `GET /lyrics/queue` is `admin_lyrics_queue`.
+These two re-queues are the only write routes the MCP server can reach.
+
+The admin overview polls the song playing now
 every 10 s while its lyrics or translation are on their way; other tracks
 every minute.
 

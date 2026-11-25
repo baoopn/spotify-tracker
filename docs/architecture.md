@@ -176,17 +176,43 @@ is not connected.
 
 `internal/lyrics` looks up track lyrics on [LRCLIB](https://lrclib.net)
 (`internal/lrclib`, no API key) and stores them in the `lyrics` table
-(migration `00014_lyrics.sql`). Lyrics are admin and MCP only, with one
+(migration `00014_lyrics.sql`; the queue columns are `00017_lyrics_queue.sql`).
+Lyrics are admin and MCP only, with one
 public exception: the [lyrics of the song playing now](#public-now-playing-lyrics).
 No other `/api/v1` route, no public MCP tool and none of the shared track JSON
 types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
 
-- **Schedule.** Every `LYRICS_INTERVAL` (1 min) it looks up `LYRICS_BATCH`
-  (10) tracks: tracks with no lyrics row first (most recently played first),
-  then due retries. The client sends at most one request per
-  `LYRICS_SPACING` (2 s) and identifies itself with the User-Agent
+- **Queue.** The `lyrics` table is the lookup queue, like
+  `lyrics_translations`. Every `LYRICS_INTERVAL` (1 min) a worker claims a
+  batch of `LYRICS_BATCH` (10) tracks with `store.ClaimLyrics`: it first
+  inserts a `pending` row for the tracks with no row that come next in line
+  (at most one batch, tracks with a title and an artist), then leases rows
+  with `SELECT ... FOR UPDATE SKIP LOCKED` (`claimed_by` / `claimed_until`,
+  `LYRICS_LEASE`, 10 min). So API replicas never look up the same track, and
+  a crashed worker's claim expires and is taken again. A row is claimable
+  when no live lease holds it and it is `pending`, re-queued
+  (`requested_at`), or a `not_found` / `error` retry that is due.
+- **Order.** The song playing now, then the upcoming songs from
+  [queue prefetch](#queue-prefetch) (`array_position` over the priority
+  list), then admin re-queues (newest first), then by last play (most recent
+  first), then the rest of the library (never played; new tracks before
+  retries on a tie). The whole library is backfilled at the lowest priority
+  (LRCLIB is free). A new song playing (`Wake`) or an admin re-queue
+  (`Nudge`) stops a running batch: its other claims are released and the
+  next batch claims again at once. A new upcoming list waits for the batch to
+  end.
+- **Claims.** Results (`SetLyrics`) and deferrals (`DeferLyrics`) are written
+  only while the worker holds the claim; a result after a lost lease is
+  dropped. A rate limit, a stop after three transient errors, a new song and
+  shutdown release the unprocessed claims without an outcome
+  (`ReleaseLyrics`); a re-queue mark taken by the claim
+  (`claim_requested_at`) is put back, so the track stays first in line. A
+  re-queue while a worker holds the track keeps the lease, and the track is
+  looked up again after that worker finishes.
+- **Client.** The client sends at most one request per `LYRICS_SPACING`
+  (2 s) and identifies itself with the User-Agent
   `spotify-tracker (https://github.com/baoopn/spotify-tracker)`.
-  `LYRICS_ENABLED=false` makes no LRCLIB calls.
+  `LYRICS_ENABLED=false` makes no LRCLIB calls (nothing is claimed).
 - **Matching.** `GET /api/get` with the track name, first artist, album and
   duration (rounded seconds). On a 404 (or an empty record) it falls back to
   `GET /api/search`. A search candidate must have the same folded track name
@@ -198,8 +224,9 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   line breaks normalized to `\n`, and each text is capped at 200 000 bytes.
   When only synced lyrics exist, plain text is derived by removing the
   timestamps; a record with no lyrics text left is `instrumental`.
-- **States.** `found` and `instrumental` are final (never overwritten by a
-  later failure). `not_found` is retried after `LYRICS_NOT_FOUND_RETRY`
+- **States.** `pending` waits for its first lookup (`fetched_at` null).
+  `found` and `instrumental` are final (never overwritten by a later failure
+  or not-found; only a successful re-lookup replaces them). `not_found` is retried after `LYRICS_NOT_FOUND_RETRY`
   (30 days). A transient error (5xx, 408, timeout, network, decode) or a
   failed database write is retried after 1 h, doubling per error in a row up
   to 7 days (`attempts` restarts at 1 when the status changes, so monthly
@@ -210,6 +237,30 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   writes nothing and pauses the job for `Retry-After` (seconds or an HTTP
   date; default 1 min, at most 1 h). A track without a row is reported as
   `pending`.
+- **Re-queue.** `POST /admin/api/tracks/{id}/lyrics/requeue` (MCP
+  `admin_requeue_lyrics`) puts a track at the front whatever its status:
+  not looked up, `not_found`, `error`, or `found` (stale lyrics are fetched
+  again). Stored lyrics stay served until the new lookup, and the error
+  backoff restarts. `GET /admin/api/lyrics/queue` (MCP `admin_lyrics_queue`)
+  counts the queue (queued, re-queued, never looked up, in progress, found,
+  instrumental, not found, failed), the next retry and the last lookup. The
+  admin track page and the overview's now-playing lyrics show the state
+  (Queued, Looking up…, Not found / next try, Lookup failed) and a "Look up
+  again" button; the overview has a "Lyrics queue" card.
+- **Changed lyrics.** When a lookup stores lyrics that differ from what was
+  stored (the source hash over synced and plain text) and from what was
+  translated, and the track has a translation row, `SetLyrics` sets that
+  row's `requested_at` in the same statement: the translation goes to the
+  front of the translation queue, and the fetcher's `OnFound` hook wakes
+  the translator. It only sets the mark, so a live translation lease is
+  kept; that worker's result no longer matches the lyrics and is not stored.
+  Unchanged lyrics touch nothing (no Claude call). No translation row is
+  created for a track that was never translated (no backfill; the song
+  playing now and the next one are queued by the translator's own paths).
+  Lyrics that become `instrumental` are not translated, and their old
+  translation is no longer served or claimed (it joins `found` lyrics only).
+  A re-lookup that finds nothing keeps the stored lyrics. This holds for an
+  admin or MCP re-queue and for any other lookup.
 - **Search.** `search_tsv` is a stored generated column,
   `to_tsvector('simple', search_fold(plain_lyrics))`, with a GIN index. The
   `simple` configuration fits Vietnamese (space-separated syllables, no
@@ -228,9 +279,11 @@ public page the full lyrics of the song playing now, and of no other song:
   plays, playback is paused, the snapshot is older than 60 s (poller down),
   the estimated position is past the track's end, or no lyrics were found.
 - **Status.** The body has `status`: `found`, `instrumental`, or `pending`
-  (no text). Pending always ends: it means no lookup yet while the lyrics
-  fetcher runs (`LYRICS_ENABLED`), or a failed lookup retried within two
-  minutes; otherwise the answer is null. The page shows "Looking for
+  (no text). Pending follows the lookup queue and always ends: no lookup yet
+  (no row, or `pending`) while the lyrics fetcher runs (`LYRICS_ENABLED`), a
+  re-queued or leased track without stored lyrics, or a not-found or failed
+  lookup retried within two minutes; otherwise the answer is null. Found or
+  instrumental lyrics are served while a fresh lookup is queued. The page shows "Looking for
   lyrics…" and asks again every 10 s while lyrics or their translation are
   pending, every 30 s while the answer is null, and stops once both are
   settled. The lyrics fetcher is woken for the song playing now, so pending
@@ -570,13 +623,16 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
   limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),
   `admin_search_lyrics` (q, limit), `admin_translation_queue`,
-  `admin_requeue_translation` (id; the one write tool: it only reorders the
-  translation queue, marked not read-only), `admin_artists` (q, sort, order, limit,
+  `admin_requeue_translation` (id), `admin_lyrics_queue`, `admin_requeue_lyrics`
+  (id; the two re-queues are the only write tools: they only reorder the
+  translation and lyrics queues, are marked not read-only, and are audited
+  as `translation.requeued` / `lyrics.requeued` by the MCP actor),
+  `admin_artists` (q, sort, order, limit,
   offset), `admin_playlists` (limit, offset), `admin_top_playlists` (period,
   limit, offset), `admin_top_playlist` (period, start), `admin_backups`,
   `admin_api_analytics` / `admin_page_analytics` (range, tz). Write routes, the
   SMTP settings, the MCP settings, `/auth/me`, `/audit` and `/config` are not
-  exposed (except the translation re-queue). `mcpserver.PublicTools()` / `AdminTools()` list the names and
+  exposed (except the two re-queues). `mcpserver.PublicTools()` / `AdminTools()` list the names and
   descriptions for the dashboard.
 
 ## Brand assets

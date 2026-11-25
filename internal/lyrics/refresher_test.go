@@ -19,35 +19,53 @@ type deferred struct {
 }
 
 type fakeStore struct {
-	cands    []domain.LyricsCandidate
-	listErr  error
-	setErr   error
-	set      map[string]domain.Lyrics
-	deferred []deferred
-	priority []string // last priority asked for
+	cands       []domain.LyricsCandidate
+	listErr     error
+	setErr      error
+	lost        map[string]bool // SetLyrics finds the claim gone
+	retranslate map[string]bool // SetLyrics re-queued the translation
+	set         map[string]domain.Lyrics
+	deferred    []deferred
+	released    []string
+	priority    []string // last priority asked for
+	owners      []string // owner of every call
+	lease       time.Duration
+	limit       int
 }
 
-func (f *fakeStore) TracksNeedingLyrics(_ context.Context, limit int, priority []string) ([]domain.LyricsCandidate, error) {
-	f.priority = priority
+func (f *fakeStore) ClaimLyrics(_ context.Context, owner string, priority []string, lease time.Duration, limit int) ([]domain.LyricsCandidate, error) {
+	f.priority, f.lease, f.limit = priority, lease, limit
+	f.owners = append(f.owners, owner)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	return f.cands[:min(limit, len(f.cands))], nil
 }
 
-func (f *fakeStore) SetLyrics(_ context.Context, id string, l domain.Lyrics) error {
+func (f *fakeStore) SetLyrics(_ context.Context, owner, id string, l domain.Lyrics) (bool, bool, error) {
+	f.owners = append(f.owners, owner)
 	if f.setErr != nil {
-		return f.setErr
+		return false, false, f.setErr
+	}
+	if f.lost[id] {
+		return false, false, nil
 	}
 	if f.set == nil {
 		f.set = map[string]domain.Lyrics{}
 	}
 	f.set[id] = l
+	return true, f.retranslate[id], nil
+}
+
+func (f *fakeStore) DeferLyrics(_ context.Context, owner, id, status string, next time.Time, msg string) error {
+	f.owners = append(f.owners, owner)
+	f.deferred = append(f.deferred, deferred{id, status, msg, next})
 	return nil
 }
 
-func (f *fakeStore) DeferLyrics(_ context.Context, id, status string, next time.Time, msg string) error {
-	f.deferred = append(f.deferred, deferred{id, status, msg, next})
+func (f *fakeStore) ReleaseLyrics(_ context.Context, owner, id string) error {
+	f.owners = append(f.owners, owner)
+	f.released = append(f.released, id)
 	return nil
 }
 
@@ -60,12 +78,16 @@ type fakeSource struct {
 	res    map[string]result
 	calls  []string
 	cancel context.CancelFunc // called on the first lookup when set
+	during func(id string)    // called on every lookup when set
 }
 
 func (f *fakeSource) Lookup(_ context.Context, c domain.LyricsCandidate) (*domain.Lyrics, error) {
 	f.calls = append(f.calls, c.TrackID)
 	if f.cancel != nil {
 		f.cancel()
+	}
+	if f.during != nil {
+		f.during(c.TrackID)
 	}
 	r := f.res[c.TrackID]
 	return r.l, r.err
@@ -74,9 +96,9 @@ func (f *fakeSource) Lookup(_ context.Context, c domain.LyricsCandidate) (*domai
 var t0 = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
 func newTest(st *fakeStore, src *fakeSource) *Refresher {
-	r := New(st, src, slog.New(slog.DiscardHandler))
+	r := New(st, src, "w1", slog.New(slog.DiscardHandler))
 	r.now = func() time.Time { return t0 }
-	r.sleep = func(context.Context, time.Duration) bool { return true }
+	r.sleep = func(context.Context, time.Duration, <-chan struct{}) bool { return true }
 	return r
 }
 
@@ -89,8 +111,8 @@ func cands(ids ...string) []domain.LyricsCandidate {
 }
 
 func TestDefaults(t *testing.T) {
-	r := New(nil, nil, nil)
-	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour ||
+	r := New(nil, nil, "w", nil)
+	if r.Interval != time.Minute || r.Batch != 10 || r.NotFoundRetry != 720*time.Hour || r.Lease != 10*time.Minute ||
 		r.MinBackoff != time.Hour || r.MaxBackoff != 168*time.Hour || r.MaxPause != time.Hour {
 		t.Errorf("defaults = %+v", r)
 	}
@@ -141,6 +163,9 @@ func TestThreeTransientErrorsStopTheBatch(t *testing.T) {
 	if len(src.calls) != 3 || len(st.deferred) != 3 {
 		t.Errorf("calls = %v, deferred = %d", src.calls, len(st.deferred))
 	}
+	if !slices.Equal(st.released, []string{"d"}) {
+		t.Errorf("released = %v, want the unprocessed claim", st.released)
+	}
 }
 
 func TestPermanentErrorIsNotTransient(t *testing.T) {
@@ -175,6 +200,9 @@ func TestRateLimitPausesAndWritesNothing(t *testing.T) {
 	if len(src.calls) != 1 || len(st.deferred) != 0 || len(st.set) != 0 {
 		t.Errorf("calls %v, deferred %v, set %v", src.calls, st.deferred, st.set)
 	}
+	if !slices.Equal(st.released, []string{"a", "b"}) {
+		t.Errorf("released = %v, want both claims back", st.released)
+	}
 }
 
 func TestCancelWritesNothing(t *testing.T) {
@@ -187,6 +215,9 @@ func TestCancelWritesNothing(t *testing.T) {
 	if len(src.calls) != 1 || len(st.deferred) != 0 {
 		t.Errorf("calls %v, deferred %v", src.calls, st.deferred)
 	}
+	if !slices.Equal(st.released, []string{"a", "b"}) {
+		t.Errorf("released = %v; shutdown must give the claims back", st.released)
+	}
 }
 
 func TestRunStopsOnCancel(t *testing.T) {
@@ -194,7 +225,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	st := &fakeStore{listErr: errors.New("db down")}
 	r := newTest(st, &fakeSource{})
 	var waits []time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool {
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool {
 		waits = append(waits, d)
 		cancel()
 		return false
@@ -212,7 +243,7 @@ func TestRunUsesRateLimitPause(t *testing.T) {
 	src := &fakeSource{res: map[string]result{"a": {err: &lrclib.RateLimitError{RetryAfter: 10 * time.Minute}}}}
 	r := newTest(st, src)
 	var got time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool { got = d; return false }
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool { got = d; return false }
 	_ = r.Run(context.Background())
 	if got != 10*time.Minute {
 		t.Errorf("wait = %s, want the Retry-After pause", got)
@@ -258,7 +289,8 @@ func TestRetryAtUsesErrorAttemptsOnly(t *testing.T) {
 		attempts int32
 		want     time.Duration
 	}{{"", 0, time.Hour}, {domain.LyricsNotFound, 5, time.Hour}, {domain.LyricsError, 1, 2 * time.Hour},
-		{domain.LyricsError, 3, 8 * time.Hour}} {
+		{domain.LyricsError, 3, 8 * time.Hour}, {domain.LyricsFound, 0, time.Hour}, {domain.LyricsFound, 2, 4 * time.Hour},
+		{domain.LyricsInstrumental, 1, 2 * time.Hour}} {
 		got := r.retryAt(domain.LyricsCandidate{Status: tc.status, Attempts: tc.attempts}).Sub(t0)
 		if got != tc.want {
 			t.Errorf("%s/%d = %s, want %s", tc.status, tc.attempts, got, tc.want)
@@ -293,7 +325,7 @@ func TestBadBatchPauseGrowsAndResets(t *testing.T) {
 	}
 	// Run waits for the pause.
 	var waited time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) bool { waited = d; return false }
+	r.sleep = func(_ context.Context, d time.Duration, _ <-chan struct{}) bool { waited = d; return false }
 	_ = r.Run(context.Background())
 	if waited != 4*time.Minute {
 		t.Errorf("Run waited %s, want 4m", waited)
@@ -305,7 +337,7 @@ func TestBadBatchPauseGrowsAndResets(t *testing.T) {
 func TestRefresherWake(t *testing.T) {
 	st := &fakeStore{cands: []domain.LyricsCandidate{{TrackID: "now"}}}
 	src := &fakeSource{res: map[string]result{"now": {l: &domain.Lyrics{Status: domain.LyricsFound, Plain: "x"}}}}
-	r := New(st, src, slog.New(slog.DiscardHandler))
+	r := New(st, src, "w1", slog.New(slog.DiscardHandler))
 	var found []string
 	r.OnFound = func(id string) { found = append(found, id) }
 	r.Wake("now")
@@ -335,7 +367,7 @@ func TestRefresherWake(t *testing.T) {
 // starts the next batch early.
 func TestRefresherWakeUpcoming(t *testing.T) {
 	st := &fakeStore{}
-	r := New(st, &fakeSource{}, slog.New(slog.DiscardHandler))
+	r := New(st, &fakeSource{}, "w1", slog.New(slog.DiscardHandler))
 	r.Wake("now")
 	<-r.wake
 	r.WakeUpcoming([]string{"next1", "now", "next2"})
@@ -356,7 +388,7 @@ func TestRefresherWakeUpcoming(t *testing.T) {
 // expires after UpcomingTTL.
 func TestRefresherUpcomingLifetime(t *testing.T) {
 	st := &fakeStore{}
-	r := New(st, &fakeSource{}, slog.New(slog.DiscardHandler))
+	r := New(st, &fakeSource{}, "w1", slog.New(slog.DiscardHandler))
 	clock := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 	r.now = func() time.Time { return clock }
 	r.WakeUpcoming([]string{"a", "b"})
@@ -378,5 +410,144 @@ func TestRefresherUpcomingLifetime(t *testing.T) {
 	clock = clock.Add(UpcomingTTL + time.Second)
 	if got := r.priorityList(); !slices.Equal(got, []string{"a"}) {
 		t.Errorf("after expiry = %v", got)
+	}
+}
+
+// Every store call uses the refresher owner, and a batch is claimed with
+// the lease, the batch size and the priority list.
+func TestClaimUsesOwnerLeaseAndBatch(t *testing.T) {
+	st := &fakeStore{cands: cands("a", "b")}
+	src := &fakeSource{res: map[string]result{"a": {l: &domain.Lyrics{Status: domain.LyricsFound, Plain: "x"}}}}
+	r := newTest(st, src)
+	r.Lease, r.Batch = 7*time.Minute, 4
+	r.Wake("now")
+	r.RunOnce(context.Background())
+	if st.lease != 7*time.Minute || st.limit != 4 || !slices.Equal(st.priority, []string{"now"}) {
+		t.Errorf("claim lease %s limit %d priority %v", st.lease, st.limit, st.priority)
+	}
+	if len(st.owners) != 3 { // claim, set a, defer b
+		t.Fatalf("calls = %v", st.owners)
+	}
+	for _, o := range st.owners {
+		if o != "w1" {
+			t.Errorf("owner = %q", o)
+		}
+	}
+	if len(st.released) != 0 {
+		t.Errorf("released = %v; finished claims need no release", st.released)
+	}
+}
+
+// A new song (or an admin re-queue) during a batch stops it: the rest of the
+// claims go back, so the next batch claims in the new order right away.
+func TestNewSongStopsTheBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		poke func(r *Refresher)
+	}{
+		{"wake", func(r *Refresher) { r.Wake("other") }},
+		{"nudge", func(r *Refresher) { r.Nudge() }},
+	} {
+		st := &fakeStore{cands: cands("a", "b", "c")}
+		src := &fakeSource{res: map[string]result{}}
+		r := newTest(st, src)
+		src.during = func(id string) {
+			if id == "a" {
+				tc.poke(r)
+			}
+		}
+		if p := r.RunOnce(context.Background()); p != 0 {
+			t.Errorf("%s: pause = %s", tc.name, p)
+		}
+		if !slices.Equal(src.calls, []string{"a"}) || !slices.Equal(st.released, []string{"b", "c"}) {
+			t.Errorf("%s: calls %v released %v", tc.name, src.calls, st.released)
+		}
+		if len(r.wake) != 1 {
+			t.Errorf("%s: the next batch must start now", tc.name)
+		}
+	}
+	// The same song again, or a new upcoming list, does not stop a batch.
+	st := &fakeStore{cands: cands("a", "b")}
+	src := &fakeSource{res: map[string]result{}}
+	r := newTest(st, src)
+	r.Wake("now")
+	src.during = func(string) { r.Wake("now"); r.WakeUpcoming([]string{"x"}) }
+	r.RunOnce(context.Background())
+	if len(src.calls) != 2 || len(st.released) != 0 {
+		t.Errorf("calls %v released %v", src.calls, st.released)
+	}
+}
+
+// A result whose claim was lost (lease expired, another worker took the
+// track) is not counted as found: no OnFound.
+func TestLostClaimSkipsOnFound(t *testing.T) {
+	st := &fakeStore{cands: cands("a", "b"), lost: map[string]bool{"a": true}}
+	ok := result{l: &domain.Lyrics{Status: domain.LyricsFound, Plain: "x"}}
+	src := &fakeSource{res: map[string]result{"a": ok, "b": ok}}
+	r := newTest(st, src)
+	var found []string
+	r.OnFound = func(id string) { found = append(found, id) }
+	r.RunOnce(context.Background())
+	if !slices.Equal(found, []string{"b"}) || len(st.deferred) != 0 || len(st.released) != 0 {
+		t.Errorf("found %v deferred %v released %v", found, st.deferred, st.released)
+	}
+}
+
+// Changed lyrics that re-queued the translation still wake the translator
+// (OnFound); instrumental lyrics never do.
+func TestRetranslateWakesTranslator(t *testing.T) {
+	st := &fakeStore{cands: cands("changed", "inst"), retranslate: map[string]bool{"changed": true}}
+	src := &fakeSource{res: map[string]result{
+		"changed": {l: &domain.Lyrics{Status: domain.LyricsFound, Plain: "new"}},
+		"inst":    {l: &domain.Lyrics{Status: domain.LyricsInstrumental}},
+	}}
+	r := newTest(st, src)
+	var found []string
+	r.OnFound = func(id string) { found = append(found, id) }
+	r.RunOnce(context.Background())
+	if !slices.Equal(found, []string{"changed"}) {
+		t.Errorf("OnFound = %v", found)
+	}
+}
+
+// Nudge always signals (twice in a row it leaves one signal).
+func TestNudgeSignals(t *testing.T) {
+	r := newTest(&fakeStore{}, &fakeSource{})
+	r.Nudge()
+	r.Nudge()
+	if len(r.wake) != 1 {
+		t.Errorf("wake signals = %d, want 1", len(r.wake))
+	}
+}
+
+// A rate-limit pause shorter than Interval still waits Interval, and no wake
+// (a new song or a re-queue) can start a batch inside the Retry-After window.
+func TestRateLimitPauseIgnoresWake(t *testing.T) {
+	st := &fakeStore{cands: cands("a")}
+	src := &fakeSource{res: map[string]result{"a": {err: &lrclib.RateLimitError{RetryAfter: 5 * time.Second}}}}
+	r := newTest(st, src)
+	var waits []time.Duration
+	var wakes []bool
+	r.sleep = func(_ context.Context, d time.Duration, wake <-chan struct{}) bool {
+		waits, wakes = append(waits, d), append(wakes, wake != nil)
+		r.Wake("other")
+		r.Nudge()
+		return len(waits) < 2
+	}
+	_ = r.Run(context.Background())
+	if len(waits) != 2 || waits[0] != time.Minute || wakes[0] {
+		t.Errorf("waits %v wakes %v; want 1m without a wake channel", waits, wakes)
+	}
+	// No pause: the normal wait can be cut short by a wake.
+	st2 := &fakeStore{}
+	r2 := newTest(st2, &fakeSource{})
+	var gotWake bool
+	r2.sleep = func(_ context.Context, _ time.Duration, wake <-chan struct{}) bool {
+		gotWake = wake != nil
+		return false
+	}
+	_ = r2.Run(context.Background())
+	if !gotWake {
+		t.Error("the normal wait must listen for wakes")
 	}
 }

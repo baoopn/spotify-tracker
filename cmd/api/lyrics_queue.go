@@ -31,8 +31,10 @@ func newLyricsRefresher(cfg config.API, st *store.Store, log *slog.Logger) *lyri
 		log.Info("lyrics fetcher disabled (LYRICS_ENABLED=false)")
 		return nil
 	}
-	r := lyrics.New(st, lrclib.New(cfg.Lyrics.APIURL, cfg.Lyrics.Spacing, nil), log)
+	r := lyrics.New(st, lrclib.New(cfg.Lyrics.APIURL, cfg.Lyrics.Spacing, nil), workerID(),
+		log.With(slog.String("component", "lyrics")))
 	r.Interval, r.Batch, r.NotFoundRetry = cfg.Lyrics.Interval, cfg.Lyrics.Batch, cfg.Lyrics.NotFoundRetry
+	r.Lease = cfg.Lyrics.Lease
 	return r
 }
 
@@ -56,9 +58,13 @@ func newTranslator(cfg config.API, st *store.Store, log *slog.Logger) *translate
 
 // hookLyricsQueue wakes the lyrics fetcher and the translator for the song
 // playing now, starts a translation once lyrics are found, and lets the
-// admin re-queue nudge the translator. Either worker may be nil.
+// admin re-queues nudge the fetcher and the translator. Either worker may be
+// nil.
 func hookLyricsQueue(svc *tracker.Service, lr *lyrics.Refresher, tr *translate.Worker, adminAPI *admin.API, cfg config.API) {
 	adminAPI.LyricsLookup = lr != nil
+	if lr != nil {
+		adminAPI.LyricsNudge = lr.Nudge
+	}
 	adminAPI.Translation = admin.TranslationInfo{Enabled: tr != nil, DailyCap: cfg.Translate.DailyCap,
 		MonthlyCap: cfg.Translate.MonthlyCap}
 	if tr != nil {

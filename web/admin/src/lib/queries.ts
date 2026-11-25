@@ -82,6 +82,7 @@ export const qk = {
 	},
 	lyrics: {
 		translationQueue: ['lyrics', 'translation-queue'] as const,
+		queue: ['lyrics', 'queue'] as const,
 		search: (q: string, limit: number) => ['lyrics', 'search', q, limit] as const
 	},
 	artists: {
@@ -247,6 +248,13 @@ export const queries = {
 		queryOptions({
 			queryKey: qk.lyrics.translationQueue,
 			queryFn: ({ signal }) => api.translationQueue({ signal }),
+			refetchInterval: REFRESH.list
+		}),
+
+	lyricsQueue: () =>
+		queryOptions({
+			queryKey: qk.lyrics.queue,
+			queryFn: ({ signal }) => api.lyricsQueue({ signal }),
 			refetchInterval: REFRESH.list
 		}),
 

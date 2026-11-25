@@ -1,8 +1,8 @@
 <script lang="ts">
 	import OutLink from '#lib/components/OutLink.svelte';
-	import RelTime from '#lib/components/RelTime.svelte';
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import LyricsLangPicker from '#lib/components/lyrics/LyricsLangPicker.svelte';
+	import LyricsLookupStatus from '#lib/components/lyrics/LyricsLookupStatus.svelte';
 	import TranslationStatus from '#lib/components/lyrics/TranslationStatus.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import { createQuery } from '@tanstack/svelte-query';
@@ -90,20 +90,14 @@
 		<span class="chip">Instrumental</span>
 	{:else if l.status === 'not_found'}
 		<p class="text-sm text-fg">No lyrics found.</p>
-		<p class="mt-1 text-xs text-muted">
-			Checked <RelTime value={l.fetched_at} />
-			{#if l.next_attempt_at}· next try <RelTime value={l.next_attempt_at} />{/if}
-		</p>
 	{:else if l.status === 'error'}
-		<p class="text-sm text-fg">
-			Lookup failed.
-			{#if l.next_attempt_at}Next try <RelTime value={l.next_attempt_at} />{/if}
-		</p>
-		{#if l.last_error}
-			<p class="mt-1 font-mono text-xs break-words text-muted">{l.last_error}</p>
-		{/if}
+		<p class="text-sm text-fg">The lyrics lookup failed.</p>
 	{:else}
 		<p class="text-sm text-muted">Not fetched yet. Lyrics are looked up in the background.</p>
+	{/if}
+
+	{#if l}
+		<LyricsLookupStatus lyrics={l} details />
 	{/if}
 
 	{#if l?.status === 'found'}

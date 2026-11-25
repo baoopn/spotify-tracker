@@ -116,7 +116,8 @@ var adminTools = []toolDef{
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_track_lyrics", title: "Track lyrics (admin)", path: "/tracks/{id}/lyrics",
 		desc: "Lyrics of one track (from LRCLIB): status (found, instrumental, not_found, error, or pending = " +
-			"not looked up yet), plain lyrics, has_synced, and with synced=true the time-synced LRC text. " +
+			"not looked up yet), queued / looking_up (the lookup queue), next_attempt_at, plain lyrics, " +
+			"has_synced, and with synced=true the time-synced LRC text. " +
 			"translation: status (pending, done, skipped, refused, error), stale, source_language, and en / vi " +
 			"machine translations by Claude (null when the song is already in that language; for synced lyrics " +
 			"one line per LRC line, joined with newlines).",
@@ -137,6 +138,17 @@ var adminTools = []toolDef{
 		path: "/tracks/{id}/translation/requeue", method: "POST",
 		desc: "Put one track's lyrics translation at the front of the queue, clearing a refused, failed, given-up " +
 			"or done translation. Fails when the track has no lyrics. Uses Claude credit when it runs.",
+		params: []param{idParam("Spotify track ID.")}},
+	{name: "admin_lyrics_queue", title: "Lyrics lookup queue (admin)", path: "/lyrics/queue",
+		desc: "The LRCLIB lyrics lookup queue: counts of queued (requested = admin re-queues, backlog = never " +
+			"looked up), in_progress, found, instrumental, not_found and error (retry scheduled) tracks, " +
+			"next_retry_at and last_lookup_at. Order: the song playing now, upcoming songs, re-queues, " +
+			"recently played, then the rest of the library."},
+	{name: "admin_requeue_lyrics", title: "Re-queue a lyrics lookup (admin)",
+		path: "/tracks/{id}/lyrics/requeue", method: "POST",
+		desc: "Put one track's LRCLIB lyrics lookup at the front of the queue, whatever its status (not found, " +
+			"failed, or found: stale lyrics are fetched again). When the lyrics change, an existing translation " +
+			"is redone first in line (uses Claude credit). Fails when the track is unknown or the lyrics fetcher is off.",
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",

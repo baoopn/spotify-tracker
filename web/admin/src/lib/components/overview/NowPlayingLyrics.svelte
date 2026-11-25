@@ -4,6 +4,7 @@
 	import OutLink from '../OutLink.svelte';
 	import Skeleton from '../Skeleton.svelte';
 	import LyricsLangPicker from '../lyrics/LyricsLangPicker.svelte';
+	import LyricsLookupStatus from '../lyrics/LyricsLookupStatus.svelte';
 	import TranslationStatus from '../lyrics/TranslationStatus.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import { fastClock } from '#lib/clock.svelte.js';
@@ -155,9 +156,13 @@
 	{:else if l.status === 'not_found'}
 		<p class="text-sm text-ink-soft">No lyrics found for this song.</p>
 	{:else if l.status === 'error'}
-		<p class="text-sm text-ink-soft">Lyrics lookup failed. It will be tried again.</p>
+		<p class="text-sm text-ink-soft">The lyrics lookup failed.</p>
 	{:else}
-		<p class="text-sm text-ink-soft" role="status">Looking for lyrics…</p>
+		<p class="text-sm text-ink-soft">No lyrics yet.</p>
+	{/if}
+
+	{#if l}
+		<LyricsLookupStatus lyrics={l} />
 	{/if}
 
 	{#if l?.status === 'found'}

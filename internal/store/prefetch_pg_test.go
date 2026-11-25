@@ -36,14 +36,14 @@ func TestPGPriorityOrder(t *testing.T) {
 
 	// Lyrics lookups: drop the lyrics so all four need one.
 	exec(t, pool, `TRUNCATE lyrics_translations, lyrics CASCADE`)
-	cands, err := st.TracksNeedingLyrics(ctx, 4, []string{"next1", "now"})
+	cands, err := st.ClaimLyrics(ctx, "w1", []string{"next1", "now"}, 10*time.Minute, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cands) != 4 || cands[0].TrackID != "next1" || cands[1].TrackID != "now" {
 		t.Fatalf("lyrics order = %+v", cands)
 	}
-	if _, err := st.TracksNeedingLyrics(ctx, 4, nil); err != nil {
+	if _, err := st.ClaimLyrics(ctx, "w2", nil, 10*time.Minute, 4); err != nil {
 		t.Fatalf("nil priority: %v", err)
 	}
 }

@@ -130,6 +130,7 @@ services:
       LYRICS_BATCH: ${LYRICS_BATCH:-10}
       LYRICS_SPACING: ${LYRICS_SPACING:-2s}
       LYRICS_NOT_FOUND_RETRY: ${LYRICS_NOT_FOUND_RETRY:-720h}
+      LYRICS_LEASE: ${LYRICS_LEASE:-10m}
       # Play counting: count a listen once this share is heard; resume window.
       PLAY_COUNT_MIN_FRACTION: ${PLAY_COUNT_MIN_FRACTION:-0.3}
       PLAY_RESUME_WINDOW: ${PLAY_RESUME_WINDOW:-24h}

@@ -21,6 +21,7 @@ type fakeLyrics struct {
 	limit      int
 	err        error
 	requeued   []string
+	lyricsReq  []string
 	noLyrics   bool
 	pending    bool
 	tr         *store.TrackTranslation
@@ -38,13 +39,25 @@ func (f *fakeLyrics) RequeueTranslation(_ context.Context, id string) (bool, err
 	return !f.noLyrics, nil
 }
 
+func (f *fakeLyrics) LyricsQueueSummary(context.Context) (store.LyricsQueue, error) {
+	return store.LyricsQueue{Queued: 7, Requested: 1, Backlog: 4, InProgress: 2, Found: 30, NotFound: 3, Error: 1}, f.err
+}
+
+func (f *fakeLyrics) RequeueLyrics(_ context.Context, id string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	f.lyricsReq = append(f.lyricsReq, id)
+	return !f.noLyrics, nil
+}
+
 func (f *fakeLyrics) TrackLyrics(_ context.Context, id string, withSynced bool, _ store.TranslationCaps) (store.TrackLyrics, error) {
 	f.id, f.withSynced = id, withSynced
 	if f.err != nil {
 		return store.TrackLyrics{}, f.err
 	}
 	if f.pending {
-		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true}, nil
+		return store.TrackLyrics{TrackID: id, Status: domain.LyricsPending, Waiting: true, Queued: true, LookingUp: true}, nil
 	}
 	p := "line"
 	out := store.TrackLyrics{TrackID: id, Status: domain.LyricsFound, Plain: &p}
@@ -227,5 +240,83 @@ func TestTrackLyricsTranslationDisabled(t *testing.T) {
 	}
 	if b := get(true, store.TrackTranslation{Status: "pending", Waiting: true}); b["translation"].(map[string]any)["waiting"] != true {
 		t.Errorf("enabled: %v", b["translation"])
+	}
+}
+
+func TestLyricsQueueHandler(t *testing.T) {
+	a := lyricsAPI(&fakeLyrics{})
+	a.LyricsLookup = true
+	rec := getLyrics(ReadOnlyHandler(a), "/lyrics/queue")
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	for k, want := range map[string]float64{"queued": 7, "requested": 1, "backlog": 4, "in_progress": 2,
+		"found": 30, "instrumental": 0, "not_found": 3, "error": 1} {
+		if body[k] != want {
+			t.Errorf("%s = %v, want %v", k, body[k], want)
+		}
+	}
+	if body["enabled"] != true || body["next_retry_at"] != nil || body["last_lookup_at"] != nil {
+		t.Errorf("body = %v", body)
+	}
+}
+
+// The lyrics re-queue is reachable by MCP: it nudges the fetcher and is
+// audited; an unknown track is 404.
+func TestRequeueLyricsHandler(t *testing.T) {
+	f := &fakeLyrics{}
+	a := lyricsAPI(f)
+	aud := &fakeAuditor{}
+	a.auditor = aud
+	nudged := 0
+	a.LyricsNudge = func() { nudged++ }
+	// The fetcher off: 409, nothing queued or audited.
+	off := httptest.NewRecorder()
+	ReadOnlyHandler(a).ServeHTTP(off, httptest.NewRequest(http.MethodPost, "/tracks/t9/lyrics/requeue", nil))
+	if off.Code != http.StatusConflict || lyricsErrCode(off) != "lyrics_disabled" || len(f.lyricsReq) != 0 ||
+		len(aud.calls) != 0 || nudged != 0 {
+		t.Fatalf("fetcher off: %d %s", off.Code, off.Body.String())
+	}
+	a.LyricsLookup = true
+	h := ReadOnlyHandler(a)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/lyrics/requeue", nil))
+	if rec.Code != http.StatusAccepted || len(f.lyricsReq) != 1 || f.lyricsReq[0] != "t9" || nudged != 1 {
+		t.Fatalf("requeue: %d %s requeued=%v nudged=%d", rec.Code, rec.Body.String(), f.lyricsReq, nudged)
+	}
+	if len(aud.calls) != 1 || aud.calls[0].action != "lyrics.requeued" || len(f.requeued) != 0 {
+		t.Errorf("audit = %+v", aud.calls)
+	}
+	f.noLyrics = true
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tracks/t9/lyrics/requeue", nil))
+	if rec.Code != http.StatusNotFound || lyricsErrCode(rec) != "not_found" || nudged != 1 || len(aud.calls) != 1 {
+		t.Errorf("unknown: %d %s", rec.Code, rec.Body.String())
+	}
+	// A GET is not a re-queue.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tracks/t9/lyrics/requeue", nil))
+	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
+		t.Errorf("GET = %d", rec.Code)
+	}
+}
+
+// With the fetcher off, nothing is shown as queued or being looked up, and
+// lookup_enabled tells the UI to hide the re-queue button.
+func TestTrackLyricsQueueNeedsFetcher(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		a := lyricsAPI(&fakeLyrics{pending: true})
+		a.LyricsLookup = on
+		rec := getLyrics(ReadOnlyHandler(a), "/tracks/x/lyrics")
+		var body struct {
+			Queued        bool `json:"queued"`
+			LookingUp     bool `json:"looking_up"`
+			LookupEnabled bool `json:"lookup_enabled"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Queued != on || body.LookingUp != on || body.LookupEnabled != on {
+			t.Errorf("fetcher %v: %+v", on, body)
+		}
 	}
 }

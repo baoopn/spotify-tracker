@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/migrations"
 )
 
@@ -28,74 +26,6 @@ func wantSQL(t *testing.T, sql string, parts ...string) {
 func strArg(v any) *string {
 	s, _ := v.(*string)
 	return s
-}
-
-func TestTracksNeedingLyricsSQL(t *testing.T) {
-	db := &captureDB{}
-	if _, err := (&Queries{db: db}).TracksNeedingLyrics(context.Background(), 10, []string{"now", "next"}); !errors.Is(err, errCaptured) {
-		t.Fatal(err)
-	}
-	wantSQL(t, db.sql, "COALESCE(l.status, ''), COALESCE(l.attempts, 0)", "LEFT JOIN lyrics l ON l.track_id = t.id",
-		"l.track_id IS NULL", "l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()",
-		"ORDER BY COALESCE(array_position($2::text[], t.id), 2147483647), (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST", "LIMIT $1")
-	if len(db.args) != 2 || db.args[0] != 10 || !reflect.DeepEqual(db.args[1], []string{"now", "next"}) {
-		t.Errorf("args = %v", db.args)
-	}
-}
-
-func TestSetLyricsSQL(t *testing.T) {
-	db := &captureDB{}
-	err := (&Queries{db: db}).SetLyrics(context.Background(), "t1", domain.Lyrics{Status: domain.LyricsInstrumental})
-	if !errors.Is(err, errCaptured) {
-		t.Fatal(err)
-	}
-	wantSQL(t, db.sql, "INSERT INTO lyrics", "ON CONFLICT (track_id) DO UPDATE",
-		"attempts = 0, last_error = NULL", "next_attempt_at = NULL")
-	if len(db.args) != 5 || db.args[0] != "t1" || db.args[1] != domain.LyricsInstrumental {
-		t.Fatalf("args = %v", db.args)
-	}
-	if id, ok := db.args[2].(*int64); !ok || id != nil {
-		t.Errorf("lrclib_id = %v, want nil", db.args[2])
-	}
-	if strArg(db.args[3]) != nil || strArg(db.args[4]) != nil {
-		t.Errorf("empty texts = %v, %v; want NULL", db.args[3], db.args[4])
-	}
-
-	db = &captureDB{}
-	_ = (&Queries{db: db}).SetLyrics(context.Background(), "t1",
-		domain.Lyrics{Status: domain.LyricsFound, LRCLibID: 42, Plain: "p", Synced: "s"})
-	if id, _ := db.args[2].(*int64); id == nil || *id != 42 || deref(strArg(db.args[3])) != "p" || deref(strArg(db.args[4])) != "s" {
-		t.Errorf("args = %v", db.args)
-	}
-
-	db = &captureDB{}
-	err = (&Queries{db: db}).SetLyrics(context.Background(), "t1", domain.Lyrics{Status: domain.LyricsNotFound})
-	if err == nil || errors.Is(err, errCaptured) || db.sql != "" {
-		t.Errorf("not_found = %v (sql %q); want a validation error before the DB", err, db.sql)
-	}
-}
-
-func TestDeferLyricsSQL(t *testing.T) {
-	db := &captureDB{}
-	next := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
-	err := (&Queries{db: db}).DeferLyrics(context.Background(), "t1", domain.LyricsError, next, "boom")
-	if !errors.Is(err, errCaptured) {
-		t.Fatal(err)
-	}
-	wantSQL(t, db.sql, "attempts = CASE WHEN lyrics.status = EXCLUDED.status THEN lyrics.attempts + 1 ELSE 1 END",
-		"WHERE lyrics.status IN ('not_found', 'error')")
-	if len(db.args) != 4 || db.args[2] != next || deref(strArg(db.args[3])) != "boom" {
-		t.Errorf("args = %v", db.args)
-	}
-	db = &captureDB{}
-	_ = (&Queries{db: db}).DeferLyrics(context.Background(), "t1", domain.LyricsNotFound, next, "")
-	if strArg(db.args[3]) != nil {
-		t.Errorf("empty error = %v, want NULL", db.args[3])
-	}
-	db = &captureDB{}
-	if err := (&Queries{db: db}).DeferLyrics(context.Background(), "t1", domain.LyricsFound, next, ""); err == nil || db.sql != "" {
-		t.Errorf("found = %v; want a validation error before the DB", err)
-	}
 }
 
 func TestTrackLyricsSQL(t *testing.T) {

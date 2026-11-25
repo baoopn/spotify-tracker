@@ -192,6 +192,7 @@ func TestPGTranslationQueue(t *testing.T) {
 		strings.Join(nl.Translation.EN, "|") != "one||three" || nl.Translation.VI != nil {
 		t.Fatalf("now lyrics = %+v %+v, %v", nl, nl.Translation, err)
 	}
+	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id) VALUES ('nolyrics', 'ar')`) // lookupable
 	if nl, _ := st.NowLyrics(ctx, "nolyrics", caps); nl.Status != domain.LyricsPending {
 		t.Errorf("no lyrics row = %+v, want pending", nl)
 	}

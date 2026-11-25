@@ -21,6 +21,8 @@ type lyricsStore interface {
 	SearchLyrics(ctx context.Context, q string, limit int) ([]store.LyricsMatch, error)
 	TranslationQueueSummary(ctx context.Context, now time.Time) (store.TranslationQueue, error)
 	RequeueTranslation(ctx context.Context, trackID string) (bool, error)
+	LyricsQueueSummary(ctx context.Context) (store.LyricsQueue, error)
+	RequeueLyrics(ctx context.Context, trackID string) (bool, error)
 }
 
 func (a *API) lyricsDB() lyricsStore {
@@ -47,8 +49,10 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
-	if l.Status == domain.LyricsPending && !a.LyricsLookup {
-		l.Waiting = false // nothing will look the lyrics up
+	l.LookupEnabled = a.LyricsLookup
+	if !a.LyricsLookup {
+		// Nothing will look the lyrics up.
+		l.Waiting, l.Queued, l.LookingUp = false, false, false
 	}
 	if t := l.Translation; t != nil && !a.Translation.Enabled {
 		t.Waiting = false // nothing will translate it
@@ -118,6 +122,46 @@ func (a *API) requeueTranslation(w http.ResponseWriter, r *http.Request) {
 		a.Translation.Nudge()
 	}
 	a.audit(r, "translation.requeued", map[string]string{"track_id": id})
+	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+// lyricsQueue serves GET /lyrics/queue: the LRCLIB lookup queue counts, the
+// next retry and the last lookup.
+func (a *API) lyricsQueue(w http.ResponseWriter, r *http.Request) {
+	s, err := a.lyricsDB().LyricsQueueSummary(r.Context())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Enabled bool `json:"enabled"`
+		store.LyricsQueue
+	}{a.LyricsLookup, s})
+}
+
+// requeueLyrics serves POST /tracks/{id}/lyrics/requeue: the track's lyrics
+// lookup goes to the front of the queue, whatever its status (found lyrics
+// are fetched again; when they changed, the translation is redone). 409
+// while the lyrics fetcher is off.
+func (a *API) requeueLyrics(w http.ResponseWriter, r *http.Request) {
+	if !a.LyricsLookup {
+		writeError(w, http.StatusConflict, "lyrics_disabled", "the lyrics fetcher is off (LYRICS_ENABLED=false)")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	ok, err := a.lyricsDB().RequeueLyrics(r.Context(), id)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "track not found, or it has no title or artist to look up")
+		return
+	}
+	if a.LyricsNudge != nil {
+		a.LyricsNudge()
+	}
+	a.audit(r, "lyrics.requeued", map[string]string{"track_id": id})
 	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 

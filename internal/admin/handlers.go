@@ -66,6 +66,8 @@ type Deps struct {
 	Translation TranslationInfo
 	// LyricsLookup reports that the lyrics fetcher runs (LYRICS_ENABLED).
 	LyricsLookup bool
+	// LyricsNudge starts the lyrics fetcher after a re-queue (nil when off).
+	LyricsNudge func()
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.

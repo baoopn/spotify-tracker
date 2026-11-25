@@ -66,8 +66,17 @@ func TestTranslationToolTargets(t *testing.T) {
 	if u, _ := q.target("/admin/api", map[string]any{}); u != "/admin/api/lyrics/translation-queue" || q.method != "" {
 		t.Errorf("queue = %s %s", q.method, u)
 	}
+	lr := findTool(t, adminTools, "admin_requeue_lyrics")
+	if u, err := lr.target("/admin/api", map[string]any{"id": "t 1"}); err != nil ||
+		u != "/admin/api/tracks/t%201/lyrics/requeue" || lr.method != "POST" {
+		t.Errorf("lyrics requeue = %s %s, %v", lr.method, u, err)
+	}
+	lq := findTool(t, adminTools, "admin_lyrics_queue")
+	if u, _ := lq.target("/admin/api", map[string]any{}); u != "/admin/api/lyrics/queue" || lq.method != "" {
+		t.Errorf("lyrics queue = %s %s", lq.method, u)
+	}
 	for _, d := range append(append([]toolDef{}, publicTools...), adminTools...) {
-		if d.method != "" && d.name != "admin_requeue_translation" {
+		if d.method != "" && d.name != "admin_requeue_translation" && d.name != "admin_requeue_lyrics" {
 			t.Errorf("unexpected write tool %s", d.name)
 		}
 	}

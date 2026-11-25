@@ -24,7 +24,7 @@ Soundcharts◄│  enricher  │────────►│                  
 | Component | What it does |
 |---|---|
 | `cmd/api` | Owns the database. Public REST API (`/api/v1`), live SSE stream, admin dashboard (`/admin`, Clerk auth), internal gRPC (ingest, enrichment, Spotify access tokens), alert emails, API analytics. |
-| `cmd/poller` | Polls Spotify *currently playing* every 3 s and forwards snapshots over gRPC. Holds no Spotify secrets: access tokens come from the API. |
+| `cmd/poller` | Polls Spotify *currently playing* every 3 s and forwards snapshots over gRPC. While a song plays it also reads the queue, so the API can prefetch the next track (catalog, lyrics, translation, cache) before it starts. Holds no Spotify secrets: access tokens come from the API. |
 | `cmd/enricher` | Consumes new tracks from a Redis stream (plus a periodic sweep with retry/backoff), fetches audio features + genres by ISRC from Soundcharts. |
 | `cmd/migrate` | Applies database migrations (the API also does this on start). |
 | `cmd/importer` | One-off, idempotent import of the legacy Directus data. |
@@ -70,7 +70,7 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
 | `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, status, synced, instrumental, lines: [{ start_ms, text }], plain, credit, translation }`, synced lines when there are any, else the plain text. `status` is found, instrumental or pending (looked up soon); `translation` holds the English and Vietnamese Claude translation when enabled. `null` when nothing plays or no lyrics were found. |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |
-| `GET /api/v1/tracks/{id}` | Track with audio features, genres and play count, plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
+| `GET /api/v1/tracks/{id}` | A played track with audio features, genres and play count (404 for a track never played), plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
 | `GET /api/v1/stats/summary?range=` | Totals: plays, unique tracks/artists, listening time. |
 | `GET /api/v1/stats/top-tracks?range=&limit=` | Most played tracks. |
 | `GET /api/v1/stats/top-artists?range=&limit=` | Most played artists. |

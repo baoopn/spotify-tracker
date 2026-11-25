@@ -89,7 +89,8 @@ func (a *API) searchLyrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // translationQueue serves GET /lyrics/translation-queue: the queue counts,
-// the next retry, and today's and this month's Claude calls against the caps.
+// the next retry, today's and this month's Claude calls against the caps, and
+// the configured model (the admin estimates the month's cost from it).
 func (a *API) translationQueue(w http.ResponseWriter, r *http.Request) {
 	s, err := a.lyricsDB().TranslationQueueSummary(r.Context(), a.clock())
 	if err != nil {
@@ -97,11 +98,12 @@ func (a *API) translationQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Enabled    bool `json:"enabled"`
-		DailyCap   int  `json:"daily_cap"`
-		MonthlyCap int  `json:"monthly_cap"`
+		Enabled    bool   `json:"enabled"`
+		DailyCap   int    `json:"daily_cap"`
+		MonthlyCap int    `json:"monthly_cap"`
+		Model      string `json:"model"`
 		store.TranslationQueue
-	}{a.Translation.Enabled, a.Translation.DailyCap, a.Translation.MonthlyCap, s})
+	}{a.Translation.Enabled, a.Translation.DailyCap, a.Translation.MonthlyCap, a.Translation.Model, s})
 }
 
 // requeueTranslation serves POST /tracks/{id}/translation/requeue: the

@@ -6,12 +6,14 @@ package mcpserver
 type param struct {
 	name, desc string
 	integer    bool
+	boolean    bool // a JSON boolean
 	enum       []string
 	min, max   int // integer bounds (used when integer is set)
 	maxLen     int // string length bound (0 = none)
 	def        any // default value, also the API's default (nil = none)
 	required   bool
 	inPath     bool
+	inBody     bool // sent in the JSON request body (write tools), not the query string
 }
 
 // toolDef maps an MCP tool to one route of an in-process handler: a GET
@@ -21,6 +23,7 @@ type toolDef struct {
 	path              string
 	params            []param
 	method            string // "" = GET
+	destructive       bool   // the write removes data (MCP destructiveHint)
 }
 
 var (
@@ -148,7 +151,26 @@ var adminTools = []toolDef{
 		path: "/tracks/{id}/lyrics/requeue", method: "POST",
 		desc: "Put one track's LRCLIB lyrics lookup at the front of the queue, whatever its status (not found, " +
 			"failed, or found: stale lyrics are fetched again). When the lyrics change, an existing translation " +
-			"is redone first in line (uses Claude credit). Fails when the track is unknown or the lyrics fetcher is off.",
+			"is redone first in line (uses Claude credit). Fails when the track is unknown or the lyrics fetcher is off. " +
+			"Lyrics added by hand (source manual) are kept: the call fails unless replace_manual is true.",
+		params: []param{idParam("Spotify track ID."),
+			{name: "replace_manual", boolean: true, inBody: true,
+				desc: "Let the next LRCLIB result replace lyrics added by hand (a lookup that finds nothing keeps them)."}}},
+	{name: "admin_set_lyrics", title: "Set lyrics by hand (admin)",
+		path: "/tracks/{id}/lyrics", method: "PUT",
+		desc: "Store lyrics for one track by hand (source manual). They win over LRCLIB: automatic lookups never " +
+			"replace them. Give synced LRC text (\"[mm:ss.xx] line\" per line), plain text, or both; with only synced " +
+			"text the plain text is derived. Or set instrumental (no text). Synced text is checked line by line " +
+			"(valid timestamps in time order, none past the song's end); errors name the line. When the lyrics " +
+			"change, an existing translation is redone first in line (uses Claude credit). Returns the track lyrics.",
+		params: []param{idParam("Spotify track ID."),
+			{name: "synced", maxLen: 200_000, inBody: true, desc: "Time-synced LRC lyrics."},
+			{name: "plain", maxLen: 200_000, inBody: true, desc: "Plain lyrics (derived from synced when left out)."},
+			{name: "instrumental", boolean: true, inBody: true, desc: "The song has no lyrics (give no text)."}}},
+	{name: "admin_clear_manual_lyrics", title: "Remove lyrics set by hand (admin)",
+		path: "/tracks/{id}/lyrics/manual", method: "DELETE", destructive: true,
+		desc: "Remove the lyrics added by hand for one track and queue an LRCLIB lookup at the front. " +
+			"Fails when the track has no manual lyrics. Returns the track lyrics.",
 		params: []param{idParam("Spotify track ID.")}},
 	{name: "admin_artists", title: "Artists (admin)", path: "/artists",
 		desc: "Every artist with play and track counts. Result has data and total.",

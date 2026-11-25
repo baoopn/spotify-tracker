@@ -22,7 +22,10 @@ type lyricsStore interface {
 	TranslationQueueSummary(ctx context.Context, now time.Time) (store.TranslationQueue, error)
 	RequeueTranslation(ctx context.Context, trackID string) (bool, error)
 	LyricsQueueSummary(ctx context.Context) (store.LyricsQueue, error)
-	RequeueLyrics(ctx context.Context, trackID string) (bool, error)
+	RequeueLyrics(ctx context.Context, trackID string, replaceManual bool) (bool, error)
+	SetManualLyrics(ctx context.Context, trackID string, l domain.Lyrics, by string) (stored, retranslate bool, err error)
+	ClearManualLyrics(ctx context.Context, trackID string) (bool, error)
+	TrackDurationMS(ctx context.Context, trackID string) (int64, error)
 }
 
 func (a *API) lyricsDB() lyricsStore {
@@ -39,8 +42,13 @@ func (a *API) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_synced", "synced must be true or false")
 		return
 	}
+	a.writeTrackLyrics(w, r, chi.URLParam(r, "id"), withSynced)
+}
+
+// writeTrackLyrics answers the lyrics record of track id.
+func (a *API) writeTrackLyrics(w http.ResponseWriter, r *http.Request, id string, withSynced bool) {
 	caps := store.TranslationCaps{Daily: a.Translation.DailyCap, Monthly: a.Translation.MonthlyCap}
-	l, err := a.lyricsDB().TrackLyrics(r.Context(), chi.URLParam(r, "id"), withSynced, caps)
+	l, err := a.lyricsDB().TrackLyrics(r.Context(), id, withSynced, caps)
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "track not found")
 		return
@@ -137,32 +145,6 @@ func (a *API) lyricsQueue(w http.ResponseWriter, r *http.Request) {
 		Enabled bool `json:"enabled"`
 		store.LyricsQueue
 	}{a.LyricsLookup, s})
-}
-
-// requeueLyrics serves POST /tracks/{id}/lyrics/requeue: the track's lyrics
-// lookup goes to the front of the queue, whatever its status (found lyrics
-// are fetched again; when they changed, the translation is redone). 409
-// while the lyrics fetcher is off.
-func (a *API) requeueLyrics(w http.ResponseWriter, r *http.Request) {
-	if !a.LyricsLookup {
-		writeError(w, http.StatusConflict, "lyrics_disabled", "the lyrics fetcher is off (LYRICS_ENABLED=false)")
-		return
-	}
-	id := chi.URLParam(r, "id")
-	ok, err := a.lyricsDB().RequeueLyrics(r.Context(), id)
-	if err != nil {
-		a.internal(w, r, err)
-		return
-	}
-	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "track not found, or it has no title or artist to look up")
-		return
-	}
-	if a.LyricsNudge != nil {
-		a.LyricsNudge()
-	}
-	a.audit(r, "lyrics.requeued", map[string]string{"track_id": id})
-	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }

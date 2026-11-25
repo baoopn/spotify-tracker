@@ -35,6 +35,13 @@ type TrackLyrics struct {
 	Queued      bool       `json:"queued"`
 	LookingUp   bool       `json:"looking_up"`
 	RequestedAt *time.Time `json:"requested_at"` // an admin re-queue still waiting
+	// ManualAt and ManualBy are set for manual lyrics (source "manual"): the
+	// last manual edit and who made it. ReplaceManual is true while a
+	// re-queue with replace_manual waits: the next LRCLIB result replaces
+	// the manual lyrics.
+	ManualAt      *time.Time `json:"manual_at"`
+	ManualBy      string     `json:"manual_by"`
+	ReplaceManual bool       `json:"replace_manual"`
 	// LookupEnabled is set by the admin API: the lyrics fetcher runs
 	// (LYRICS_ENABLED), so a re-queue can be served.
 	LookupEnabled bool `json:"lookup_enabled"`
@@ -101,7 +108,8 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 			l.fetched_at, l.next_attempt_at,
 			(`+lookupableSQL+`) AND (l.track_id IS NULL OR `+lyricsWaitingSQL+`),
 			(`+lookupableSQL+`) AND (l.track_id IS NULL OR `+lyricsQueuedSQL+`),
-			COALESCE(`+lyricsLeasedSQL+`, false), COALESCE(l.requested_at, l.claim_requested_at),
+			COALESCE(`+lyricsLeasedSQL+` AND NOT `+lyricsHeldSQL+`, false), COALESCE(l.requested_at, l.claim_requested_at),
+			l.manual_at, COALESCE(l.manual_by, ''), COALESCE(l.replace_manual, false),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.kind, tr.source_language,
 			tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
 			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL("false")+`
@@ -110,7 +118,7 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$3", "$4")+` AS reached) cap
 		WHERE t.id = $1`, trackID, withSynced, caps.Daily, caps.Monthly).Scan(&out.TrackID, &status, &source, &out.LRCLibID,
 		&out.Plain, &out.Synced, &out.HasSynced, &out.Attempts, &out.LastError, &out.FetchedAt, &out.NextAttemptAt,
-		&out.Waiting, &out.Queued, &out.LookingUp, &out.RequestedAt, &trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
+		&out.Waiting, &out.Queued, &out.LookingUp, &out.RequestedAt, &out.ManualAt, &out.ManualBy, &out.ReplaceManual, &trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
 		&tr.TranslatedAt, &tr.NextAttemptAt, &tr.Waiting)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TrackLyrics{}, domain.ErrNotFound
@@ -164,6 +172,9 @@ type NowLyrics struct {
 	// not-found or failed lookup retried within minutes), or "" (not found:
 	// nothing to show).
 	Status string
+	// Source is where found or instrumental lyrics come from: "lrclib" or
+	// "manual" (added by the admin).
+	Source string
 	Synced string // LRC text, "" when there is none
 	Plain  string // plain text, "" when there is none
 	// Translation is the translation state of found lyrics (nil otherwise).
@@ -200,7 +211,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 		en, vi               []string
 	)
 	err := q.db.QueryRow(ctx, `
-		SELECT l.status, (`+lookupableSQL+`) AND COALESCE(l.track_id IS NULL OR `+lyricsWaitingSQL+`, false),
+		SELECT l.status, COALESCE(l.source, ''), (`+lookupableSQL+`) AND COALESCE(l.track_id IS NULL OR `+lyricsWaitingSQL+`, false),
 			COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL("NOT cap.reached")+`,
 			tr.kind, tr.source_language, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
@@ -209,7 +220,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$2", "$3")+` AS reached) cap
 		WHERE t.id = $1`,
-		trackID, caps.Daily, caps.Monthly).Scan(&status, &waitingLookup, &out.Synced, &out.Plain, &trStatus, &fresh,
+		trackID, caps.Daily, caps.Monthly).Scan(&status, &out.Source, &waitingLookup, &out.Synced, &out.Plain, &trStatus, &fresh,
 		&waiting, &kind, &lang, &en, &vi, &enText, &viText)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NowLyrics{}, nil
@@ -223,7 +234,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 	case status == nil: // no title or artist: never looked up
 		return NowLyrics{}, nil
 	case *status == domain.LyricsInstrumental:
-		return NowLyrics{Status: domain.LyricsInstrumental}, nil
+		return NowLyrics{Status: domain.LyricsInstrumental, Source: out.Source}, nil
 	case *status == domain.LyricsFound:
 	case waitingLookup: // pending, queued, being looked up, or retried soon
 		return NowLyrics{Status: domain.LyricsPending}, nil

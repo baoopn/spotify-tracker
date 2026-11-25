@@ -102,9 +102,8 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) []string {
 	var names []string
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
-		// The translation and lyrics re-queues are the only write tools.
-		if write := tool.Name == "admin_requeue_translation" || tool.Name == "admin_requeue_lyrics"; tool.Annotations == nil ||
-			tool.Annotations.ReadOnlyHint == write {
+		// The re-queues and manual lyrics are the only write tools.
+		if write := writeTools[tool.Name]; tool.Annotations == nil || tool.Annotations.ReadOnlyHint == write {
 			t.Errorf("tool %s: read-only hint wrong (write tool = %v)", tool.Name, write)
 		}
 	}

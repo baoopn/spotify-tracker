@@ -25,6 +25,7 @@ type fakeLyrics struct {
 	noLyrics   bool
 	pending    bool
 	tr         *store.TrackTranslation
+	manualFake
 }
 
 func (f *fakeLyrics) TranslationQueueSummary(context.Context, time.Time) (store.TranslationQueue, error) {
@@ -43,11 +44,15 @@ func (f *fakeLyrics) LyricsQueueSummary(context.Context) (store.LyricsQueue, err
 	return store.LyricsQueue{Queued: 7, Requested: 1, Backlog: 4, InProgress: 2, Found: 30, NotFound: 3, Error: 1}, f.err
 }
 
-func (f *fakeLyrics) RequeueLyrics(_ context.Context, id string) (bool, error) {
+func (f *fakeLyrics) RequeueLyrics(_ context.Context, id string, replaceManual bool) (bool, error) {
 	if f.err != nil {
 		return false, f.err
 	}
+	if f.manual && !replaceManual {
+		return false, store.ErrManualLyrics
+	}
 	f.lyricsReq = append(f.lyricsReq, id)
+	f.replaced = replaceManual
 	return !f.noLyrics, nil
 }
 

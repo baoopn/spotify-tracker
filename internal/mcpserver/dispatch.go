@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -35,7 +36,7 @@ func addTools(s *mcp.Server, defs []toolDef, target http.Handler, prefix string,
 	for _, d := range defs {
 		ann := &mcp.ToolAnnotations{ReadOnlyHint: d.method == "", IdempotentHint: true, Title: d.title}
 		if d.method != "" {
-			ann.DestructiveHint = new(false)
+			ann.DestructiveHint = new(d.destructive)
 		}
 		if public {
 			ann.OpenWorldHint = new(false)
@@ -85,6 +86,9 @@ func (d toolDef) schema() *jsonschema.Schema {
 	s := &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{}}
 	for _, p := range d.params {
 		ps := &jsonschema.Schema{Type: "string", Description: p.desc}
+		if p.boolean {
+			ps.Type = "boolean"
+		}
 		if p.integer {
 			lo, hi := float64(p.min), float64(p.max)
 			ps.Type, ps.Minimum, ps.Maximum = "integer", &lo, &hi
@@ -116,6 +120,9 @@ func (d toolDef) target(prefix string, args map[string]any) (string, error) {
 	path := d.path
 	q := url.Values{}
 	for _, p := range d.params {
+		if p.inBody {
+			continue
+		}
 		v, ok := args[p.name]
 		if !ok || v == nil {
 			if p.required {
@@ -173,7 +180,7 @@ func (d toolDef) handler(resolved *jsonschema.Resolved, target http.Handler, pre
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
-		return call(ctx, target, d.method, u, d.name, log), nil
+		return callBody(ctx, target, d.method, u, d.body(args), d.name, log), nil
 	}
 }
 
@@ -183,7 +190,12 @@ func (d toolDef) handler(resolved *jsonschema.Resolved, target http.Handler, pre
 // Every panic is recovered, http.ErrAbortHandler included: tool handlers
 // run on an SDK goroutine, not the net/http one, so a re-raised panic would
 // crash the process.
-func call(ctx context.Context, h http.Handler, method, u, tool string, log *slog.Logger) (res *mcp.CallToolResult) {
+func call(ctx context.Context, h http.Handler, method, u, tool string, log *slog.Logger) *mcp.CallToolResult {
+	return callBody(ctx, h, method, u, nil, tool, log)
+}
+
+// callBody is call with a JSON request body (nil = none).
+func callBody(ctx context.Context, h http.Handler, method, u string, body []byte, tool string, log *slog.Logger) (res *mcp.CallToolResult) {
 	ctx, cancel := context.WithTimeout(ctx, toolTimeout)
 	defer cancel()
 	defer func() {
@@ -201,26 +213,33 @@ func call(ctx context.Context, h http.Handler, method, u, tool string, log *slog
 	if method == "" {
 		method = http.MethodGet
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return toolError("invalid arguments")
 	}
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	rec := &recorder{header: http.Header{}}
 	h.ServeHTTP(rec, req)
 
 	status := rec.code()
-	body := bytes.TrimSpace(rec.buf.Bytes())
+	out := bytes.TrimSpace(rec.buf.Bytes())
 	switch {
 	case status >= 200 && status < 300:
 		var v any
-		if err := json.Unmarshal(body, &v); err != nil {
+		if err := json.Unmarshal(out, &v); err != nil {
 			log.ErrorContext(ctx, "mcp tool: invalid JSON from API", slog.String("tool", tool), slog.Int("status", status))
 			return toolError("internal error")
 		}
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}, StructuredContent: v}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(out)}}, StructuredContent: v}
 	case status >= 400 && status < 500:
-		return toolError(apiErrorMessage(body, status))
+		return toolError(apiErrorMessage(out, status))
 	default:
 		log.WarnContext(ctx, "mcp tool failed", slog.String("tool", tool), slog.Int("status", status))
 		return toolError("internal error")
@@ -238,6 +257,10 @@ func apiErrorMessage(body []byte, status int) string {
 		Error struct {
 			Message string            `json:"message"`
 			Fields  map[string]string `json:"fields"`
+			Lines   []struct {
+				Line    int    `json:"line"`
+				Message string `json:"message"`
+			} `json:"lines"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(body, &e) != nil || e.Error.Message == "" {
@@ -246,6 +269,13 @@ func apiErrorMessage(body []byte, status int) string {
 	msg := e.Error.Message
 	for _, k := range slices.Sorted(maps.Keys(e.Error.Fields)) {
 		msg += "; " + k + ": " + e.Error.Fields[k]
+	}
+	for _, l := range e.Error.Lines {
+		if l.Line > 0 {
+			msg += fmt.Sprintf("; line %d: %s", l.Line, l.Message)
+		} else {
+			msg += "; " + l.Message
+		}
 	}
 	return msg
 }
@@ -277,4 +307,26 @@ func (r *recorder) code() int {
 		return http.StatusOK
 	}
 	return r.status
+}
+
+// body is the JSON request body of the tool's inBody arguments (as given,
+// strings untrimmed), or nil when the tool has none.
+func (d toolDef) body(args map[string]any) []byte {
+	var m map[string]any
+	for _, p := range d.params {
+		if !p.inBody {
+			continue
+		}
+		if m == nil {
+			m = map[string]any{}
+		}
+		if v, ok := args[p.name]; ok && v != nil {
+			m[p.name] = v
+		}
+	}
+	if m == nil {
+		return nil
+	}
+	b, _ := json.Marshal(m)
+	return b
 }

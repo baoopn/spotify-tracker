@@ -22,7 +22,8 @@ func TestReadOnlyHandlerRoutes(t *testing.T) {
 	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		n++
 		if write := method + " " + route; method != http.MethodGet && write != "POST /tracks/{id}/translation/requeue" &&
-			write != "POST /tracks/{id}/lyrics/requeue" {
+			write != "POST /tracks/{id}/lyrics/requeue" && write != "PUT /tracks/{id}/lyrics" &&
+			write != "DELETE /tracks/{id}/lyrics/manual" {
 			t.Errorf("%s %s: only GET routes are allowed", method, route)
 		}
 		for _, banned := range []string{"/settings", "/auth", "/audit", "/config", "/callback", "/mcp"} {
@@ -35,8 +36,8 @@ func TestReadOnlyHandlerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 18 {
-		t.Errorf("got %d routes, want 18", n)
+	if n != 20 {
+		t.Errorf("got %d routes, want 20", n)
 	}
 
 	for _, tc := range []struct {

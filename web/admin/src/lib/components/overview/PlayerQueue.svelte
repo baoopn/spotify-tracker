@@ -15,11 +15,16 @@
 		queue,
 		disabled,
 		onplay,
+		onplayfrom,
 		onqueue
 	}: {
-		queue: PlayerTrack[] | null;
+		/** undefined while loading; null when Spotify refused the queue. */
+		queue: PlayerTrack[] | null | undefined;
 		disabled: boolean;
+		/** Play a search result on its own. */
 		onplay: (t: PlayerTrack) => void;
+		/** Play the queue from position i on. */
+		onplayfrom: (i: number) => void;
 		onqueue: (t: PlayerTrack) => void;
 	} = $props();
 
@@ -28,17 +33,17 @@
 	const search = createQuery(() => queries.playerSearch(q));
 </script>
 
-{#snippet row(t: PlayerTrack, withQueue: boolean)}
+{#snippet row(t: PlayerTrack, index: number | null)}
 	<li class="flex min-w-0 items-center gap-3 py-2">
 		<AlbumArt src={t.cover_image_url} size={40} />
 		<div class="min-w-0 flex-1">
-			<p class="truncate text-sm font-medium text-fg" dir="auto" title={t.name}>{t.name}</p>
-			<p class="truncate text-xs text-muted" dir="auto">
+			<p class="truncate text-sm font-medium text-ink" dir="auto" title={t.name}>{t.name}</p>
+			<p class="truncate text-xs text-ink-soft" dir="auto">
 				{artistNames(t.artists)}<span class="font-mono"> · {duration(t.duration_ms)}</span>
 			</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-1">
-			{#if withQueue}
+			{#if index === null}
 				<button
 					type="button"
 					class="btn btn-ghost btn-sm btn-icon"
@@ -55,8 +60,8 @@
 				class="btn btn-ghost btn-sm btn-icon"
 				aria-label="Play “{t.name}” now"
 				title="Play now"
-				{disabled}
-				onclick={() => onplay(t)}
+				disabled={disabled || (index !== null && !t.uri.startsWith('spotify:track:'))}
+				onclick={() => (index === null ? onplay(t) : onplayfrom(index))}
 			>
 				<Play class="size-4" aria-hidden="true" />
 			</button>
@@ -78,30 +83,32 @@
 				<Skeleton class="h-10" /><Skeleton class="h-10" />
 			</div>
 		{:else if search.isError}
-			<p class="text-sm text-muted">Search failed: {errorMessage(search.error)}</p>
+			<p class="text-sm text-ink-soft">Search failed: {errorMessage(search.error)}</p>
 		{:else if search.data?.length}
-			<ul class="flex flex-col divide-y divide-border" aria-labelledby="{uid}-add">
+			<ul class="flex flex-col divide-y divide-rule" aria-labelledby="{uid}-add">
 				{#each search.data as t (t.id)}
-					{@render row(t, true)}
+					{@render row(t, null)}
 				{/each}
 			</ul>
 		{:else}
-			<p class="text-sm text-muted">No tracks match “{q}”.</p>
+			<p class="text-sm text-ink-soft">No tracks match “{q}”.</p>
 		{/if}
 	{/if}
 </div>
 
 <div class="flex flex-col gap-2">
 	<h3 id="{uid}-next" class="eyebrow">Up next</h3>
-	{#if queue === null}
-		<p class="text-sm text-muted">The queue is unavailable right now.</p>
+	{#if queue === undefined}
+		<div class="flex flex-col gap-2"><Skeleton class="h-10" /><Skeleton class="h-10" /></div>
+	{:else if queue === null}
+		<p class="text-sm text-ink-soft">The queue is unavailable right now.</p>
 	{:else if queue.length === 0}
-		<p class="text-sm text-muted">The queue is empty.</p>
+		<p class="text-sm text-ink-soft">The queue is empty.</p>
 	{:else}
-		<ol class="flex flex-col divide-y divide-border" aria-labelledby="{uid}-next">
+		<ol class="flex flex-col divide-y divide-rule" aria-labelledby="{uid}-next">
 			<!-- The queue can hold the same track twice (repeat): key by position. -->
 			{#each queue as t, i (i)}
-				{@render row(t, false)}
+				{@render row(t, i)}
 			{/each}
 		</ol>
 	{/if}

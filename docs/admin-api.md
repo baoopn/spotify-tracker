@@ -159,12 +159,12 @@ type PlaybackState = { is_playing: boolean; progress_ms: number; shuffle_state: 
 type Player = { connected: boolean; can_control: boolean;
   state: PlaybackState | null;      // null: no active device
   devices: Device[] | null;         // null when Spotify refused the list
-  queue: PlayerTrack[] | null };    // the next 20 tracks; null when nothing is loaded
+  queue: PlayerTrack[] | null };    // the next 20 tracks; null when Spotify refused it
 ```
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/admin/api/player` | – | `Player` |
+| GET | `/admin/api/player?parts=state,devices,queue` | – | `Player` with only the parts asked for (default all); the SPA polls `state` every 5 s and `devices,queue` every 25 s |
 | GET | `/admin/api/player/search?q=&limit=` | – | `{ data: PlayerTrack[] }` (limit 1–10, default 8) |
 | POST | `/admin/api/player/play` | `{ device_id?, uris?: string[], context_uri?, offset_position?, offset_uri?, position_ms? }` (empty resumes) | `{ ok: true }` |
 | POST | `/admin/api/player/pause` \| `next` \| `previous` | `{ device_id? }` or empty | `{ ok: true }` |
@@ -175,12 +175,16 @@ type Player = { connected: boolean; can_control: boolean;
 | POST | `/admin/api/player/transfer` | `{ device_id, play?: boolean }` (false keeps the playing state) | `{ ok: true }` |
 | POST | `/admin/api/player/queue` | `{ uri, device_id? }` (track id or URI) | `{ ok: true }` |
 
-Every successful command is audited as `player.<command>`. Errors: 409
-`missing_scope` (re-authorize Spotify), 409 `spotify_not_connected`, 409
+Every command Spotify was asked to run is audited as `player.<command>`,
+with `"error": <code>` when it failed (invalid requests are not). Errors: 409
+`missing_scope` (re-authorize Spotify; also when Spotify answers 403
+"Insufficient client scope"), 409 `spotify_not_connected` (also when Spotify
+rejects the token after a refresh), 409
 `no_active_device` ("Open Spotify on a device first"), 403 `premium_required`,
 403 `player_restricted` (the device or context disallows it), 404 `not_found`,
 422 `validation_failed`, 429 `rate_limited` (with `Retry-After`), 502
-`spotify_error`. The SPA does not treat the player 403 codes as a sign-out.
+`spotify_error`. On `GET /player`, a rate limit on any part fails the
+request so the SPA backs off for `Retry-After`. The SPA does not treat the player 403 codes as a sign-out.
 Spotify's API cannot remove or reorder queue items.
 
 ## Email / SMTP settings

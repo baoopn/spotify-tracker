@@ -279,3 +279,48 @@ func TestSearchTracks(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+func TestPlayerScope403AndRepeated401(t *testing.T) {
+	p, _ := commandServer(t, http.StatusForbidden, `{"error":{"status":403,"message":"Insufficient client scope"}}`)
+	if err := p.Pause(context.Background(), ""); !errors.Is(err, ErrInsufficientScope) {
+		t.Errorf("scope 403: got %v", err)
+	}
+
+	p, _ = commandServer(t, http.StatusUnauthorized, `{"error":{"status":401,"message":"The access token expired"}}`)
+	var se *StatusError
+	if err := p.Pause(context.Background(), ""); !errors.As(err, &se) || se.Code != http.StatusUnauthorized {
+		t.Errorf("repeated 401: got %v", err)
+	}
+}
+
+func TestPlayerRetryResendsBody(t *testing.T) {
+	var bodies []string
+	p, tokens := playerServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	if err := p.Transfer(context.Background(), pcDevice, true); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"device_ids":["dev-1"],"play":true}`
+	if len(bodies) != 2 || !jsonEqual(bodies[0], want) || !jsonEqual(bodies[1], want) || tokens.forced.Load() != 1 {
+		t.Errorf("bodies %q, forced %d", bodies, tokens.forced.Load())
+	}
+}
+
+func TestArgErrorNamesField(t *testing.T) {
+	p, _ := commandServer(t, http.StatusNoContent, "")
+	var ae *ArgError
+	if err := p.SetVolume(context.Background(), 101, ""); !errors.As(err, &ae) || ae.Field != "volume_percent" {
+		t.Errorf("got %v", err)
+	}
+	if err := p.Play(context.Background(), PlayOptions{URIs: []string{pcTrack}, OffsetURI: "x"}); !errors.As(err, &ae) ||
+		ae.Field != "offset_uri" {
+		t.Errorf("got %v", err)
+	}
+}

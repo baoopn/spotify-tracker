@@ -189,15 +189,22 @@ export type PlaybackState = {
 	disallows: Record<string, boolean>;
 };
 
-export type PlayerView = {
+/** GET /admin/api/player?parts=state */
+export type PlayerStateView = {
 	connected: boolean;
 	/** The token has user-modify-playback-state. */
 	can_control: boolean;
 	/** null: no active device. */
 	state: PlaybackState | null;
-	/** null when Spotify refused the list. */
+};
+
+/** GET /admin/api/player?parts=devices,queue */
+export type PlayerExtras = {
+	connected: boolean;
+	can_control: boolean;
+	/** null when Spotify refused the list (or Spotify is not connected). */
 	devices: PlayerDevice[] | null;
-	/** The next tracks; null when nothing is loaded. */
+	/** The next tracks; null when Spotify refused the queue. */
 	queue: PlayerTrack[] | null;
 };
 

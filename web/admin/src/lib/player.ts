@@ -56,6 +56,11 @@ export function nextRepeat(r: RepeatState): RepeatState {
 	return r === 'off' ? 'context' : r === 'context' ? 'track' : 'off';
 }
 
+/** The `disallows` key that blocks switching to repeat mode `to`. */
+export function repeatDisallowKey(to: RepeatState): string {
+	return to === 'context' ? 'toggling_repeat_context' : 'toggling_repeat_track';
+}
+
 export const repeatLabel: Record<RepeatState, string> = {
 	off: 'Repeat is off',
 	context: 'Repeating the album or playlist',

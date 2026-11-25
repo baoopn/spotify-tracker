@@ -2,7 +2,6 @@ package spotify
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,26 +29,28 @@ type PlayOptions struct {
 // MaxPlayURIs is the most track URIs one Play call takes.
 const MaxPlayURIs = 100
 
+// body validates o and builds the request body. All play validation
+// lives here; the admin API only decodes the request.
 func (o PlayOptions) body() (map[string]any, error) {
 	b := map[string]any{}
 	if o.ContextURI != "" && len(o.URIs) > 0 {
-		return nil, fmt.Errorf("%w: pass a context URI or track URIs, not both", ErrInvalidArgument)
+		return nil, argErr("uris", "pass a context URI or track URIs, not both")
 	}
 	if o.ContextURI != "" {
-		if err := ValidateContextURI(o.ContextURI); err != nil {
-			return nil, err
+		if !validContextURI(o.ContextURI) {
+			return nil, argErr("context_uri", "must be an album, playlist, artist or show URI")
 		}
 		b["context_uri"] = o.ContextURI
 	}
 	if len(o.URIs) > MaxPlayURIs {
-		return nil, fmt.Errorf("%w: at most %d track URIs", ErrInvalidArgument, MaxPlayURIs)
+		return nil, argErr("uris", "at most %d tracks", MaxPlayURIs)
 	}
 	if len(o.URIs) > 0 {
 		uris := make([]string, len(o.URIs))
 		for i, u := range o.URIs {
-			v, err := TrackURI(u)
-			if err != nil {
-				return nil, err
+			v, ok := TrackURI(u)
+			if !ok {
+				return nil, argErr("uris", "must be Spotify track ids or URIs")
 			}
 			uris[i] = v
 		}
@@ -57,27 +58,28 @@ func (o PlayOptions) body() (map[string]any, error) {
 	}
 	switch {
 	case o.OffsetPosition != nil && o.OffsetURI != "":
-		return nil, fmt.Errorf("%w: pass an offset position or an offset URI, not both", ErrInvalidArgument)
-	case o.OffsetPosition != nil || o.OffsetURI != "":
+		return nil, argErr("offset_uri", "pass an offset position or an offset URI, not both")
+	case o.OffsetPosition != nil:
 		if o.ContextURI == "" && len(o.URIs) == 0 {
-			return nil, fmt.Errorf("%w: an offset needs a context URI or track URIs", ErrInvalidArgument)
+			return nil, argErr("offset_position", "needs a context URI or track URIs")
 		}
-		if o.OffsetPosition != nil {
-			if *o.OffsetPosition < 0 {
-				return nil, fmt.Errorf("%w: offset position must be 0 or more", ErrInvalidArgument)
-			}
-			b["offset"] = map[string]any{"position": *o.OffsetPosition}
-		} else {
-			v, err := TrackURI(o.OffsetURI)
-			if err != nil {
-				return nil, err
-			}
-			b["offset"] = map[string]any{"uri": v}
+		if *o.OffsetPosition < 0 {
+			return nil, argErr("offset_position", "must be 0 or more")
 		}
+		b["offset"] = map[string]any{"position": *o.OffsetPosition}
+	case o.OffsetURI != "":
+		if o.ContextURI == "" && len(o.URIs) == 0 {
+			return nil, argErr("offset_uri", "needs a context URI or track URIs")
+		}
+		v, ok := TrackURI(o.OffsetURI)
+		if !ok {
+			return nil, argErr("offset_uri", "must be a Spotify track id or URI")
+		}
+		b["offset"] = map[string]any{"uri": v}
 	}
 	if o.PositionMS != nil {
 		if *o.PositionMS < 0 {
-			return nil, fmt.Errorf("%w: position must be 0 or more", ErrInvalidArgument)
+			return nil, argErr("position_ms", "must be 0 or more")
 		}
 		b["position_ms"] = *o.PositionMS
 	}
@@ -121,7 +123,7 @@ func (p *Player) Previous(ctx context.Context, deviceID string) error {
 // the next track).
 func (p *Player) Seek(ctx context.Context, positionMS int64, deviceID string) error {
 	if positionMS < 0 {
-		return fmt.Errorf("%w: position must be 0 or more", ErrInvalidArgument)
+		return argErr("position_ms", "must be 0 or more")
 	}
 	return p.command(ctx, "seek", http.MethodPut, "/me/player/seek", deviceID,
 		url.Values{"position_ms": {strconv.FormatInt(positionMS, 10)}})
@@ -130,7 +132,7 @@ func (p *Player) Seek(ctx context.Context, positionMS int64, deviceID string) er
 // SetVolume sets the device volume (0–100).
 func (p *Player) SetVolume(ctx context.Context, percent int, deviceID string) error {
 	if percent < 0 || percent > 100 {
-		return fmt.Errorf("%w: volume must be between 0 and 100", ErrInvalidArgument)
+		return argErr("volume_percent", "must be between 0 and 100")
 	}
 	return p.command(ctx, "volume", http.MethodPut, "/me/player/volume", deviceID,
 		url.Values{"volume_percent": {strconv.Itoa(percent)}})
@@ -144,8 +146,8 @@ func (p *Player) SetShuffle(ctx context.Context, on bool, deviceID string) error
 
 // SetRepeat sets the repeat mode: RepeatOff, RepeatTrack or RepeatContext.
 func (p *Player) SetRepeat(ctx context.Context, mode, deviceID string) error {
-	if !ValidRepeat(mode) {
-		return fmt.Errorf("%w: repeat must be off, track or context", ErrInvalidArgument)
+	if !validRepeat(mode) {
+		return argErr("state", "must be off, track or context")
 	}
 	return p.command(ctx, "repeat", http.MethodPut, "/me/player/repeat", deviceID,
 		url.Values{"state": {mode}})
@@ -164,9 +166,9 @@ func (p *Player) Transfer(ctx context.Context, deviceID string, play bool) error
 
 // AddToQueue adds a track (id or URI) to the end of the queue.
 func (p *Player) AddToQueue(ctx context.Context, track, deviceID string) error {
-	uri, err := TrackURI(track)
-	if err != nil {
-		return err
+	uri, ok := TrackURI(track)
+	if !ok {
+		return argErr("uri", "must be a Spotify track id or URI")
 	}
 	return p.command(ctx, "add to queue", http.MethodPost, "/me/player/queue", deviceID,
 		url.Values{"uri": {uri}})

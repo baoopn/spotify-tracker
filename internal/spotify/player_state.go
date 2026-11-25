@@ -2,7 +2,6 @@ package spotify
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -193,10 +192,10 @@ func playerQueueItem(it *queueItem) bool {
 func (p *Player) SearchTracks(ctx context.Context, q string, limit int) ([]PlayerTrack, error) {
 	q = strings.TrimSpace(q)
 	if q == "" || utf8.RuneCountInString(q) > 200 {
-		return nil, fmt.Errorf("%w: the search must have 1 to 200 characters", ErrInvalidArgument)
+		return nil, argErr("q", "must have 1 to 200 characters")
 	}
 	if limit < 1 || limit > 10 {
-		return nil, fmt.Errorf("%w: limit must be between 1 and 10", ErrInvalidArgument)
+		return nil, argErr("limit", "must be between 1 and 10")
 	}
 	var r struct {
 		Tracks struct {

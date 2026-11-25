@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import {
@@ -19,24 +20,33 @@
 	import PlayerQueue from './PlayerQueue.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import { secondClock } from '#lib/clock.svelte.js';
+	import { debounce } from '#lib/debounce.js';
 	import { artistNames, duration } from '#lib/format.js';
-	import { nextRepeat, repeatLabel } from '#lib/player.js';
-	import { qk, queries } from '#lib/queries.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
+	import { nextRepeat, repeatDisallowKey, repeatLabel } from '#lib/player.js';
+	import { qk, queries } from '#lib/queries.js';
 	import { toasts } from '#lib/toast.svelte.js';
-	import type { PlaybackState, PlayerTrack, PlayerView } from '#lib/types.js';
+	import type { PlaybackState, PlayerStateView, PlayerTrack } from '#lib/types.js';
 
-	// The owner's Spotify player: transport, device and queue. Polled every
-	// 3 s while visible; commands update the cache at once (optimistic) and
-	// refetch shortly after, once Spotify has caught up.
+	// The owner's Spotify player: transport, device and queue. The state is
+	// polled every 5 s, the devices and queue every 25 s. Commands update the
+	// cache at once (optimistic) and hold the polls while they run and for
+	// HOLD_MS after: Spotify's GET /me/player lags 0.5–2 s behind a command,
+	// so an earlier poll would undo the optimistic state. Releasing the hold
+	// refetches both queries.
+	const HOLD_MS = 1500;
+	let holding = $state(false);
+	let holdTimer: ReturnType<typeof setTimeout> | undefined;
+
 	const queryClient = useQueryClient();
-	const query = createQuery(() => queries.player());
+	const query = createQuery(() => ({ ...queries.playerState(), enabled: !holding }));
+	const extras = createQuery(() => ({ ...queries.playerExtras(), enabled: !holding }));
 	const v = $derived(query.data);
 	const st = $derived(v?.state ?? null);
 	const item = $derived(st?.item ?? null);
 	const canControl = $derived(!!v?.can_control);
 	// The refresh button spins for its own refetch only, not for the polls.
-	const manual = new ManualRefetch(() => query.refetch());
+	const manual = new ManualRefetch(() => Promise.all([query.refetch(), extras.refetch()]));
 
 	type Cmd = {
 		/** "pause", "skip to the next track": used in the error toast. */
@@ -46,60 +56,117 @@
 		done?: string;
 	};
 
-	let settleTimer: ReturnType<typeof setTimeout> | undefined;
+	// A slider change made while a command runs waits for it (latest wins).
+	let queued: Cmd | null = null;
 	const cmd = createMutation(() => ({
 		mutationFn: (c: Cmd) => c.run(),
 		onMutate: async (c: Cmd) => {
-			await queryClient.cancelQueries({ queryKey: qk.player });
-			const prev = queryClient.getQueryData<PlayerView>(qk.player);
+			holding = true;
+			clearTimeout(holdTimer);
+			await queryClient.cancelQueries({ queryKey: qk.player.state, exact: true });
+			const prev = queryClient.getQueryData<PlayerStateView>(qk.player.state);
 			if (prev?.state && c.patch) {
-				queryClient.setQueryData<PlayerView>(qk.player, { ...prev, state: c.patch(prev.state) });
+				queryClient.setQueryData<PlayerStateView>(qk.player.state, {
+					...prev,
+					state: c.patch(prev.state)
+				});
 			}
 			return { prev };
 		},
 		onError: (err, c, result) => {
-			if (result?.prev) queryClient.setQueryData(qk.player, result.prev);
+			if (result?.prev) queryClient.setQueryData(qk.player.state, result.prev);
 			toasts.error(`Could not ${c.label}`, errorMessage(err));
 		},
 		onSuccess: (_d, c) => {
 			if (c.done) toasts.success(c.done);
 		},
 		onSettled: () => {
-			clearTimeout(settleTimer);
-			settleTimer = setTimeout(
-				() => queryClient.invalidateQueries({ queryKey: qk.player, exact: true }),
-				500
-			);
+			const next = queued;
+			queued = null;
+			if (next) {
+				setTimeout(() => cmd.mutate(next));
+				return;
+			}
+			clearTimeout(holdTimer);
+			holdTimer = setTimeout(() => (holding = false), HOLD_MS);
 		}
 	}));
-	$effect(() => () => clearTimeout(settleTimer));
 	const busy = $derived(cmd.isPending);
-	const run = (c: Cmd) => cmd.mutate(c);
 
-	// Progress ticks locally between polls.
+	/**
+	 * Runs a command. Controls stay enabled (and focused) while one runs: a
+	 * click then is ignored, while a slider change (wait) is sent after it.
+	 */
+	function run(c: Cmd, wait = false) {
+		if (cmd.isPending) {
+			if (wait) queued = c;
+			return;
+		}
+		cmd.mutate(c);
+	}
+
+	// A new track can change the queue and the devices: refresh them.
+	let lastItemId: string | null | undefined;
+	$effect(() => {
+		const id = item?.id ?? null;
+		if (lastItemId !== undefined && id !== lastItemId) {
+			queryClient.invalidateQueries({ queryKey: qk.player.extras, exact: true });
+		}
+		lastItemId = id;
+	});
+
+	// Progress ticks locally between polls (not without a track).
 	const durationMs = $derived(item?.duration_ms ?? 0);
 	const progress = $derived.by(() => {
-		if (!st) return 0;
+		if (!st || !item) return 0;
 		const elapsed = st.is_playing ? Math.max(0, secondClock.now - query.dataUpdatedAt) : 0;
-		return Math.min(durationMs || Infinity, st.progress_ms + elapsed);
+		return Math.min(durationMs, st.progress_ms + elapsed);
 	});
-	// While dragging, the bar follows the pointer instead of the clock.
+
+	// Sliders: local while dragging or using the arrow keys, sent once the
+	// changes stop for a moment.
 	let seekDraft = $state<number | null>(null);
 	const shownProgress = $derived(seekDraft ?? progress);
-
-	function seek() {
+	const sendSeek = debounce(() => {
 		if (seekDraft == null) return;
 		const ms = Math.round(seekDraft);
 		seekDraft = null;
-		run({
-			label: 'seek',
-			run: () => api.playerSeek(ms),
-			patch: (s) => ({ ...s, progress_ms: ms })
-		});
-	}
+		run(
+			{
+				label: 'seek',
+				run: () => api.playerSeek(ms),
+				patch: (s) => ({ ...s, progress_ms: ms })
+			},
+			true
+		);
+	}, 300);
+
+	const device = $derived(st?.device ?? null);
+	let volumeDraft = $state<number | null>(null);
+	const volume = $derived(volumeDraft ?? device?.volume_percent ?? 0);
+	const VolumeIcon = $derived(volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2);
+	const sendVolume = debounce(() => {
+		if (volumeDraft == null) return;
+		const pct = Math.round(volumeDraft);
+		volumeDraft = null;
+		run(
+			{
+				label: 'change the volume',
+				run: () => api.playerVolume(pct),
+				patch: (s) => (s.device ? { ...s, device: { ...s.device, volume_percent: pct } } : s)
+			},
+			true
+		);
+	}, 300);
+	onDestroy(() => {
+		clearTimeout(holdTimer);
+		sendSeek.cancel();
+		sendVolume.cancel();
+	});
 
 	const disallows = $derived(st?.disallows ?? {});
-	const control = $derived(canControl && !!st && !busy);
+	const control = $derived(canControl && !!st);
+	const nextMode = $derived(st ? nextRepeat(st.repeat_state) : 'off');
 
 	function togglePlay() {
 		if (!st) return;
@@ -119,27 +186,44 @@
 		}
 	}
 
-	// Volume: the slider is local while dragging and sent on release.
-	const device = $derived(st?.device ?? null);
-	let volumeDraft = $state<number | null>(null);
-	const volume = $derived(volumeDraft ?? device?.volume_percent ?? 0);
-	const VolumeIcon = $derived(volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2);
-
-	function setVolume() {
-		if (volumeDraft == null) return;
-		const pct = Math.round(volumeDraft);
-		volumeDraft = null;
+	function toggleShuffle() {
+		if (!st) return;
+		const on = !st.shuffle_state;
 		run({
-			label: 'change the volume',
-			run: () => api.playerVolume(pct),
-			patch: (s) => (s.device ? { ...s, device: { ...s.device, volume_percent: pct } } : s)
+			label: 'change shuffle',
+			run: () => api.playerShuffle(on),
+			patch: (s) => ({ ...s, shuffle_state: on })
 		});
 	}
 
+	function cycleRepeat() {
+		const mode = nextMode;
+		run({
+			label: 'change repeat',
+			run: () => api.playerRepeat(mode),
+			patch: (s) => ({ ...s, repeat_state: mode })
+		});
+	}
+
+	/** Search result: play just this track. */
 	function playTrack(t: PlayerTrack) {
 		run({
 			label: `play “${t.name}”`,
 			run: () => api.playerPlay({ uris: [t.uri] }),
+			patch: (s) => ({ ...s, is_playing: true, progress_ms: 0, item: t })
+		});
+	}
+
+	/** Queue row: play from it and keep the rest of the queue after it. */
+	function playFromQueue(i: number) {
+		const rest = (extras.data?.queue ?? [])
+			.slice(i)
+			.filter((t) => t.uri.startsWith('spotify:track:'));
+		const t = rest[0];
+		if (!t) return;
+		run({
+			label: `play “${t.name}”`,
+			run: () => api.playerPlay({ uris: rest.slice(0, 100).map((x) => x.uri) }),
 			patch: (s) => ({ ...s, is_playing: true, progress_ms: 0, item: t })
 		});
 	}
@@ -158,12 +242,17 @@
 		run({ label: 'switch the device', run: () => api.playerTransfer(id, play) });
 	}
 
+	const uid = $props.id();
 	const settingsHref = resolve('settings/spotify');
 </script>
 
-<section class="mt-8 flex flex-col gap-4 border-t border-ink pt-4" aria-labelledby="pl-title">
+<section
+	class="mt-8 flex flex-col gap-4 border-t border-ink pt-4"
+	aria-labelledby="{uid}-title"
+	aria-busy={busy}
+>
 	<div class="flex items-center justify-between gap-2">
-		<h2 id="pl-title" class="eyebrow">Player</h2>
+		<h2 id="{uid}-title" class="eyebrow">Player</h2>
 		{#if device}
 			<span class="truncate font-mono text-xs text-ink-soft" title={device.name}>
 				on {device.name}
@@ -173,7 +262,7 @@
 
 	{#if !v}
 		{#if query.isError}
-			<p class="text-sm text-muted">
+			<p class="text-sm text-ink-soft">
 				The player is unavailable: {errorMessage(query.error)}
 			</p>
 		{:else}
@@ -245,7 +334,7 @@
 					aria-label="Seek"
 					aria-valuetext="{duration(shownProgress)} of {duration(durationMs)}"
 					oninput={(e) => (seekDraft = Number(e.currentTarget.value))}
-					onchange={seek}
+					onchange={() => sendSeek()}
 				/>
 				<div class="flex justify-between font-mono text-xs text-ink-soft">
 					<span>{duration(shownProgress)}</span>
@@ -261,14 +350,7 @@
 					aria-pressed={st.shuffle_state}
 					title={st.shuffle_state ? 'Shuffle is on' : 'Shuffle is off'}
 					disabled={!control || disallows.toggling_shuffle}
-					onclick={() => {
-						const on = !st.shuffle_state;
-						run({
-							label: 'change shuffle',
-							run: () => api.playerShuffle(on),
-							patch: (s) => ({ ...s, shuffle_state: on })
-						});
-					}}
+					onclick={toggleShuffle}
 				>
 					<Shuffle class="size-5" aria-hidden="true" />
 				</button>
@@ -306,19 +388,11 @@
 				<button
 					type="button"
 					class={['btn btn-ghost btn-icon', st.repeat_state !== 'off' && 'toggle-on']}
-					aria-label="Repeat: {repeatLabel[st.repeat_state]}"
+					aria-label="Repeat"
+					aria-describedby="{uid}-repeat"
 					title={repeatLabel[st.repeat_state]}
-					disabled={!control ||
-						disallows.toggling_repeat_context ||
-						disallows.toggling_repeat_track}
-					onclick={() => {
-						const mode = nextRepeat(st.repeat_state);
-						run({
-							label: 'change repeat',
-							run: () => api.playerRepeat(mode),
-							patch: (s) => ({ ...s, repeat_state: mode })
-						});
-					}}
+					disabled={!control || disallows[repeatDisallowKey(nextMode)]}
+					onclick={cycleRepeat}
 				>
 					{#if st.repeat_state === 'track'}
 						<Repeat1 class="size-5" aria-hidden="true" />
@@ -326,6 +400,7 @@
 						<Repeat class="size-5" aria-hidden="true" />
 					{/if}
 				</button>
+				<span id="{uid}-repeat" class="sr-only">{repeatLabel[st.repeat_state]}</span>
 			</div>
 
 			{#if device?.supports_volume}
@@ -342,7 +417,7 @@
 						aria-label="Volume"
 						aria-valuetext="{volume}%"
 						oninput={(e) => (volumeDraft = Number(e.currentTarget.value))}
-						onchange={setVolume}
+						onchange={() => sendVolume()}
 					/>
 					<span class="w-9 shrink-0 text-right font-mono text-xs text-ink-soft">{volume}%</span>
 				</div>
@@ -354,9 +429,9 @@
 		{/if}
 
 		<PlayerDevices
-			devices={v.devices}
+			devices={extras.data ? extras.data.devices : undefined}
 			activeId={device?.id ?? null}
-			disabled={!canControl || busy}
+			disabled={!canControl}
 			refreshing={manual.active}
 			onpick={transfer}
 			onrefresh={() => manual.run()}
@@ -364,9 +439,10 @@
 
 		{#if st}
 			<PlayerQueue
-				queue={v.queue}
-				disabled={!canControl || busy}
+				queue={extras.data ? extras.data.queue : undefined}
+				disabled={!canControl}
 				onplay={playTrack}
+				onplayfrom={playFromQueue}
 				onqueue={queueTrack}
 			/>
 		{/if}

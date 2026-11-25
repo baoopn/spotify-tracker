@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -96,23 +97,50 @@ func (a *API) controlAccess(ctx context.Context) (connected, canControl bool, er
 
 // ─── reads ────────────────────────────────────────────────────────────────────
 
-type playerView struct {
-	Connected  bool                   `json:"connected"`
-	CanControl bool                   `json:"can_control"`
-	State      *spotify.PlaybackState `json:"state"`
-	Devices    []spotify.Device       `json:"devices"`
-	Queue      []spotify.PlayerTrack  `json:"queue"`
+// Parts of GET /player, chosen with ?parts= (default all). The SPA polls
+// the state often and the devices and queue less often, to spare the
+// Spotify rate limit the poller shares.
+const (
+	partState   = "state"
+	partDevices = "devices"
+	partQueue   = "queue"
+)
+
+func playerParts(raw string) (map[string]bool, bool) {
+	if raw == "" {
+		return map[string]bool{partState: true, partDevices: true, partQueue: true}, true
+	}
+	parts := map[string]bool{}
+	for _, p := range strings.Split(raw, ",") {
+		switch p = strings.TrimSpace(p); p {
+		case partState, partDevices, partQueue:
+			parts[p] = true
+		default:
+			return nil, false
+		}
+	}
+	return parts, len(parts) > 0
 }
 
-// getPlayer serves GET /player: the playback state, devices and queue.
-// The devices and queue are best effort (null when Spotify refuses them).
+// getPlayer serves GET /player[?parts=state,devices,queue]: connected and
+// can_control, plus the parts asked for. The state is null when no device
+// is active; the devices and queue are best effort (null when Spotify
+// refuses them) and are left out when not asked for.
 func (a *API) getPlayer(w http.ResponseWriter, r *http.Request) {
+	parts, ok := playerParts(r.URL.Query().Get("parts"))
+	if !ok {
+		writeValidation(w, map[string]string{"parts": "must list state, devices and/or queue"})
+		return
+	}
 	connected, canControl, err := a.controlAccess(r.Context())
 	if err != nil {
 		a.internal(w, r, err)
 		return
 	}
-	v := playerView{Connected: connected, CanControl: canControl}
+	v := map[string]any{"connected": connected, "can_control": canControl}
+	for p := range parts {
+		v[p] = nil
+	}
 	if !connected {
 		writeJSON(w, http.StatusOK, v)
 		return
@@ -123,52 +151,71 @@ func (a *API) getPlayer(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		wg                sync.WaitGroup
-		stErr, dErr, qErr error
+		state             *spotify.PlaybackState
+		devices           []spotify.Device
 		queue             *spotify.PlayerQueue
+		stErr, dErr, qErr error
 	)
-	wg.Add(3)
-	go func() { defer wg.Done(); v.State, stErr = p.PlaybackState(ctx) }()
-	go func() { defer wg.Done(); v.Devices, dErr = p.Devices(ctx) }()
-	go func() { defer wg.Done(); queue, qErr = p.PlayerQueue(ctx, playerQueueShown) }()
+	if parts[partState] {
+		wg.Go(func() { state, stErr = p.PlaybackState(ctx) })
+	}
+	if parts[partDevices] {
+		wg.Go(func() { devices, dErr = p.Devices(ctx) })
+	}
+	if parts[partQueue] {
+		wg.Go(func() { queue, qErr = p.PlayerQueue(ctx, playerQueueShown) })
+	}
 	wg.Wait()
 
-	if stErr != nil {
+	// The state is the main part: its error fails the request. With only
+	// the devices and queue asked for, a rate limit fails it too, so the
+	// SPA backs off.
+	var rl *spotify.RateLimitError
+	switch {
+	case stErr != nil:
 		a.playerFail(w, r, stErr)
 		return
+	case errors.As(dErr, &rl):
+		a.playerFail(w, r, dErr)
+		return
+	case errors.As(qErr, &rl):
+		a.playerFail(w, r, qErr)
+		return
+	}
+	if parts[partState] {
+		v[partState] = state
 	}
 	if dErr != nil {
-		v.Devices = nil
 		a.Log.WarnContext(r.Context(), "spotify devices failed", logging.Err(dErr))
+	} else if parts[partDevices] {
+		v[partDevices] = devices
 	}
 	if qErr != nil {
 		a.Log.WarnContext(r.Context(), "spotify queue failed", logging.Err(qErr))
-	}
-	// Spotify answers the queue for the last device even when nothing is
-	// active; only show it next to a loaded track.
-	if qErr == nil && queue != nil && v.State != nil && v.State.Item != nil {
-		v.Queue = queue.Queue
+	} else if queue != nil {
+		v[partQueue] = queue.Queue
 	}
 	writeJSON(w, http.StatusOK, v)
 }
 
-// searchPlayer serves GET /player/search?q=&limit= (tracks, limit 1–10).
+// searchPlayer serves GET /player/search?q=&limit= (tracks; q and limit
+// are validated by SearchTracks).
 func (a *API) searchPlayer(w http.ResponseWriter, r *http.Request) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" || len([]rune(q)) > 200 {
-		writeValidation(w, map[string]string{"q": "must have 1 to 200 characters"})
-		return
-	}
-	limit, err := intParam(r, "limit", 8, 1, 10)
-	if err != nil {
-		writeValidation(w, map[string]string{"limit": err.Error()})
-		return
+	limit := 8
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			writeValidation(w, map[string]string{"limit": "must be an integer"})
+			return
+		}
+		limit = n
 	}
 	if !a.requireConnected(w, r) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), playerCallTimeout)
 	defer cancel()
-	items, err := a.playerClient().SearchTracks(ctx, q, limit)
+	items, err := a.playerClient().SearchTracks(ctx, r.URL.Query().Get("q"), limit)
 	if err != nil {
 		a.playerFail(w, r, err)
 		return
@@ -179,7 +226,8 @@ func (a *API) searchPlayer(w http.ResponseWriter, r *http.Request) {
 // ─── commands ─────────────────────────────────────────────────────────────────
 
 // playerCommand runs one command; detail is what the audit entry records.
-// A *fieldError answers 422.
+// A *fieldError (a missing field or a bad body) answers 422; value checks
+// are the Player's (*spotify.ArgError, also 422).
 type playerCommand func(ctx context.Context, p playerControl, r *http.Request) (detail map[string]any, err error)
 
 // fieldError is a request validation error on one body field.
@@ -187,8 +235,11 @@ type fieldError struct{ field, msg string }
 
 func (e *fieldError) Error() string { return e.field + ": " + e.msg }
 
+const msgNotConnected = "Spotify is not connected; authorize it in Settings → Spotify."
+
 // playerAction wraps a command with the scope gate, a timeout, error
-// mapping and an audit entry ("player.<name>").
+// mapping and an audit entry ("player.<name>", with "error": <code> when
+// Spotify refused it; invalid requests are not audited).
 func (a *API) playerAction(name string, cmd playerCommand) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		connected, canControl, err := a.controlAccess(r.Context())
@@ -197,31 +248,43 @@ func (a *API) playerAction(name string, cmd playerCommand) http.HandlerFunc {
 			return
 		}
 		if !connected {
-			writeError(w, http.StatusConflict, "spotify_not_connected",
-				"Spotify is not connected; authorize it in Settings → Spotify.")
+			writeError(w, http.StatusConflict, "spotify_not_connected", msgNotConnected)
 			return
 		}
 		if !canControl {
-			writeError(w, http.StatusConflict, "missing_scope",
-				"The Spotify token cannot control playback. Re-authorize Spotify in Settings → Spotify to grant "+
-					spotify.PlaybackControlScope+".")
+			writeMissingScope(w)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), playerCallTimeout)
 		defer cancel()
 		detail, err := cmd(ctx, a.playerClient(), r)
 		var fe *fieldError
+		var ae *spotify.ArgError
 		switch {
 		case errors.As(err, &fe):
 			writeValidation(w, map[string]string{fe.field: fe.msg})
 			return
-		case err != nil:
-			a.playerFail(w, r, err)
+		case errors.As(err, &ae):
+			writeValidation(w, map[string]string{ae.Field: ae.Msg})
+			return
+		}
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		if err != nil {
+			detail["error"] = a.playerFail(w, r, err)
+			a.audit(r, "player."+name, detail)
 			return
 		}
 		a.audit(r, "player."+name, detail)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+func writeMissingScope(w http.ResponseWriter) {
+	writeError(w, http.StatusConflict, "missing_scope",
+		"The Spotify token cannot control playback. Re-authorize Spotify in Settings → Spotify to grant "+
+			spotify.PlaybackControlScope+".")
 }
 
 // requireConnected answers 409 when Spotify is not connected.
@@ -232,44 +295,55 @@ func (a *API) requireConnected(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if !connected {
-		writeError(w, http.StatusConflict, "spotify_not_connected",
-			"Spotify is not connected; authorize it in Settings → Spotify.")
+		writeError(w, http.StatusConflict, "spotify_not_connected", msgNotConnected)
 	}
 	return connected
 }
 
-// playerFail maps a Spotify player error to an admin API error.
-func (a *API) playerFail(w http.ResponseWriter, r *http.Request, err error) {
+// playerFail maps a Spotify player error to an admin API error and returns
+// the error code it answered.
+func (a *API) playerFail(w http.ResponseWriter, r *http.Request, err error) string {
 	var rl *spotify.RateLimitError
 	var se *spotify.StatusError
+	var ae *spotify.ArgError
+	fail := func(status int, code, msg string) string {
+		writeError(w, status, code, msg)
+		return code
+	}
 	switch {
-	case errors.Is(err, spotify.ErrInvalidArgument):
-		writeError(w, http.StatusUnprocessableEntity, "validation_failed",
-			strings.TrimPrefix(err.Error(), spotify.ErrInvalidArgument.Error()+": "))
+	case errors.As(err, &ae):
+		writeValidation(w, map[string]string{ae.Field: ae.Msg})
+		return "validation_failed"
 	case errors.Is(err, spotify.ErrNoActiveDevice):
-		writeError(w, http.StatusConflict, "no_active_device", "Open Spotify on a device first.")
+		return fail(http.StatusConflict, "no_active_device", "Open Spotify on a device first.")
+	case errors.Is(err, spotify.ErrInsufficientScope):
+		writeMissingScope(w)
+		return "missing_scope"
 	case errors.Is(err, spotify.ErrPremiumRequired):
-		writeError(w, http.StatusForbidden, "premium_required", "Controlling playback needs Spotify Premium.")
+		return fail(http.StatusForbidden, "premium_required", "Controlling playback needs Spotify Premium.")
 	case errors.Is(err, spotify.ErrRestricted):
-		writeError(w, http.StatusForbidden, "player_restricted",
+		return fail(http.StatusForbidden, "player_restricted",
 			"Spotify refused the command (the device or the current context does not allow it).")
 	case errors.Is(err, spotify.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "Spotify could not find that device or item.")
+		return fail(http.StatusNotFound, "not_found", "Spotify could not find that device or item.")
 	case errors.Is(err, spotify.ErrNotConnected), errors.Is(err, spotify.ErrInvalidGrant):
-		writeError(w, http.StatusConflict, "spotify_not_connected",
-			"Spotify is not connected; authorize it in Settings → Spotify.")
+		return fail(http.StatusConflict, "spotify_not_connected", msgNotConnected)
+	case errors.As(err, &se) && se.Code == http.StatusUnauthorized:
+		return fail(http.StatusConflict, "spotify_not_connected",
+			"Spotify rejected the token even after a refresh; re-authorize Spotify in Settings → Spotify.")
 	case errors.As(err, &rl):
-		w.Header().Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds())))
-		writeError(w, http.StatusTooManyRequests, "rate_limited",
-			fmt.Sprintf("Spotify is rate limiting requests; try again in %s.", rl.RetryAfter.Round(time.Second)))
+		secs := max(1, int(math.Ceil(rl.RetryAfter.Seconds())))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		return fail(http.StatusTooManyRequests, "rate_limited",
+			fmt.Sprintf("Spotify is rate limiting requests; try again in %d s.", secs))
 	case errors.Is(err, context.DeadlineExceeded):
-		writeError(w, http.StatusGatewayTimeout, "spotify_timeout", "Spotify did not answer in time.")
+		return fail(http.StatusGatewayTimeout, "spotify_timeout", "Spotify did not answer in time.")
 	case errors.As(err, &se):
 		a.Log.WarnContext(r.Context(), "spotify player call failed", slog.String("path", r.URL.Path), logging.Err(err))
-		writeError(w, http.StatusBadGateway, "spotify_error", "Spotify answered with an error ("+strconv.Itoa(se.Code)+").")
+		return fail(http.StatusBadGateway, "spotify_error", "Spotify answered with an error ("+strconv.Itoa(se.Code)+").")
 	default:
 		a.Log.WarnContext(r.Context(), "spotify player call failed", slog.String("path", r.URL.Path), logging.Err(err))
-		writeError(w, http.StatusBadGateway, "spotify_error", "Could not reach Spotify.")
+		return fail(http.StatusBadGateway, "spotify_error", "Could not reach Spotify.")
 	}
 }
 
@@ -283,13 +357,6 @@ func decodeOptional(r *http.Request, v any) error {
 
 type deviceBody struct {
 	DeviceID string `json:"device_id"`
-}
-
-func (b deviceBody) validate() error {
-	if b.DeviceID != "" && spotify.ValidateDeviceID(b.DeviceID) != nil {
-		return &fieldError{"device_id", "is not a valid device id"}
-	}
-	return nil
 }
 
 // deviceDetail is the audit detail of a command with an optional device.
@@ -309,9 +376,6 @@ func deviceOnly(f func(playerControl, context.Context, string) error) playerComm
 	return func(ctx context.Context, p playerControl, r *http.Request) (map[string]any, error) {
 		var in deviceBody
 		if err := decodeOptional(r, &in); err != nil {
-			return nil, err
-		}
-		if err := in.validate(); err != nil {
 			return nil, err
 		}
 		return deviceDetail(in.DeviceID), f(p, ctx, in.DeviceID)

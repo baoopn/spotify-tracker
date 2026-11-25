@@ -45,8 +45,9 @@ import type {
 	TrackSort,
 	Playlist,
 	PlayBody,
+	PlayerExtras,
+	PlayerStateView,
 	PlayerTrack,
-	PlayerView,
 	RepeatState,
 	RecentPlaylist,
 	ServerZone,
@@ -65,6 +66,8 @@ export class ApiError extends Error {
 	readonly fields: Record<string, string>;
 	/** Per-line LRC errors (manual synced lyrics). */
 	readonly lines: LrcLineError[];
+	/** From a Retry-After header (seconds), in ms; null when absent. */
+	retryAfterMs: number | null = null;
 
 	constructor(
 		status: number,
@@ -157,7 +160,12 @@ async function parseError(res: Response): Promise<ApiError> {
 	if (res.status === 429 && !fields) {
 		message = message || 'Too many requests, slow down a little.';
 	}
-	return new ApiError(res.status, code, message, fields, lines);
+	const err = new ApiError(res.status, code, message, fields, lines);
+	const retry = Number(res.headers.get('Retry-After'));
+	if (res.headers.has('Retry-After') && Number.isFinite(retry) && retry >= 0) {
+		err.retryAfterMs = retry * 1000;
+	}
+	return err;
 }
 
 /** 403 codes that are Spotify refusals (player), not a lost admin session. */
@@ -234,7 +242,12 @@ export const api = {
 	spotifyTest: () => request<SpotifyTestResponse>(`${ADMIN_API}/spotify/test`, { method: 'POST' }),
 
 	// player (the owner's Spotify player; device_id omitted = the active device)
-	player: ({ signal }: Signal = {}) => request<PlayerView>(`${ADMIN_API}/player`, { signal }),
+	/** The playback state only (polled often). */
+	playerState: ({ signal }: Signal = {}) =>
+		request<PlayerStateView>(`${ADMIN_API}/player`, { query: { parts: 'state' }, signal }),
+	/** The devices and the queue (polled less often). */
+	playerExtras: ({ signal }: Signal = {}) =>
+		request<PlayerExtras>(`${ADMIN_API}/player`, { query: { parts: 'devices,queue' }, signal }),
 	playerSearch: (q: string, limit = 8, { signal }: Signal = {}) =>
 		request<{ data: PlayerTrack[] }>(`${ADMIN_API}/player/search`, {
 			query: { q, limit },

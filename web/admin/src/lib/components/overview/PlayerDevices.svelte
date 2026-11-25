@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Check, RefreshCw } from '@lucide/svelte';
+	import Skeleton from '../Skeleton.svelte';
 	import { deviceIcon, deviceTypeLabel } from '#lib/player.js';
 	import type { PlayerDevice } from '#lib/types.js';
 
@@ -12,7 +13,8 @@
 		onpick,
 		onrefresh
 	}: {
-		devices: PlayerDevice[] | null;
+		/** undefined while loading; null when Spotify did not list them. */
+		devices: PlayerDevice[] | null | undefined;
 		activeId: string | null;
 		disabled: boolean;
 		refreshing: boolean;
@@ -37,7 +39,9 @@
 			<RefreshCw class={['size-4', refreshing && 'animate-spin']} aria-hidden="true" />
 		</button>
 	</div>
-	{#if devices === null}
+	{#if devices === undefined}
+		<Skeleton class="h-12" />
+	{:else if devices === null}
 		<p class="text-sm text-ink-soft">Spotify did not list the devices. Try refreshing.</p>
 	{:else if devices.length === 0}
 		<p class="text-sm text-ink-soft">
@@ -49,18 +53,23 @@
 				{@const Icon = deviceIcon(d.type)}
 				{@const active = d.id === activeId}
 				<li>
+					<!-- The active device stays focusable (aria-disabled), so focus
+					     is not lost when it becomes active. -->
 					<button
 						type="button"
 						class={[
 							'flex w-full min-w-0 items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors duration-150',
 							active
-								? 'border-ink bg-paper-3'
+								? 'cursor-default border-ink bg-paper-3'
 								: 'border-transparent hover:bg-paper-3 disabled:hover:bg-transparent',
 							(disabled || d.is_restricted) && !active && 'opacity-60'
 						]}
 						aria-current={active ? 'true' : undefined}
-						disabled={disabled || active || d.is_restricted}
-						onclick={() => onpick(d.id)}
+						aria-disabled={active ? 'true' : undefined}
+						disabled={!active && (disabled || d.is_restricted)}
+						onclick={() => {
+							if (!active) onpick(d.id);
+						}}
 					>
 						<Icon class="size-5 shrink-0 text-ink" aria-hidden="true" />
 						<span class="min-w-0 flex-1">

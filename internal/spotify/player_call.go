@@ -27,10 +27,30 @@ var (
 	// restricted device, an action the current context disallows, or a
 	// token without the needed scope.
 	ErrRestricted = errors.New("spotify: player command refused")
+	// ErrInsufficientScope means Spotify refused a player call because the
+	// token lacks a scope (403 "Insufficient client scope"): re-authorize.
+	ErrInsufficientScope = errors.New("spotify: token is missing a playback scope")
 	// ErrInvalidArgument means a player call got an invalid argument; no
-	// request was sent.
+	// request was sent. The error is an *ArgError naming the field.
 	ErrInvalidArgument = errors.New("spotify: invalid argument")
 )
+
+// ArgError is an invalid player call argument. Field is the JSON name the
+// admin API uses for it (e.g. "volume_percent"). It matches
+// ErrInvalidArgument with errors.Is.
+type ArgError struct {
+	Field string
+	Msg   string
+}
+
+func (e *ArgError) Error() string { return "spotify: invalid argument: " + e.Field + ": " + e.Msg }
+
+// Is makes errors.Is(err, ErrInvalidArgument) true.
+func (e *ArgError) Is(target error) bool { return target == ErrInvalidArgument }
+
+func argErr(field, format string, args ...any) error {
+	return &ArgError{Field: field, Msg: fmt.Sprintf(format, args...)}
+}
 
 // playerErrorBody is the Web API error object.
 type playerErrorBody struct {
@@ -99,7 +119,8 @@ func (p *Player) call(ctx context.Context, what, method, path string, q url.Valu
 			return 0, playerError(what, resp.StatusCode, raw)
 		}
 	}
-	return 0, errors.New("spotify: unauthorized after token refresh")
+	return 0, &StatusError{Code: http.StatusUnauthorized,
+		msg: fmt.Sprintf("spotify: %s: unauthorized after token refresh", what)}
 }
 
 // playerError maps a failed player answer to the typed errors.
@@ -116,6 +137,8 @@ func playerError(what string, code int, raw []byte) error {
 		return fmt.Errorf("%w: %s", ErrNoActiveDevice, msg)
 	case code == http.StatusNotFound:
 		return fmt.Errorf("%w: %s: %s", ErrNotFound, what, msg)
+	case code == http.StatusForbidden && strings.Contains(strings.ToLower(msg), "scope"):
+		return fmt.Errorf("%w: %s", ErrInsufficientScope, msg)
 	case code == http.StatusForbidden && eb.Error.Reason == "PREMIUM_REQUIRED":
 		return fmt.Errorf("%w: %s", ErrPremiumRequired, msg)
 	case code == http.StatusForbidden:
@@ -144,33 +167,33 @@ func deviceQuery(deviceID string, extra url.Values) (url.Values, error) {
 // 128 characters, no spaces or control characters.
 func ValidateDeviceID(id string) error {
 	if id == "" || len(id) > 128 || strings.ContainsFunc(id, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
-		return fmt.Errorf("%w: device id is invalid", ErrInvalidArgument)
+		return argErr("device_id", "is not a valid device id")
 	}
 	return nil
 }
 
-// TrackURI returns the spotify:track: URI of a track id or URI, or an
-// ErrInvalidArgument error when it is neither.
-func TrackURI(s string) (string, error) {
+// TrackURI returns the spotify:track: URI of a track id or URI, or false
+// when it is neither.
+func TrackURI(s string) (string, bool) {
 	id := strings.TrimPrefix(s, "spotify:track:")
 	if !trackIDPattern.MatchString(id) {
-		return "", fmt.Errorf("%w: %q is not a Spotify track id or URI", ErrInvalidArgument, s)
+		return "", false
 	}
-	return "spotify:track:" + id, nil
+	return "spotify:track:" + id, true
 }
 
-// ValidateContextURI checks a playable context URI (album, playlist,
+// validContextURI reports a playable context URI (album, playlist,
 // artist or show).
-func ValidateContextURI(s string) error {
+func validContextURI(s string) bool {
 	kind, id, ok := strings.Cut(strings.TrimPrefix(s, "spotify:"), ":")
 	if !strings.HasPrefix(s, "spotify:") || !ok || !trackIDPattern.MatchString(id) {
-		return fmt.Errorf("%w: %q is not a Spotify context URI", ErrInvalidArgument, s)
+		return false
 	}
 	switch kind {
 	case "album", "playlist", "artist", "show":
-		return nil
+		return true
 	}
-	return fmt.Errorf("%w: %q is not an album, playlist, artist or show URI", ErrInvalidArgument, s)
+	return false
 }
 
 // Repeat modes for SetRepeat.
@@ -180,7 +203,7 @@ const (
 	RepeatContext = "context"
 )
 
-// ValidRepeat reports whether mode is a repeat mode.
-func ValidRepeat(mode string) bool {
+// validRepeat reports whether mode is a repeat mode.
+func validRepeat(mode string) bool {
 	return mode == RepeatOff || mode == RepeatTrack || mode == RepeatContext
 }

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -71,6 +72,7 @@ func (f *fakePlayer) AddToQueue(_ context.Context, uri, d string) error {
 }
 
 type playerHarness struct {
+	api    *API
 	pl     *fakePlayer
 	audit  *fakeAuditor
 	sp     settings.Spotify
@@ -82,12 +84,24 @@ func newPlayerHarness(t *testing.T) *playerHarness {
 	t.Helper()
 	h := &playerHarness{pl: &fakePlayer{}, audit: &fakeAuditor{},
 		sp: settings.Spotify{RefreshToken: "rt", Scopes: []string{"user-read-playback-state", spotify.PlaybackControlScope}}}
-	api := &API{Deps: Deps{Log: slog.New(slog.DiscardHandler)}, player: h.pl, auditor: h.audit,
+	h.api = &API{Deps: Deps{Log: slog.New(slog.DiscardHandler)}, player: h.pl, auditor: h.audit,
 		spotifyAuth: func(context.Context) (settings.Spotify, error) { return h.sp, h.spErr }}
 	r := chi.NewRouter()
-	r.Route("/admin/api", api.mountPlayer)
+	r.Route("/admin/api", h.api.mountPlayer)
 	h.router = r
 	return h
+}
+
+// useRealPlayer swaps the fake for a real Player whose Web API fails the
+// test when called: validation must stop the request first.
+func (h *playerHarness) useRealPlayer(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected Spotify call %s %s", r.Method, r.URL)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	h.api.player = spotify.NewPlayer(tokenFunc(func(context.Context, bool) (string, error) { return "at", nil }), srv.URL, nil)
 }
 
 func (h *playerHarness) do(t *testing.T, method, path, body string) (int, map[string]json.RawMessage) {
@@ -115,7 +129,7 @@ func TestPlayerCommandsCallAndAudit(t *testing.T) {
 		{"/player/shuffle", `{"state":false}`, "shuffle false ", "player.shuffle"},
 		{"/player/repeat", `{"state":"track"}`, "repeat track ", "player.repeat"},
 		{"/player/transfer", `{"device_id":"d2"}`, "transfer d2 false", "player.transfer"},
-		{"/player/queue", `{"uri":"` + plTrack + `"}`, "queue spotify:track:" + plTrack + " ", "player.queue"},
+		{"/player/queue", `{"uri":"` + plTrack + `"}`, "queue " + plTrack + " ", "player.queue"},
 	} {
 		h := newPlayerHarness(t)
 		code, _ := h.do(t, http.MethodPost, "/admin/api"+tc.path, tc.body)
@@ -126,35 +140,43 @@ func TestPlayerCommandsCallAndAudit(t *testing.T) {
 		if len(h.pl.calls) != 1 || h.pl.calls[0] != tc.call {
 			t.Errorf("%s: calls %q, want %q", tc.path, h.pl.calls, tc.call)
 		}
-		if len(h.audit.calls) != 1 || h.audit.calls[0].action != tc.action || h.audit.calls[0].actor != "admin@example.com" {
+		if len(h.audit.calls) != 1 || h.audit.calls[0].action != tc.action ||
+			h.audit.calls[0].actor != "admin@example.com" || h.audit.calls[0].detail["error"] != nil {
 			t.Errorf("%s: audit %+v", tc.path, h.audit.calls)
 		}
 	}
 }
 
 func TestPlayerCommandsValidate(t *testing.T) {
-	for _, tc := range []struct{ path, body string }{
-		{"/player/volume", `{"volume_percent":101}`},
-		{"/player/volume", `{}`},
-		{"/player/seek", `{"position_ms":-1}`},
-		{"/player/shuffle", `{}`},
-		{"/player/repeat", `{"state":"all"}`},
-		{"/player/transfer", `{}`},
-		{"/player/transfer", `{"device_id":"a b"}`},
-		{"/player/queue", `{"uri":"spotify:episode:` + plTrack + `"}`},
-		{"/player/play", `{"uris":["nope"]}`},
-		{"/player/play", `{"context_uri":"spotify:track:` + plTrack + `"}`},
-		{"/player/pause", `{"device_id":"x\ty"}`},
-		{"/player/next", `{"unknown":1}`},
-		{"/player/next", `{`},
+	for _, tc := range []struct{ path, body, field string }{
+		{"/player/volume", `{"volume_percent":101}`, "volume_percent"},
+		{"/player/volume", `{}`, "volume_percent"},
+		{"/player/seek", `{"position_ms":-1}`, "position_ms"},
+		{"/player/seek", `{}`, "position_ms"},
+		{"/player/shuffle", `{}`, "state"},
+		{"/player/repeat", `{"state":"all"}`, "state"},
+		{"/player/transfer", `{}`, "device_id"},
+		{"/player/transfer", `{"device_id":"a b"}`, "device_id"},
+		{"/player/queue", `{"uri":"spotify:episode:` + plTrack + `"}`, "uri"},
+		{"/player/play", `{"uris":["nope"]}`, "uris"},
+		{"/player/play", `{"context_uri":"spotify:track:` + plTrack + `"}`, "context_uri"},
+		{"/player/play", `{"offset_position":1}`, "offset_position"},
+		{"/player/play", `{"uris":["` + plTrack + `"],"offset_uri":"x"}`, "offset_uri"},
+		{"/player/play", `{"device_id":"a b"}`, "device_id"},
+		{"/player/pause", `{"device_id":"x\ty"}`, "device_id"},
+		{"/player/next", `{"unknown":1}`, "body"},
+		{"/player/next", `{`, "body"},
 	} {
 		h := newPlayerHarness(t)
+		h.useRealPlayer(t)
 		code, body := h.do(t, http.MethodPost, "/admin/api"+tc.path, tc.body)
-		if code != http.StatusUnprocessableEntity || errCode(t, body) != "validation_failed" {
-			t.Errorf("%s %s: %d %s", tc.path, tc.body, code, errCode(t, body))
+		var e apiError
+		_ = json.Unmarshal(body["error"], &e)
+		if code != http.StatusUnprocessableEntity || e.Code != "validation_failed" || e.Fields[tc.field] == "" {
+			t.Errorf("%s %s: %d %+v, want field %s", tc.path, tc.body, code, e, tc.field)
 		}
-		if len(h.pl.calls) != 0 || len(h.audit.calls) != 0 {
-			t.Errorf("%s %s: calls %q audit %+v", tc.path, tc.body, h.pl.calls, h.audit.calls)
+		if len(h.audit.calls) != 0 {
+			t.Errorf("%s %s: invalid request audited %+v", tc.path, tc.body, h.audit.calls)
 		}
 	}
 }
@@ -192,7 +214,7 @@ func TestPlayerScopeGate(t *testing.T) {
 	}
 }
 
-func TestPlayerErrorMapping(t *testing.T) {
+func TestPlayerErrorMappingAndAudit(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		code int
@@ -201,19 +223,41 @@ func TestPlayerErrorMapping(t *testing.T) {
 		{fmt.Errorf("%w: x", spotify.ErrNoActiveDevice), http.StatusConflict, "no_active_device"},
 		{fmt.Errorf("%w: x", spotify.ErrPremiumRequired), http.StatusForbidden, "premium_required"},
 		{fmt.Errorf("%w: x", spotify.ErrRestricted), http.StatusForbidden, "player_restricted"},
+		{fmt.Errorf("%w: x", spotify.ErrInsufficientScope), http.StatusConflict, "missing_scope"},
 		{fmt.Errorf("%w: x", spotify.ErrNotFound), http.StatusNotFound, "not_found"},
 		{&spotify.RateLimitError{RetryAfter: 5e9}, http.StatusTooManyRequests, "rate_limited"},
 		{spotify.ErrNotConnected, http.StatusConflict, "spotify_not_connected"},
+		{&spotify.StatusError{Code: http.StatusUnauthorized}, http.StatusConflict, "spotify_not_connected"},
+		{&spotify.StatusError{Code: http.StatusInternalServerError}, http.StatusBadGateway, "spotify_error"},
 		{errors.New("boom"), http.StatusBadGateway, "spotify_error"},
 	} {
 		h := newPlayerHarness(t)
 		h.pl.err = tc.err
-		code, body := h.do(t, http.MethodPost, "/admin/api/player/next", "")
+		code, body := h.do(t, http.MethodPost, "/admin/api/player/next", `{"device_id":"d1"}`)
 		if code != tc.code || errCode(t, body) != tc.want {
 			t.Errorf("%v: %d %s, want %d %s", tc.err, code, errCode(t, body), tc.code, tc.want)
 		}
-		if len(h.audit.calls) != 0 {
-			t.Errorf("%v: failed command audited", tc.err)
+		// Refused commands are audited with the error code.
+		if len(h.audit.calls) != 1 || h.audit.calls[0].action != "player.next" ||
+			h.audit.calls[0].detail["error"] != tc.want || h.audit.calls[0].detail["device_id"] != "d1" {
+			t.Errorf("%v: audit %+v", tc.err, h.audit.calls)
+		}
+	}
+}
+
+func TestPlayerRetryAfterRoundsUp(t *testing.T) {
+	for _, tc := range []struct {
+		after time.Duration
+		want  string
+	}{{0, "1"}, {300 * time.Millisecond, "1"}, {2100 * time.Millisecond, "3"}, {7 * time.Second, "7"}} {
+		h := newPlayerHarness(t)
+		h.pl.err = &spotify.RateLimitError{RetryAfter: tc.after}
+		req := httptest.NewRequest(http.MethodPost, "/admin/api/player/next", nil)
+		req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, User{Email: "a@b.c"}))
+		rec := httptest.NewRecorder()
+		h.router.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Retry-After"); rec.Code != http.StatusTooManyRequests || got != tc.want {
+			t.Errorf("%s: %d Retry-After %q, want %s", tc.after, rec.Code, got, tc.want)
 		}
 	}
 }
@@ -228,21 +272,43 @@ func TestGetPlayer(t *testing.T) {
 	if code != http.StatusOK || string(body["can_control"]) != "true" {
 		t.Fatalf("%d %v", code, body)
 	}
-	var v playerView
+	var v struct {
+		State   *spotify.PlaybackState `json:"state"`
+		Devices []spotify.Device       `json:"devices"`
+		Queue   []spotify.PlayerTrack  `json:"queue"`
+	}
 	b, _ := json.Marshal(body)
 	_ = json.Unmarshal(b, &v)
 	if v.State == nil || v.State.Item.Name != "Song" || len(v.Devices) != 1 || len(v.Queue) != 1 {
 		t.Errorf("view %+v", v)
 	}
 
-	// The queue is best effort; nothing loaded hides it.
+	// ?parts= leaves the other parts out.
+	code, body = h.do(t, http.MethodGet, "/admin/api/player?parts=state", "")
+	if _, has := body["devices"]; code != http.StatusOK || has || body["queue"] != nil || body["state"] == nil {
+		t.Errorf("parts=state: %d %v", code, body)
+	}
+	code, body = h.do(t, http.MethodGet, "/admin/api/player?parts=devices,queue", "")
+	if _, has := body["state"]; code != http.StatusOK || has || body["devices"] == nil || body["queue"] == nil {
+		t.Errorf("parts=devices,queue: %d %v", code, body)
+	}
+	if code, _ := h.do(t, http.MethodGet, "/admin/api/player?parts=lyrics", ""); code != http.StatusUnprocessableEntity {
+		t.Errorf("bad parts: %d", code)
+	}
+
+	// The queue is best effort.
 	h.pl.qErr = spotify.ErrQueueForbidden
 	if code, body := h.do(t, http.MethodGet, "/admin/api/player", ""); code != http.StatusOK || string(body["queue"]) != "null" {
 		t.Errorf("queue error: %d %s", code, body["queue"])
 	}
+	// ... except a rate limit, which the SPA must see to back off.
+	h.pl.qErr = &spotify.RateLimitError{RetryAfter: time.Second}
+	if code, _ := h.do(t, http.MethodGet, "/admin/api/player?parts=devices,queue", ""); code != http.StatusTooManyRequests {
+		t.Errorf("queue rate limit: %d", code)
+	}
 	h.pl.qErr, h.pl.state = nil, nil
-	if code, body := h.do(t, http.MethodGet, "/admin/api/player", ""); code != http.StatusOK ||
-		string(body["state"]) != "null" || string(body["queue"]) != "null" {
+	if code, body := h.do(t, http.MethodGet, "/admin/api/player?parts=state", ""); code != http.StatusOK ||
+		string(body["state"]) != "null" {
 		t.Errorf("no device: %d %v", code, body)
 	}
 	h.pl.err = fmt.Errorf("%w: x", spotify.ErrRestricted)
@@ -253,22 +319,28 @@ func TestGetPlayer(t *testing.T) {
 
 func TestSearchPlayer(t *testing.T) {
 	h := newPlayerHarness(t)
-	code, body := h.do(t, http.MethodGet, "/admin/api/player/search?q=%20love%20&limit=5", "")
+	code, body := h.do(t, http.MethodGet, "/admin/api/player/search?q=love&limit=5", "")
 	if code != http.StatusOK || len(h.pl.calls) != 1 || h.pl.calls[0] != "search love 5" {
 		t.Fatalf("%d %q", code, h.pl.calls)
 	}
 	if !strings.Contains(string(body["data"]), "Found") {
 		t.Errorf("data %s", body["data"])
 	}
-	for _, q := range []string{"", "?q=", "?q=x&limit=11", "?q=x&limit=0", "?q=" + strings.Repeat("a", 201)} {
-		if code, _ := h.do(t, http.MethodGet, "/admin/api/player/search"+q, ""); code != http.StatusUnprocessableEntity {
-			t.Errorf("%q: %d", q, code)
-		}
-	}
 	// Search needs a connection but not the control scope.
 	h.sp.Scopes = []string{"user-read-playback-state"}
 	if code, _ := h.do(t, http.MethodGet, "/admin/api/player/search?q=x", ""); code != http.StatusOK {
 		t.Errorf("search without control scope: %d", code)
+	}
+
+	h.useRealPlayer(t)
+	for q, field := range map[string]string{"": "q", "?q=%20": "q", "?q=x&limit=11": "limit", "?q=x&limit=0": "limit",
+		"?q=x&limit=two": "limit", "?q=" + strings.Repeat("a", 201): "q"} {
+		code, body := h.do(t, http.MethodGet, "/admin/api/player/search"+q, "")
+		var e apiError
+		_ = json.Unmarshal(body["error"], &e)
+		if code != http.StatusUnprocessableEntity || e.Fields[field] == "" {
+			t.Errorf("%q: %d %+v", q, code, e)
+		}
 	}
 }
 

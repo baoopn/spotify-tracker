@@ -371,6 +371,8 @@ export type TrackTranslation = {
 	waiting: boolean;
 	kind: 'synced' | 'plain' | null;
 	source_language: string | null;
+	/** Every language in the lyrics, main first; null if translated before it was stored. */
+	languages: string[] | null;
 	en: string | null;
 	vi: string | null;
 	model: string;

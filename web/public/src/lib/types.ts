@@ -46,6 +46,8 @@ export type LyricsTranslationText = { lines: string[]; plain: string | null };
 export type LyricsTranslation = {
 	status: 'pending' | 'done';
 	source_language: string | null;
+	/** Every language in the lyrics, main first; null when not recorded. */
+	languages: string[] | null;
 	en: LyricsTranslationText | null;
 	vi: LyricsTranslationText | null;
 	credit: { text: string };

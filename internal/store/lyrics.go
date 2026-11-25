@@ -61,6 +61,7 @@ type TrackTranslation struct {
 	Waiting        bool       `json:"waiting"`
 	Kind           *string    `json:"kind"`
 	SourceLanguage *string    `json:"source_language"`
+	Languages      []string   `json:"languages"` // main first; null if translated before it was stored
 	EN             *string    `json:"en"`
 	VI             *string    `json:"vi"`
 	Model          string     `json:"model"`
@@ -111,14 +112,15 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 			COALESCE(`+lyricsLeasedSQL+` AND NOT `+lyricsHeldSQL+`, false), COALESCE(l.requested_at, l.claim_requested_at),
 			l.manual_at, COALESCE(l.manual_by, ''), COALESCE(l.replace_manual, false),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.kind, tr.source_language,
-			tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
+			tr.languages, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
 			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL("false")+`
 		FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$3", "$4")+` AS reached) cap
 		WHERE t.id = $1`, trackID, withSynced, caps.Daily, caps.Monthly).Scan(&out.TrackID, &status, &source, &out.LRCLibID,
 		&out.Plain, &out.Synced, &out.HasSynced, &out.Attempts, &out.LastError, &out.FetchedAt, &out.NextAttemptAt,
-		&out.Waiting, &out.Queued, &out.LookingUp, &out.RequestedAt, &out.ManualAt, &out.ManualBy, &out.ReplaceManual, &trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
+		&out.Waiting, &out.Queued, &out.LookingUp, &out.RequestedAt, &out.ManualAt, &out.ManualBy, &out.ReplaceManual,
+		&trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &tr.Languages, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
 		&tr.TranslatedAt, &tr.NextAttemptAt, &tr.Waiting)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TrackLyrics{}, domain.ErrNotFound
@@ -189,6 +191,7 @@ type NowTranslation struct {
 	Status         string
 	Kind           string // domain.TranslationSynced or domain.TranslationPlain (done only)
 	SourceLanguage string
+	Languages      []string // every language in the lyrics, main first; nil = not recorded
 	EN, VI         []string // synced: one per parsed LRC line; nil = none
 	ENText, VIText string   // plain; "" = none
 }
@@ -208,20 +211,20 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 		trStatus, kind, lang *string
 		enText, viText       *string
 		fresh, waiting       bool
-		en, vi               []string
+		en, vi, langs        []string
 	)
 	err := q.db.QueryRow(ctx, `
 		SELECT l.status, COALESCE(l.source, ''), (`+lookupableSQL+`) AND COALESCE(l.track_id IS NULL OR `+lyricsWaitingSQL+`, false),
 			COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL("NOT cap.reached")+`,
-			tr.kind, tr.source_language, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
+			tr.kind, tr.source_language, tr.languages, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
 		FROM tracks t
 		LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$2", "$3")+` AS reached) cap
 		WHERE t.id = $1`,
 		trackID, caps.Daily, caps.Monthly).Scan(&status, &out.Source, &waitingLookup, &out.Synced, &out.Plain, &trStatus, &fresh,
-		&waiting, &kind, &lang, &en, &vi, &enText, &viText)
+		&waiting, &kind, &lang, &langs, &en, &vi, &enText, &viText)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NowLyrics{}, nil
 	}
@@ -244,7 +247,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 	out.Status = domain.LyricsFound
 	tr := &NowTranslation{Status: translationState(trStatus, fresh, waiting)}
 	if tr.Status == domain.TranslationDone {
-		tr.Kind, tr.SourceLanguage = deref(kind), deref(lang)
+		tr.Kind, tr.SourceLanguage, tr.Languages = deref(kind), deref(lang), langs
 		tr.EN, tr.VI, tr.ENText, tr.VIText = en, vi, deref(enText), deref(viText)
 	}
 	out.Translation = tr

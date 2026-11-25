@@ -465,6 +465,34 @@ func (s *stealTranslator) Translate(_ context.Context, r Request) (Result, error
 	return Result{SourceLanguage: "vi", EN: []string{"x"}}, nil
 }
 
+// mixedNullTranslator answers a mixed song with en left null.
+type mixedNullTranslator struct{}
+
+func (mixedNullTranslator) Translate(_ context.Context, r Request) (Result, error) {
+	return Result{SourceLanguage: "en", Languages: []string{"en", "vi"}, VI: []string{"x"},
+		MixedNull: []string{"en"}, Model: "m", InputTokens: 10, OutputTokens: 5}, nil
+}
+
+// A mixed song with a target left null is stored (none for that target),
+// with a warning, and not retried.
+func TestWorkerMixedNull(t *testing.T) {
+	st := newFakeStore(cand("mix", "[00:01.00] x"))
+	var buf strings.Builder
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	testWorker(st, mixedNullTranslator{}, log).RunOnce(context.Background())
+	got, ok := st.set["mix"]
+	if !ok || got.EN != nil || len(got.VI) != 1 || strings.Join(got.Languages, ",") != "en,vi" {
+		t.Errorf("stored = %+v, %v", got, ok)
+	}
+	if len(st.deferred) != 0 {
+		t.Errorf("deferred = %+v, want none (no retry)", st.deferred)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "track_id=mix") || !strings.Contains(out, "missing=en") {
+		t.Errorf("log = %q", out)
+	}
+}
+
 // Spacing is waited between calls, not before the first.
 func TestWorkerSpacing(t *testing.T) {
 	st := newFakeStore(cand("a", "[00:01.00] x"), cand("b", "[00:01.00] y"))

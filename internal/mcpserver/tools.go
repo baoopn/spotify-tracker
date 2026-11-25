@@ -121,8 +121,9 @@ var adminTools = []toolDef{
 		desc: "Lyrics of one track (from LRCLIB): status (found, instrumental, not_found, error, or pending = " +
 			"not looked up yet), queued / looking_up (the lookup queue), next_attempt_at, plain lyrics, " +
 			"has_synced, and with synced=true the time-synced LRC text. " +
-			"translation: status (pending, done, skipped, refused, error), stale, source_language, and en / vi " +
-			"machine translations by Claude (null when the song is already in that language; for synced lyrics " +
+			"translation: status (pending, done, skipped, refused, error), stale, source_language (main), languages " +
+			"(every language in the lyrics, main first), and en / vi machine translations by Claude (null only when " +
+			"the song is all in that language; for synced lyrics " +
 			"one line per LRC line, joined with newlines).",
 		params: []param{idParam("Spotify track ID."),
 			{name: "synced", enum: []string{"true", "false"}, def: "false",

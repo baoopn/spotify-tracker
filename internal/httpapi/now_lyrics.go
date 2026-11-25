@@ -87,11 +87,12 @@ type nowLyricsBody struct {
 }
 
 // translationBody is the Claude translation of found lyrics. While pending
-// the languages are null. A null language means the song is in that
+// the languages are null. A null language means the song is all in that
 // language (or the translation did not line up).
 type translationBody struct {
 	Status         string                `json:"status"` // pending or done
 	SourceLanguage *string               `json:"source_language"`
+	Languages      []string              `json:"languages"` // main first; null when not recorded
 	EN             *translationText      `json:"en"`
 	VI             *translationText      `json:"vi"`
 	Credit         translationCreditBody `json:"credit"`
@@ -271,6 +272,7 @@ func buildTranslation(t *store.NowTranslation, kind string, parsed, served int) 
 		lang := t.SourceLanguage
 		out.SourceLanguage = &lang
 	}
+	out.Languages = t.Languages
 	text := func(lines []string, plain string) *translationText {
 		if kind == domain.TranslationSynced {
 			if len(lines) != parsed {

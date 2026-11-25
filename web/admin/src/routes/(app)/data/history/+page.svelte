@@ -7,6 +7,7 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
+	import TrackDrawer from '../tracks/TrackDrawer.svelte';
 	import { createInfiniteQuery } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { duration } from '#lib/format.js';
@@ -22,6 +23,7 @@
 	const manual = new ManualRefetch(() => plays.refetch());
 	const rows = $derived(plays.data?.pages.flatMap((p) => p.data) ?? []);
 	const error = $derived(plays.error ? errorMessage(plays.error) : null);
+	let selected = $state<string | null>(null);
 </script>
 
 <PageHeader
@@ -68,7 +70,7 @@
 			]}
 		>
 			<table class="data-table">
-				<caption class="sr-only">Listening history</caption>
+				<caption class="sr-only">Listening history. Select a row for track details.</caption>
 				<thead>
 					<tr>
 						<th scope="col" class="tl-index">No.</th>
@@ -80,9 +82,21 @@
 				</thead>
 				<tbody>
 					{#each rows as row, i (row.id)}
-						<tr>
+						<tr class="row-link" onclick={() => (selected = row.track.id)}>
 							<td class="tl-index">{String(i + 1).padStart(2, '0')}</td>
-							<td class="max-w-0 min-w-64"><TrackCell track={row.track} /></td>
+							<td class="max-w-0 min-w-64">
+								<button
+									type="button"
+									class="block w-full rounded-lg text-left"
+									aria-label="Show details for {row.track.name}"
+									onclick={(e) => {
+										e.stopPropagation();
+										selected = row.track.id;
+									}}
+								>
+									<TrackCell track={row.track} />
+								</button>
+							</td>
 							<td class="text-muted tabular-nums">{duration(row.track.duration_ms)}</td>
 							<td>
 								{#if row.replay_count > 1}
@@ -127,3 +141,5 @@
 		</div>
 	{/if}
 </div>
+
+<TrackDrawer bind:trackId={selected} />

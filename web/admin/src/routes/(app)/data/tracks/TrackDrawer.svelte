@@ -172,7 +172,7 @@
 				{/if}
 			</section>
 
-			<LyricsSection trackId={t.id} />
+			<LyricsSection trackId={t.id} durationMs={t.duration_ms} />
 
 			<section aria-labelledby="feat-h">
 				<h3 id="feat-h" class="mb-3 text-sm font-semibold text-fg">Audio features</h3>

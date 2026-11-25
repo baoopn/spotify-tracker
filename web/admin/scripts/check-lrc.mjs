@@ -2,7 +2,16 @@
 // Run by `pnpm check` (node strips the TS types).
 import assert from 'node:assert/strict';
 
-const { parseLrc, activeIndex } = await import('../src/lib/lrc.ts');
+const {
+	parseLrc,
+	activeIndex,
+	normalizeLyrics,
+	validateLrc,
+	plainFromLrc,
+	markerOnly,
+	lrcSourceLines,
+	formatLrcTime
+} = await import('../src/lib/lrc.ts');
 
 let passed = 0;
 function check(name, fn) {
@@ -142,6 +151,82 @@ check('translation: plain interleave and notes', () => {
 	assert.match(translationNote(tr({ status: 'not_queued' })), /when they play/);
 	assert.match(translationNote(tr({ status: 'error', next_attempt_at: 'x' })), /tried again later/);
 	assert.match(translationNote(tr({ status: 'error' })), /given up/);
+});
+
+// Manual lyrics: same fixtures and messages as internal/lrc/validate_test.go.
+check('normalizeLyrics: BOM, CRLF, trailing spaces, blank edges', () => {
+	const bom = String.fromCharCode(0xfeff);
+	assert.equal(
+		normalizeLyrics(`${bom}\r\n[00:01.00] a  \r\n[00:02.00] b\t\r[00:03.00] c\0\n\n`),
+		'[00:01.00] a\n[00:02.00] b\n[00:03.00] c'
+	);
+});
+
+check('validateLrc: valid text and repeated choruses', () => {
+	assert.deepEqual(
+		validateLrc('[ar:Artist]\n[00:01.00] a\n\n[00:02.50] b\n[00:03.00]', 200_000),
+		[]
+	);
+	assert.deepEqual(validateLrc('[00:10.00] a\n[00:05.00][01:00.00] chorus\n[00:20.00] b'), []);
+	assert.deepEqual(validateLrc('[03:24.00] a', 200_000), [], 'within the slack');
+	assert.deepEqual(validateLrc('[offset:+20000]\n[03:35.00] a', 200_000), [], 'offset');
+});
+
+check('validateLrc: per-line errors', () => {
+	assert.deepEqual(validateLrc('[00:01.00] a\n[00:75.00] b'), [
+		{
+			line: 2,
+			message: 'invalid timestamp [00:75.00]: seconds must be below 60 and minutes at most 999'
+		}
+	]);
+	assert.deepEqual(validateLrc('[00:01.00] a\n[1.5] b\n[00:02.1234] c'), [
+		{ line: 2, message: 'invalid timestamp [1.5]: use [mm:ss.xx]' },
+		{ line: 3, message: 'invalid timestamp [00:02.1234]: use [mm:ss.xx]' }
+	]);
+	const untimed = 'no timestamp: start the line with [mm:ss.xx], or remove it';
+	assert.deepEqual(validateLrc('[00:01.00] a\nplain words\n[Chorus]'), [
+		{ line: 2, message: untimed },
+		{ line: 3, message: untimed }
+	]);
+	assert.deepEqual(validateLrc('[00:05.00] a\n[00:03.00] b\n[00:06.00] c'), [
+		{ line: 2, message: 'out of order: 0:03.00 comes before 0:05.00 on line 1' }
+	]);
+	assert.deepEqual(validateLrc('[00:01.00] a\n[03:30.00] b', 200_000), [
+		{ line: 2, message: '3:30.00 is past the end of the song (3:20.00)' }
+	]);
+	assert.deepEqual(validateLrc('[ar:x]'), [
+		{ line: 0, message: 'no timed lines: synced lyrics need [mm:ss.xx] timestamps' }
+	]);
+	assert.equal(validateLrc('x\n'.repeat(200)).length, 50, 'errors are capped');
+	assert.equal(validateLrc('[00:01.00] a\n'.repeat(2001))[0].line, 0, 'too many lines');
+});
+
+check('plainFromLrc: tags removed, markers become one stanza break', () => {
+	const lrc =
+		'[ar:Artist]\n[offset:+100]\n[00:01.00] one <00:01.50>two\n[00:02.00]\n[00:02.50] ♪\n' +
+		'[00:03.00][00:30.00] chorus\n[00:04.00] [Instrumental]\n[00:05.00] last';
+	assert.equal(plainFromLrc(lrc), 'one two\n\nchorus\n\nlast');
+	assert.equal(plainFromLrc('[00:01.00] ♪\n[00:02.00]'), '');
+	assert.ok(markerOnly('[Instrumental] ♪ ...'));
+	assert.ok(!markerOnly('la la'));
+});
+
+check('lrcSourceLines: the editor preview rows', () => {
+	assert.deepEqual(
+		lrcSourceLines('[ti:T]\n[00:01.00][00:30.00] a\n\n[00:99.00] b\nwords').map((l) => [
+			l.line,
+			l.kind,
+			l.starts
+		]),
+		[
+			[1, 'meta', []],
+			[2, 'timed', [1000, 30000]],
+			[3, 'blank', []],
+			[4, 'bad', []],
+			[5, 'bad', []]
+		]
+	);
+	assert.equal(formatLrcTime(61_230), '1:01.23');
 });
 
 if (!process.exitCode) console.log(`${passed} lrc checks passed`);

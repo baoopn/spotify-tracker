@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import ConfirmDialog from '../ConfirmDialog.svelte';
 	import RelTime from '../RelTime.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import { qk } from '#lib/queries.js';
@@ -17,14 +18,30 @@
 
 	const queryClient = useQueryClient();
 	const requeue = createMutation(() => ({
-		mutationFn: () => api.requeueLyrics(lyrics.track_id),
-		onSuccess: () => {
+		mutationFn: (replaceManual: boolean) => api.requeueLyrics(lyrics.track_id, { replaceManual }),
+		onSuccess: (_d, replaceManual) => {
 			void queryClient.invalidateQueries({ queryKey: ['tracks', 'lyrics', lyrics.track_id] });
 			void queryClient.invalidateQueries({ queryKey: qk.lyrics.queue });
-			toasts.success('Lyrics lookup queued', 'It goes to the front of the queue.');
+			toasts.success(
+				'Lyrics lookup queued',
+				replaceManual
+					? 'LRCLIB lyrics will replace yours when found.'
+					: 'It goes to the front of the queue.'
+			);
 		},
 		onError: (err) => toasts.error('Could not queue the lookup', errorMessage(err))
 	}));
+
+	// Lyrics added by hand are kept unless a look-up is confirmed to replace them.
+	const manual = $derived(lyrics.source === 'manual');
+	let confirmOpen = $state(false);
+	async function replace() {
+		try {
+			await requeue.mutateAsync(true);
+		} catch {
+			// onError already shows a toast; the dialog closes.
+		}
+	}
 
 	const settled = $derived(!lyrics.looking_up && !lyrics.queued);
 	// Stored lyrics whose fresh lookup failed: they stay, and it is retried.
@@ -39,7 +56,9 @@
 		{#if lyrics.looking_up}
 			<span class="chip">Looking up…</span>
 		{:else if lyrics.queued}
-			<span class="chip">Queued</span>
+			<span class="chip">Queued</span>{#if lyrics.replace_manual}<span
+					>LRCLIB lyrics will replace yours when found</span
+				>{/if}
 		{:else if lyrics.status === 'not_found'}
 			<span>
 				Not found{#if lyrics.next_attempt_at}, next try <RelTime
@@ -63,10 +82,24 @@
 			type="button"
 			class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink disabled:opacity-50"
 			disabled={requeue.isPending}
-			onclick={() => requeue.mutate()}
-			title="Fetch the lyrics from LRCLIB again, ahead of the queue. Changed lyrics are translated again."
+			onclick={() => (manual ? (confirmOpen = true) : requeue.mutate(false))}
+			aria-haspopup={manual ? 'dialog' : undefined}
+			title={manual
+				? 'Look the lyrics up on LRCLIB; what it finds replaces your lyrics.'
+				: 'Fetch the lyrics from LRCLIB again, ahead of the queue. Changed lyrics are translated again.'}
 		>
 			{requeue.isPending ? 'Queuing…' : 'Look up again'}
 		</button>
 	{/if}
 </div>
+
+{#if manual}
+	<ConfirmDialog
+		bind:open={confirmOpen}
+		title="Replace your lyrics?"
+		message="LRCLIB is asked for this song again. If it finds lyrics, they replace the lyrics you added. If it finds nothing, yours stay."
+		confirmLabel="Look up and replace"
+		danger
+		onconfirm={replace}
+	/>
+{/if}

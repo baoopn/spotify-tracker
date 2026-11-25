@@ -324,6 +324,7 @@ export type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'p
 export type TrackLyrics = {
 	track_id: string;
 	status: LyricsStatus;
+	/** "lrclib", "manual" (added by hand), or "" before the first lookup. */
 	source: string;
 	lrclib_id: number | null;
 	/** Null unless status is "found". */
@@ -343,6 +344,11 @@ export type TrackLyrics = {
 	looking_up: boolean;
 	/** An admin re-queue that has not finished yet. */
 	requested_at: string | null;
+	/** Lyrics added by hand (source "manual"): the last edit and who made it. */
+	manual_at: string | null;
+	manual_by: string;
+	/** A "Look up again" that may replace the manual lyrics is waiting. */
+	replace_manual: boolean;
 	/** The lyrics fetcher runs (LYRICS_ENABLED): "Look up again" can be served. */
 	lookup_enabled: boolean;
 	/** The Claude translation; null unless status is "found". */
@@ -408,6 +414,8 @@ export type LyricsQueue = {
 	error: number;
 	next_retry_at: string | null;
 	last_lookup_at: string | null;
+	/** Of found and instrumental: added by hand. */
+	manual: number;
 };
 
 /** One hit of GET /admin/api/lyrics/search. */
@@ -632,3 +640,10 @@ export type TopPlaylistsStatus = {
 };
 
 export type TopPlaylistsList = OffsetList<AdminTopPlaylist> & { status: TopPlaylistsStatus };
+
+/** PUT /tracks/{id}/lyrics: lyrics added by hand. Plain is derived from synced when left out. */
+export type ManualLyricsInput = {
+	synced?: string;
+	plain?: string;
+	instrumental?: boolean;
+};

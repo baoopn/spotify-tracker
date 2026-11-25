@@ -37,6 +37,7 @@ import type {
 	TopTrack,
 	LyricsMatch,
 	TrackAdminDetail,
+	ManualLyricsInput,
 	TrackLyrics,
 	TranslationQueue,
 	LyricsQueue,
@@ -49,6 +50,7 @@ import type {
 	V1List
 } from './types';
 import type { McpSettings, McpSettingsUpdate, McpTokenCreated } from './mcp';
+import type { LrcLineError } from './lrc';
 
 export const ADMIN_API = '/admin/api';
 export const PUBLIC_API = '/api/v1';
@@ -57,9 +59,18 @@ export class ApiError extends Error {
 	readonly status: number;
 	readonly code: string;
 	readonly fields: Record<string, string>;
+	/** Per-line LRC errors (manual synced lyrics). */
+	readonly lines: LrcLineError[];
 
-	constructor(status: number, code: string, message: string, fields?: Record<string, string>) {
+	constructor(
+		status: number,
+		code: string,
+		message: string,
+		fields?: Record<string, string>,
+		lines?: LrcLineError[]
+	) {
 		super(message);
+		this.lines = lines ?? [];
 		this.name = 'ApiError';
 		this.status = status;
 		this.code = code;
@@ -120,14 +131,21 @@ async function parseError(res: Response): Promise<ApiError> {
 	let code = `http_${res.status}`;
 	let message = res.statusText || `Request failed (${res.status})`;
 	let fields: Record<string, string> | undefined;
+	let lines: LrcLineError[] | undefined;
 	try {
 		const body = (await res.json()) as {
-			error?: { code?: string; message?: string; fields?: Record<string, string> };
+			error?: {
+				code?: string;
+				message?: string;
+				fields?: Record<string, string>;
+				lines?: LrcLineError[];
+			};
 		};
 		if (body?.error) {
 			code = body.error.code ?? code;
 			message = body.error.message ?? message;
 			fields = body.error.fields;
+			if (Array.isArray(body.error.lines)) lines = body.error.lines;
 		}
 	} catch {
 		// non-JSON error body (proxy error page etc.)
@@ -135,7 +153,7 @@ async function parseError(res: Response): Promise<ApiError> {
 	if (res.status === 429 && !fields) {
 		message = message || 'Too many requests, slow down a little.';
 	}
-	return new ApiError(res.status, code, message, fields);
+	return new ApiError(res.status, code, message, fields, lines);
 }
 
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -275,9 +293,21 @@ export const api = {
 		),
 	translationQueue: ({ signal }: Signal = {}) =>
 		request<TranslationQueue>(`${ADMIN_API}/lyrics/translation-queue`, { signal }),
-	requeueLyrics: (id: string) =>
+	/** replaceManual lets the next LRCLIB result replace lyrics added by hand (else 409 manual_lyrics). */
+	requeueLyrics: (id: string, { replaceManual = false }: { replaceManual?: boolean } = {}) =>
 		request<{ queued: boolean }>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics/requeue`, {
-			method: 'POST'
+			method: 'POST',
+			body: replaceManual ? { replace_manual: true } : undefined
+		}),
+	/** Stores lyrics added by hand; 400 invalid_lrc carries per-line errors (ApiError.lines). */
+	setLyrics: (id: string, body: ManualLyricsInput) =>
+		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics`, {
+			method: 'PUT',
+			body
+		}),
+	clearManualLyrics: (id: string) =>
+		request<TrackLyrics>(`${ADMIN_API}/tracks/${encodeURIComponent(id)}/lyrics/manual`, {
+			method: 'DELETE'
 		}),
 	lyricsQueue: ({ signal }: Signal = {}) =>
 		request<LyricsQueue>(`${ADMIN_API}/lyrics/queue`, { signal }),

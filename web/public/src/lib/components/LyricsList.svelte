@@ -70,7 +70,7 @@
 	class={[
 		'relative overflow-y-auto',
 		size === 'lg'
-			? 'overscroll-contain py-[20dvh] font-display text-2xl leading-snug font-medium tracking-tight sm:text-3xl'
+			? 'overscroll-contain py-[20svh] font-display text-2xl leading-snug font-medium tracking-tight sm:text-3xl'
 			: 'py-2 text-base leading-relaxed',
 		className
 	]}

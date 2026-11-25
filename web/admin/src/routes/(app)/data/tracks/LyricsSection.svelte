@@ -60,7 +60,7 @@
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="max-h-80 overflow-y-auto rounded-xl bg-surface-2 p-3 text-sm leading-relaxed text-fg"
+			class="max-h-80 overflow-y-auto rounded-xl bg-surface-2 p-3 font-lyrics text-sm leading-relaxed text-fg"
 		>
 			{#if trLines}
 				{#each lines as line, i (i)}

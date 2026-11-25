@@ -49,7 +49,7 @@
 				>
 					<TrackCell track={m.track} />
 					{#if m.snippet}
-						<span class="line-clamp-2 text-sm break-words text-muted">{m.snippet}</span>
+						<span class="line-clamp-2 font-lyrics text-sm break-words text-muted">{m.snippet}</span>
 					{/if}
 					{#if m.phrase_match || m.has_synced}
 						<span class="flex flex-wrap gap-1.5">

@@ -13,6 +13,7 @@
 		lyricsView,
 		pickLang
 	} from '#lib/lyrics.js';
+	import { loadLyricsFonts } from '#lib/lyricsFonts.js';
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { estimatePositionMs } from '#lib/playback.js';
 	import { nowLyricsQuery } from '#lib/queries.js';
@@ -63,6 +64,8 @@
 	const trLines = $derived(trText && lines.length ? trText.lines : null);
 	const trPlain = $derived(trText && plain ? trText.plain : null);
 	const translating = $derived(tr?.status === 'pending');
+	// CJK lyrics: fetch those font faces only when the words need them.
+	$effect(() => loadLyricsFonts(plain, ...lines.map((l) => l.text)));
 
 	// The stream frames (every few seconds) reset the base; the 250 ms clock
 	// moves the highlight in between. Only needed for synced lines.
@@ -178,7 +181,7 @@
 		aria-label="Lyrics, scrollable"
 		tabindex="0"
 		dir="auto"
-		class={['overflow-y-auto break-words text-ink', ...cls]}
+		class={['overflow-y-auto font-lyrics break-words text-ink', ...cls]}
 	>
 		{#if pairs}
 			{#each pairs as p, i (i)}

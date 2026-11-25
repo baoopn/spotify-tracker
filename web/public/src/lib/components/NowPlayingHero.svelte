@@ -15,6 +15,7 @@
 	import { live } from '#lib/live.svelte.js';
 	import { lyricsLayout } from '#lib/lyricsLayout.svelte.js';
 	import { lyricsState } from '#lib/lyrics.js';
+	import { loadLyricsFonts } from '#lib/lyricsFonts.js';
 	import { historyQuery, loadStatus, nowLyricsQuery, nowPlayingQuery } from '#lib/queries.js';
 
 	/** A paused track this old counts as "not listening". */
@@ -46,6 +47,8 @@
 	const ratio = $derived(progressMs != null && durationMs > 0 ? progressMs / durationMs : 0);
 
 	const trackUrl = $derived(spotifyUrl(track?.external_url));
+	// Song titles and artists can be CJK: fetch those faces only when needed.
+	$effect(() => loadLyricsFonts(track?.name, track && artistNames(track.artists)));
 	const albumUrl = $derived(spotifyUrl(track?.album?.external_url));
 	const year = $derived(releaseYear(track?.album?.release_date));
 	const cover = $derived(track?.album?.cover_image_url);
@@ -136,7 +139,7 @@
 	{#if track}
 		<h3
 			class={[
-				'font-display leading-[1.05] font-semibold tracking-[-0.02em] text-balance break-words',
+				'font-lyrics leading-[1.05] font-semibold tracking-[-0.02em] text-balance break-words',
 				cls
 			]}
 		>
@@ -257,7 +260,9 @@
 						)}
 						<div class="min-w-0 flex-1 lg:mt-5">
 							{@render title('text-xl sm:text-2xl lg:text-3xl')}
-							<p class="mt-1 truncate font-medium lg:mt-2 lg:text-lg lg:whitespace-normal">
+							<p
+								class="mt-1 truncate font-lyrics font-medium lg:mt-2 lg:text-lg lg:whitespace-normal"
+							>
 								<ArtistLinks artists={track.artists} />
 							</p>
 						</div>
@@ -289,7 +294,7 @@
 				<div class="min-w-0">
 					{@render title('text-4xl sm:text-5xl lg:text-6xl')}
 
-					<p class="mt-3 text-lg font-medium break-words sm:text-xl">
+					<p class="mt-3 font-lyrics text-lg font-medium break-words sm:text-xl">
 						<ArtistLinks artists={track.artists} />
 					</p>
 

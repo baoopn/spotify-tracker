@@ -101,7 +101,7 @@
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="relative max-h-80 overflow-y-auto py-2 text-base leading-relaxed"
+			class="relative max-h-80 overflow-y-auto py-2 font-lyrics text-base leading-relaxed"
 			onwheel={userScrolled}
 			onpointerdown={userScrolled}
 			ontouchmove={userScrolled}
@@ -132,7 +132,7 @@
 			role="region"
 			aria-label="Lyrics"
 			tabindex="0"
-			class="max-h-80 overflow-y-auto text-sm leading-relaxed text-ink"
+			class="max-h-80 overflow-y-auto font-lyrics text-sm leading-relaxed text-ink"
 		>
 			{#if trPairs}
 				{#each trPairs as p, i (i)}

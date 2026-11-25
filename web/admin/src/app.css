@@ -56,6 +56,10 @@
 	--font-sans: 'Inter Variable', var(--baoopn-font-body);
 	--font-display: 'Outfit Variable', var(--baoopn-font-display);
 	--font-mono: 'JetBrains Mono Variable', var(--baoopn-font-mono);
+	/* Lyrics and song titles in any language (same stack as web/public). */
+	--font-lyrics:
+		'Noto Sans Variable', 'Noto Sans SC Variable', 'Noto Sans TC Variable', 'Noto Sans JP Variable',
+		'Noto Sans KR Variable', 'Noto Sans Thai Variable', ui-sans-serif, system-ui, sans-serif;
 	--radius-brand: var(--baoopn-radius);
 
 	/* No blurred shadows anywhere: depth is a print offset. */

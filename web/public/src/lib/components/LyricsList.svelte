@@ -70,8 +70,8 @@
 	class={[
 		'relative overflow-y-auto',
 		size === 'lg'
-			? 'overscroll-contain py-[20svh] font-display text-2xl leading-snug font-medium tracking-tight sm:text-3xl'
-			: 'py-2 text-base leading-relaxed',
+			? 'overscroll-contain py-[20svh] font-lyrics text-2xl leading-snug font-medium tracking-tight sm:text-3xl'
+			: 'py-2 font-lyrics text-base leading-relaxed',
 		className
 	]}
 	onwheel={userScrolled}
@@ -97,7 +97,7 @@
 				<span
 					class={[
 						'block font-normal opacity-75',
-						size === 'lg' ? 'font-sans text-lg sm:text-xl' : 'text-[0.85em]'
+						size === 'lg' ? 'text-lg sm:text-xl' : 'text-[0.85em]'
 					]}
 					lang={translationLang}
 					dir="auto">{translation[i]}</span

@@ -58,12 +58,12 @@
 			/>
 			<div class="min-w-0 flex-1">
 				<p
-					class="font-display text-3xl leading-tight font-semibold tracking-tight text-ink"
+					class="font-lyrics text-3xl leading-tight font-semibold tracking-tight text-ink"
 					title={track.name}
 				>
 					<span class="line-clamp-2">{track.name}</span>
 				</p>
-				<p class="mt-1 truncate text-base text-ink">{artistNames(track.artists)}</p>
+				<p class="mt-1 truncate font-lyrics text-base text-ink">{artistNames(track.artists)}</p>
 				{#if track.album?.name}
 					<p class="truncate font-mono text-xs text-ink-soft">
 						{track.album.name}{#if track.album.release_date}

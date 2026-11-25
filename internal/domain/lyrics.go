@@ -13,7 +13,8 @@ const (
 type LyricsCandidate struct {
 	TrackID    string
 	Name       string
-	Artist     string // first credited artist
+	Artist     string   // first credited artist
+	Artists    []string // all credited artists, in credit order (Artists[0] == Artist)
 	Album      string
 	DurationMS int32
 	Status     string // current lyrics status: not_found, error, or "" (never looked up)

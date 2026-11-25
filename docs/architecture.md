@@ -188,7 +188,8 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   inserts a `pending` row for the tracks with no row that come next in line
   (at most one batch, tracks with a title and an artist), then leases rows
   with `SELECT ... FOR UPDATE SKIP LOCKED` (`claimed_by` / `claimed_until`,
-  `LYRICS_LEASE`, 10 min, at least twice one batch). So API replicas never
+  `LYRICS_LEASE`, 10 min, at least one batch at 3 requests per track:
+  3 × `LYRICS_BATCH` × `LYRICS_SPACING`). So API replicas never
   look up the same track, and a crashed worker's claim expires and is taken
   again. The pending rows are inserted in id order, so replicas inserting the
   same tracks cannot deadlock. A row is claimable when no live lease holds it
@@ -217,13 +218,32 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   (2 s) and identifies itself with the User-Agent
   `spotify-tracker (https://github.com/baoopn/spotify-tracker)`.
   `LYRICS_ENABLED=false` makes no LRCLIB calls (nothing is claimed).
-- **Matching.** `GET /api/get` with the track name, first artist, album and
-  duration (rounded seconds). On a 404 (or an empty record) it falls back to
-  `GET /api/search`. A search candidate must have the same folded track name
-  (a version suffix such as "(Live)" or "- Remastered" is ignored), an artist
-  name that contains the first artist or is contained in it, and, when the
-  duration is known, a duration within 2 s. Among those it prefers the exact
-  name, then synced lyrics, then plain lyrics, then the closest duration.
+- **Matching.** LRCLIB often has several entries for one song, for example
+  one crediting only the first artist with plain lyrics and one crediting
+  every artist with synced lyrics. With an album and a duration (rounded
+  seconds) the lookup tries, in order: `GET /api/get` with all credited
+  artists joined by ", " (as LRCLIB writes them), `GET /api/get` with the
+  first artist only (skipped for a single artist), then `GET /api/search`
+  (track name and first artist). It stops at the first result with synced
+  lyrics. An exact match with only plain lyrics, or `instrumental`, is kept
+  as a fallback while the search runs; a search candidate replaces it only
+  when it has synced lyrics and the same folded track name, an artist match
+  and a duration within 2 s. Otherwise the plain exact match is used. An
+  instrumental exact match stays instrumental unless a matching candidate
+  really has lyrics. When a later request fails after an exact match was
+  found, the exact match is stored (a rate limit still retries the whole
+  lookup). Without an exact match, a search candidate must have the same
+  folded track name (a version suffix such as "(Live)" or "- Remastered" is
+  ignored), an artist name that contains one of the credited artists or is
+  contained in one (folded), and, when the duration is known, a duration
+  within 2 s. Among those it prefers the exact name, then synced lyrics,
+  then plain lyrics, then the closest duration. A lookup sends at most 3
+  requests, and 3 only when the earlier ones found no synced lyrics. The
+  chosen entry's id is stored as `lrclib_id`. Songs stored with plain lyrics
+  before this matching are not looked up again on their own: they change
+  only when re-queued (admin "Look up again", MCP `admin_requeue_lyrics`) or
+  on a normal not-found retry. Synced lyrics change the lyrics hash, so an
+  existing translation is re-queued.
   Without an album or duration only search is used. NUL bytes are removed,
   line breaks normalized to `\n`, and each text is capped at 200 000 bytes.
   When only synced lyrics exist, plain text is derived by removing the

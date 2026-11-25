@@ -62,7 +62,8 @@ func TestClaimLyricsSQL(t *testing.T) {
 		"p.last_played DESC NULLS LAST, (l.status = 'pending') DESC, l.track_id",
 		"claimed_by = $1, claimed_until = now() + $3::interval",
 		"claim_requested_at = COALESCE(l.requested_at, l.claim_requested_at), requested_at = NULL", "LIMIT $4",
-		"CASE WHEN l.status = 'pending' THEN '' ELSE l.status END")
+		"CASE WHEN l.status = 'pending' THEN '' ELSE l.status END",
+		"array_agg(ar.name ORDER BY ta.position, ar.name) AS names", "HAVING count(*) > 0", "pick.artists")
 	if a := db.args[1]; len(a) != 4 || a[0] != "w1" || a[2] != 10*time.Minute || a[3] != 5 {
 		t.Errorf("claim args = %v", a)
 	}

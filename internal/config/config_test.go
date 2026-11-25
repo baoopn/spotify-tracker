@@ -256,7 +256,7 @@ func TestLoadAPILyrics(t *testing.T) {
 		t.Setenv("LYRICS_ENABLED", "true")
 	}
 
-	// The lease must be at least twice one batch (2 × 100 lookups × 10s = 2000s).
+	// The lease must cover one batch at 3 requests a track (3 × 100 × 10s = 50m).
 	long := func(lease string) error {
 		set()
 		for k, v := range map[string]string{"LYRICS_API_URL": "https://lrclib.net", "LYRICS_INTERVAL": "1m",
@@ -266,11 +266,11 @@ func TestLoadAPILyrics(t *testing.T) {
 		_, err := Load[API]()
 		return err
 	}
-	if err := long("30m"); err == nil || !strings.Contains(err.Error(), "LYRICS_LEASE") {
+	if err := long("49m"); err == nil || !strings.Contains(err.Error(), "LYRICS_LEASE") {
 		t.Errorf("short lease = %v, want a LYRICS_LEASE error", err)
 	}
-	if err := long("34m"); err != nil {
-		t.Errorf("34m lease: %v", err)
+	if err := long("50m"); err != nil {
+		t.Errorf("50m lease: %v", err)
 	}
 }
 

@@ -216,6 +216,11 @@ type Lyrics struct {
 	Lease time.Duration `env:"LYRICS_LEASE" envDefault:"10m"`
 }
 
+// lyricsRequestsPerTrack is the most LRCLIB requests one track's lookup
+// sends (lrclib.MaxRequestsPerLookup: Get with all artists, Get with the
+// first artist, search).
+const lyricsRequestsPerTrack = 3
+
 func (l *Lyrics) validate() error {
 	if !l.Enabled {
 		return nil
@@ -236,8 +241,8 @@ func (l *Lyrics) validate() error {
 		return fmt.Errorf("LYRICS_NOT_FOUND_RETRY must be between 24h and 8760h")
 	case l.Lease < 5*time.Minute || l.Lease > time.Hour:
 		return fmt.Errorf("LYRICS_LEASE must be between 5m and 1h")
-	case l.Lease < 2*time.Duration(l.Batch)*l.Spacing:
-		return fmt.Errorf("LYRICS_LEASE must be at least 2 × LYRICS_BATCH × LYRICS_SPACING (twice one batch)")
+	case l.Lease < lyricsRequestsPerTrack*time.Duration(l.Batch)*l.Spacing:
+		return fmt.Errorf("LYRICS_LEASE must be at least 3 × LYRICS_BATCH × LYRICS_SPACING (one batch at 3 requests per track)")
 	}
 	return nil
 }

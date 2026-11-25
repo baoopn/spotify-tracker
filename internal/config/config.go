@@ -78,6 +78,7 @@ type API struct {
 	MCP
 	Lyrics
 	Translate
+	Prefetch
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -100,6 +101,7 @@ type Poller struct {
 	TrackerGRPCAddr string `env:"TRACKER_GRPC_ADDR" envDefault:"api:9000"`
 	InternalToken   string `env:"INTERNAL_API_TOKEN,required,unset"`
 	PollIntervalMS  int    `env:"POLL_INTERVAL_MS" envDefault:"3000"`
+	QueuePrefetch
 }
 
 // Email holds SMTP seed values for alert emails. They are copied into the
@@ -378,7 +380,7 @@ func (p *Poller) validate() error {
 	if p.PollIntervalMS < 500 {
 		return fmt.Errorf("POLL_INTERVAL_MS must be >= 500, got %d", p.PollIntervalMS)
 	}
-	return nil
+	return p.QueuePrefetch.validate()
 }
 
 func (e *Enricher) validate() error {

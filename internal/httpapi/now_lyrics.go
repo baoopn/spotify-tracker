@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
-
-	"golang.org/x/sync/singleflight"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
 	"github.com/baoopn/spotify-tracker/internal/lrc"
@@ -102,36 +99,6 @@ func (b *nowLyricsBody) pending() bool {
 		(b.Translation != nil && b.Translation.Status == domain.TranslationPending)
 }
 
-// lyricsMemo caches the built body of one track, so the database stays off
-// the hot path. Empty results are cached for a shorter time. Concurrent
-// misses share one store read (flight).
-type lyricsMemo struct {
-	mu      sync.Mutex
-	trackID string
-	body    *nowLyricsBody // nil = no lyrics
-	at      time.Time
-	flight  singleflight.Group
-}
-
-func (m *lyricsMemo) get(trackID string, now time.Time) (*nowLyricsBody, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	ttl := nowLyricsMemoTTL
-	if m.body.pending() {
-		ttl = nowLyricsEmptyTTL
-	}
-	if m.trackID == trackID && !m.at.IsZero() && now.Sub(m.at) < ttl {
-		return m.body, true
-	}
-	return nil, false
-}
-
-func (m *lyricsMemo) put(trackID string, body *nowLyricsBody, now time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.trackID, m.body, m.at = trackID, body, now
-}
-
 // playbackSnapshot is the part of the now-playing snapshot the endpoint needs.
 type playbackSnapshot struct {
 	IsPlaying  bool      `json:"is_playing"`
@@ -192,7 +159,7 @@ func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time)
 	if body, ok := h.lyricsCache.get(trackID, now); ok {
 		return body, nil
 	}
-	v, err, _ := h.lyricsCache.flight.Do(trackID, func() (any, error) {
+	load := func() (*nowLyricsBody, error) {
 		if body, ok := h.lyricsCache.get(trackID, now); ok {
 			return body, nil
 		}
@@ -200,15 +167,24 @@ func (h *Handler) lyricsBody(ctx context.Context, trackID string, now time.Time)
 		if err != nil {
 			return nil, err
 		}
-		if l.Status == domain.LyricsPending && !h.opts.LyricsLookup {
-			l = store.NowLyrics{} // nothing will look the lyrics up
-		}
-		body := buildLyricsBody(trackID, l, h.opts.Translation)
-		h.lyricsCache.put(trackID, body, now)
+		body := h.buildBody(trackID, l)
+		h.lyricsCache.put(trackID, body, now, nowLyricsMemoTTL)
 		return body, nil
-	})
+	}
+	v, err, _ := h.lyricsCache.flight.Do(trackID, func() (any, error) { return load() })
 	if err != nil {
 		return nil, err
+	}
+	if w, ok := v.(warmResult); ok {
+		// Joined a warm-up of the lyrics cache: use its body, or load with
+		// this request's context when the warm failed.
+		if !w.ok {
+			return load()
+		}
+		if body, ok := h.lyricsCache.get(trackID, now); ok {
+			return body, nil // served: the warm TTL falls back to the normal one
+		}
+		return w.body, nil
 	}
 	body, _ := v.(*nowLyricsBody)
 	return body, nil

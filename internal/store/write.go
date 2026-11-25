@@ -379,3 +379,21 @@ func (q *Queries) ImportFeatures(ctx context.Context, trackID, isrc string, foun
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+// CurrentTrack returns the track in current_playback and whether it is
+// playing ("" when nothing was ever recorded).
+func (q *Queries) CurrentTrack(ctx context.Context) (string, bool, error) {
+	var id *string
+	var playing bool
+	err := q.db.QueryRow(ctx, `SELECT track_id, is_playing FROM current_playback WHERE id`).Scan(&id, &playing)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("current track: %w", err)
+	}
+	if id == nil {
+		return "", false, nil
+	}
+	return *id, playing, nil
+}

@@ -307,3 +307,44 @@ func ParseRange(s string, now time.Time) (Range, bool) {
 	}
 	return Range{}, false
 }
+
+// CatalogEntry is a track with its album and artists (credit order), as
+// Spotify describes it.
+type CatalogEntry struct {
+	Track   Track
+	Album   Album
+	Artists []Artist
+}
+
+// Upcoming is one track of the user's Spotify queue. Prefetch is false when
+// it was prefetched recently and is only listed.
+type Upcoming struct {
+	Position int32
+	CatalogEntry
+	Prefetch bool
+}
+
+// UpNext is the private "up next" list: the next tracks of the user's
+// Spotify queue, kept in Redis for the admin overview only.
+type UpNext struct {
+	FetchedAt  time.Time    `json:"fetched_at"`
+	ForTrackID string       `json:"for_track_id"`
+	Items      []UpNextItem `json:"items"`
+}
+
+// UpNextItem is one queued track.
+type UpNextItem struct {
+	Position      int32        `json:"position"`
+	TrackID       string       `json:"track_id"`
+	Name          string       `json:"name"`
+	DurationMS    int32        `json:"duration_ms"`
+	Artists       []UpNextName `json:"artists"`
+	AlbumName     string       `json:"album_name"`
+	CoverImageURL string       `json:"cover_image_url"`
+}
+
+// UpNextName is an artist of an up-next track.
+type UpNextName struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}

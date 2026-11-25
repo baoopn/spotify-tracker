@@ -253,6 +253,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		"spotify":     sp,
 		"services":    services,
 		"version":     a.Version,
+		"up_next":     a.upNext(ctx),
 	})
 }
 

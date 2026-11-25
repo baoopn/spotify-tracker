@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 
 // Store is the persistence the refresher needs (implemented by *store.Queries).
 type Store interface {
-	TracksNeedingLyrics(ctx context.Context, limit int, priority string) ([]domain.LyricsCandidate, error)
+	TracksNeedingLyrics(ctx context.Context, limit int, priority []string) ([]domain.LyricsCandidate, error)
 	SetLyrics(ctx context.Context, trackID string, l domain.Lyrics) error
 	DeferLyrics(ctx context.Context, trackID, status string, next time.Time, lastErr string) error
 }
@@ -57,8 +58,10 @@ type Refresher struct {
 
 	wake       chan struct{}
 	mu         sync.Mutex
-	priority   string // the song playing now: looked up first
-	badBatches int    // batches in a row that ended on maxTransient errors
+	priority   string    // the song playing now: looked up first
+	upcoming   []string  // the next songs of the queue: looked up right after
+	upcomingAt time.Time // when upcoming was set; it expires after UpcomingTTL
+	badBatches int       // batches in a row that ended on maxTransient errors
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) bool
 }
@@ -82,6 +85,7 @@ func (r *Refresher) Wake(trackID string) {
 	r.mu.Lock()
 	same := r.priority == trackID
 	r.priority = trackID
+	r.upcoming = slices.DeleteFunc(r.upcoming, func(id string) bool { return id == trackID }) // it plays now
 	r.mu.Unlock()
 	if same || r.wake == nil {
 		return
@@ -90,6 +94,50 @@ func (r *Refresher) Wake(trackID string) {
 	case r.wake <- struct{}{}:
 	default:
 	}
+}
+
+// UpcomingTTL is how long an upcoming list counts without a refresh (the
+// poller re-reads the queue about every minute while a song plays).
+const UpcomingTTL = 15 * time.Minute
+
+// WakeUpcoming tells the refresher which songs are queued to play next (from
+// the Spotify queue): they are looked up right after the song playing now,
+// and a changed list starts the next batch now. An empty list clears it
+// (playback went idle). Never blocks.
+func (r *Refresher) WakeUpcoming(trackIDs []string) {
+	r.mu.Lock()
+	changed := !slices.Equal(r.upcoming, trackIDs)
+	r.upcoming = slices.Clone(trackIDs)
+	r.upcomingAt = r.clock()
+	r.mu.Unlock()
+	if !changed || len(trackIDs) == 0 || r.wake == nil {
+		return
+	}
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+// priorityList is the song playing now, then the upcoming songs (unless the
+// list expired).
+func (r *Refresher) priorityList() []string {
+	now := r.clock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if now.Sub(r.upcomingAt) > UpcomingTTL {
+		r.upcoming = nil
+	}
+	out := make([]string, 0, 1+len(r.upcoming))
+	if r.priority != "" {
+		out = append(out, r.priority)
+	}
+	for _, id := range r.upcoming {
+		if id != r.priority {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Run processes batches until ctx is done.
@@ -110,10 +158,7 @@ func (r *Refresher) Run(ctx context.Context) error {
 // ended on maxTransient errors in a row (Interval doubled per such batch in a
 // row, at most MaxPause), otherwise 0.
 func (r *Refresher) RunOnce(ctx context.Context) time.Duration {
-	r.mu.Lock()
-	prio := r.priority
-	r.mu.Unlock()
-	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch, prio)
+	cands, err := r.Store.TracksNeedingLyrics(ctx, r.Batch, r.priorityList())
 	if err != nil {
 		if ctx.Err() == nil {
 			r.Log.WarnContext(ctx, "list tracks needing lyrics failed", logging.Err(err))

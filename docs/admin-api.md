@@ -95,10 +95,24 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
     { "name": "enricher", "status": "…", "last_seen_at": "…", "detail": "…" },
     { "name": "postgres", "status": "…" }, { "name": "redis", "status": "…" }
   ],
-  "version": "1.2.3"
+  "version": "1.2.3",
+  "up_next": UpNext | null
 }
 ```
 `Summary = { total_plays, unique_tracks, unique_artists, listening_ms, first_played_at, last_played_at, enriched_tracks }`.
+
+`up_next` is the private list of the next tracks of the Spotify queue, written by
+queue prefetch (null when nothing is queued, prefetch is off, or Redis fails;
+the overview never fails because of it). It is not on the public API.
+
+```ts
+type UpNext = {
+  fetched_at: string;     // when the poller read the queue
+  for_track_id: string;   // the song playing then
+  items: { position: number; track_id: string; name: string; duration_ms: number;
+    artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }[];
+};
+```
 
 ## Spotify
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestEnqueueTranslationSQL(t *testing.T) {
 // last played; it skips live leases and locked rows and takes expired ones.
 func TestClaimTranslationsSQL(t *testing.T) {
 	db := &captureDB{}
-	_, err := (&Queries{db: db}).ClaimTranslations(context.Background(), "w1", "now", 10*time.Minute, 1)
+	_, err := (&Queries{db: db}).ClaimTranslations(context.Background(), "w1", []string{"now", "next"}, 10*time.Minute, 1)
 	if !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
@@ -68,14 +69,14 @@ func TestClaimTranslationsSQL(t *testing.T) {
 		"(tr.claimed_until IS NULL OR tr.claimed_until < now())",
 		"tr.status = 'pending' OR tr.requested_at IS NOT NULL OR tr.source_hash <> "+srcHashSQL,
 		"tr.status = 'error' AND tr.next_attempt_at <= now()",
-		"ORDER BY (tr.track_id = $2) DESC, tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST",
+		"ORDER BY COALESCE(array_position($2::text[], tr.track_id), 2147483647), tr.requested_at DESC NULLS LAST, p.last_played DESC NULLS LAST",
 		"FOR UPDATE OF tr SKIP LOCKED",
 		"claim_requested_at = tr.requested_at, requested_at = NULL",
 		"JOIN lyrics l ON l.track_id = tr.track_id AND l.status = 'found'")
 	if strings.Contains(db.sql, "LEFT JOIN lyrics_translations") {
 		t.Error("the claim must read queued rows only (no backfill)")
 	}
-	if len(db.args) != 4 || db.args[0] != "w1" || db.args[1] != "now" || db.args[2] != 10*time.Minute || db.args[3] != 1 {
+	if len(db.args) != 4 || db.args[0] != "w1" || !reflect.DeepEqual(db.args[1], []string{"now", "next"}) || db.args[2] != 10*time.Minute || db.args[3] != 1 {
 		t.Errorf("args = %v", db.args)
 	}
 }

@@ -99,7 +99,7 @@ func (f *fakeStore) EnqueueRecentTranslations(context.Context, time.Duration) (i
 	return n, nil
 }
 
-func (f *fakeStore) ClaimTranslations(_ context.Context, owner, prio string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error) {
+func (f *fakeStore) ClaimTranslations(_ context.Context, owner string, prio []string, lease time.Duration, limit int) ([]domain.TranslationCandidate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.claimErr != nil {
@@ -111,15 +111,13 @@ func (f *fakeStore) ClaimTranslations(_ context.Context, owner, prio string, lea
 			free = append(free, q)
 		}
 	}
-	slices.SortStableFunc(free, func(a, b *queued) int {
-		switch {
-		case a.c.TrackID == prio && b.c.TrackID != prio:
-			return -1
-		case b.c.TrackID == prio && a.c.TrackID != prio:
-			return 1
+	rank := func(id string) int {
+		if i := slices.Index(prio, id); i >= 0 {
+			return i
 		}
-		return 0
-	})
+		return len(prio)
+	}
+	slices.SortStableFunc(free, func(a, b *queued) int { return rank(a.c.TrackID) - rank(b.c.TrackID) })
 	var out []domain.TranslationCandidate
 	for _, q := range free[:min(limit, len(free))] {
 		q.claimedBy, q.claimedUntil = owner, f.now.Add(lease)
@@ -552,5 +550,67 @@ func TestWorkerNoSpacingWithoutCall(t *testing.T) {
 	w.RunOnce(context.Background())
 	if len(waits) != 0 || len(st.set) != 1 {
 		t.Errorf("waits = %v, set = %v", waits, st.set)
+	}
+}
+
+// Upcoming songs are queued once they have lyrics and claimed right after
+// the song playing now, before anything else in the queue.
+func TestWorkerEnqueueUpcoming(t *testing.T) {
+	st := newFakeStore(cand("old", "[00:01.00] o"))
+	st.lyrics["now"] = cand("now", "[00:01.00] n")
+	st.lyrics["next"] = cand("next", "[00:01.00] x")
+	tr := &fakeTranslator{}
+	w := testWorker(st, tr, nil)
+	w.RecentWindow = 0
+	w.Wake("now")
+	w.EnqueueUpcoming([]string{"next", "later"}) // later: no lyrics yet
+	w.RunOnce(context.Background())
+	if want := []string{"now", "next", "old"}; !slices.Equal(tr.order, want) {
+		t.Fatalf("order = %v, want %v", tr.order, want)
+	}
+	if !w.upQueued["next"] || w.upQueued["later"] {
+		t.Errorf("upQueued = %v", w.upQueued)
+	}
+	// later gets lyrics: LyricsFound clears its mark and it is queued.
+	st.lyrics["later"] = cand("later", "[00:01.00] l")
+	w.LyricsFound("later")
+	w.RunOnce(context.Background())
+	if tr.order[len(tr.order)-1] != "later" {
+		t.Errorf("order = %v", tr.order)
+	}
+	w.EnqueueUpcoming(nil) // playback went idle: cleared
+	if len(w.upcoming) != 0 {
+		t.Errorf("upcoming = %v", w.upcoming)
+	}
+}
+
+// An upcoming song that starts playing leaves the list; a list expires after
+// UpcomingTTL, so stale ids never outrank re-queues; OnDone fires per stored
+// translation.
+func TestWorkerUpcomingExpiresAndDone(t *testing.T) {
+	st := newFakeStore(cand("req", "[00:01.00] r"))
+	st.lyrics["next"] = cand("next", "[00:01.00] x")
+	tr := &fakeTranslator{}
+	w := testWorker(st, tr, nil)
+	w.RecentWindow = 0
+	clock := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return clock }
+	var done []string
+	w.OnDone = func(id string) { done = append(done, id) }
+
+	w.EnqueueUpcoming([]string{"next"})
+	w.Wake("next") // it starts playing
+	if len(w.upcoming) != 0 {
+		t.Fatalf("upcoming after it plays = %v", w.upcoming)
+	}
+
+	w.EnqueueUpcoming([]string{"stale"})
+	clock = clock.Add(UpcomingTTL + time.Minute)
+	if got := w.enqueuePriority(context.Background()); !slices.Equal(got, []string{"next"}) {
+		t.Errorf("priority after expiry = %v", got)
+	}
+	w.RunOnce(context.Background())
+	if !slices.Equal(done, tr.order) || len(done) == 0 {
+		t.Errorf("OnDone = %v, translated %v", done, tr.order)
 	}
 }

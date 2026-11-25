@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -39,32 +40,81 @@ func (s *spotifyServer) GetAccessToken(ctx context.Context, req *trackerv1.GetAc
 var ErrSpotifyAuth = errors.New("spotify authorization required")
 
 // TokenSource implements spotify.TokenSource over gRPC with a local cache.
+// The cache lock is never held across the gRPC call: concurrent refreshes
+// share one call (singleflight), and a caller that does not force a refresh
+// keeps using the cached token while another one refreshes.
 type TokenSource struct {
 	client trackerv1.SpotifyServiceClient
+	flight singleflight.Group
 
 	mu      sync.Mutex
 	token   string
 	expires time.Time
 }
 
+// tokenFetchTimeout bounds one shared token fetch.
+const tokenFetchTimeout = 10 * time.Second
+
 // NewTokenSource creates a TokenSource.
 func NewTokenSource(c trackerv1.SpotifyServiceClient) *TokenSource { return &TokenSource{client: c} }
 
 // AccessToken returns a cached token or fetches a new one from the API.
 func (t *TokenSource) AccessToken(ctx context.Context, force bool) (string, error) {
+	if !force {
+		if tok, ok := t.cached(); ok {
+			return tok, nil
+		}
+	}
+	key := "fetch"
+	if force {
+		key = "force"
+	}
+	ch := t.flight.DoChan(key, func() (any, error) {
+		// Detached from the first caller, so its cancellation does not fail
+		// everyone waiting on the same fetch.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenFetchTimeout)
+		defer cancel()
+		return t.fetch(fctx, force)
+	})
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return "", r.Err
+		}
+		return r.Val.(string), nil
+	}
+}
+
+func (t *TokenSource) cached() (string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !force && t.token != "" && time.Until(t.expires) > time.Minute {
-		return t.token, nil
-	}
+	return t.token, t.token != "" && time.Until(t.expires) > time.Minute
+}
+
+func (t *TokenSource) fetch(ctx context.Context, force bool) (string, error) {
 	resp, err := t.client.GetAccessToken(ctx, &trackerv1.GetAccessTokenRequest{ForceRefresh: force})
 	if err != nil {
-		t.token = ""
-		if status.Code(err) == codes.FailedPrecondition {
+		precondition := status.Code(err) == codes.FailedPrecondition
+		// A forced refresh means Spotify rejected the cached token: drop it,
+		// so later calls fetch again instead of reusing it.
+		if precondition || force {
+			t.mu.Lock()
+			t.token, t.expires = "", time.Time{}
+			t.mu.Unlock()
+		}
+		if precondition {
 			return "", errors.Join(ErrSpotifyAuth, errors.New(status.Convert(err).Message()))
 		}
 		return "", err
 	}
-	t.token, t.expires = resp.GetAccessToken(), resp.GetExpiresAt().AsTime()
-	return t.token, nil
+	tok, exp := resp.GetAccessToken(), resp.GetExpiresAt().AsTime()
+	t.mu.Lock()
+	// A slower fetch must not replace a newer token stored meanwhile.
+	if t.token == "" || exp.After(t.expires) {
+		t.token, t.expires = tok, exp
+	}
+	t.mu.Unlock()
+	return tok, nil
 }

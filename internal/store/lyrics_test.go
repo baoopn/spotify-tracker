@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -31,13 +32,13 @@ func strArg(v any) *string {
 
 func TestTracksNeedingLyricsSQL(t *testing.T) {
 	db := &captureDB{}
-	if _, err := (&Queries{db: db}).TracksNeedingLyrics(context.Background(), 10, "now"); !errors.Is(err, errCaptured) {
+	if _, err := (&Queries{db: db}).TracksNeedingLyrics(context.Background(), 10, []string{"now", "next"}); !errors.Is(err, errCaptured) {
 		t.Fatal(err)
 	}
 	wantSQL(t, db.sql, "COALESCE(l.status, ''), COALESCE(l.attempts, 0)", "LEFT JOIN lyrics l ON l.track_id = t.id",
 		"l.track_id IS NULL", "l.status IN ('not_found', 'error') AND l.next_attempt_at <= now()",
-		"ORDER BY (t.id = $2) DESC, (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST", "LIMIT $1")
-	if len(db.args) != 2 || db.args[0] != 10 || db.args[1] != "now" {
+		"ORDER BY COALESCE(array_position($2::text[], t.id), 2147483647), (l.track_id IS NULL) DESC, p.last_played DESC NULLS LAST", "LIMIT $1")
+	if len(db.args) != 2 || db.args[0] != 10 || !reflect.DeepEqual(db.args[1], []string{"now", "next"}) {
 		t.Errorf("args = %v", db.args)
 	}
 }

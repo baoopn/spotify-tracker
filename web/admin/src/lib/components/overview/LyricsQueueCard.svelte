@@ -10,6 +10,32 @@
 	const query = createQuery(() => queries.lyricsQueue());
 	const s = $derived(query.data);
 	const busy = $derived(!!s && (s.queued > 0 || s.in_progress > 0));
+	// Joined in JS: separators in markup lose their spaces around {#if} blocks.
+	const SEP = ' · ';
+	const results = $derived(
+		s
+			? [
+					`${compact(s.found)} found`,
+					`${compact(s.instrumental)} instrumental`,
+					`${compact(s.not_found)} not found`,
+					s.error ? `${compact(s.error)} failed` : ''
+				]
+					.filter(Boolean)
+					.join(SEP)
+			: ''
+	);
+	const waiting = $derived(
+		s
+			? [
+					s.in_progress ? `${compact(s.in_progress)} looking up now` : '',
+					`${compact(s.queued)} queued` +
+						(s.requested ? ` (${compact(s.requested)} re-queued)` : ''),
+					s.backlog ? `${compact(s.backlog)} never looked up` : ''
+				]
+					.filter(Boolean)
+					.join(SEP)
+			: ''
+	);
 </script>
 
 <section class="flex flex-col gap-3 border-t border-ink pt-4" aria-labelledby="lq-title">
@@ -24,17 +50,8 @@
 
 	{#if s}
 		<div class="text-sm">
-			<p class="text-fg">
-				{compact(s.found)} found · {compact(s.instrumental)} instrumental · {compact(s.not_found)} not
-				found{#if s.error}
-					· {compact(s.error)} failed{/if}
-			</p>
-			<p class="text-xs text-muted">
-				{#if s.in_progress}{compact(s.in_progress)} looking up now ·
-				{/if}{compact(s.queued)} queued{#if s.requested}
-					({compact(s.requested)} re-queued){/if}{#if s.backlog}
-					· {compact(s.backlog)} never looked up{/if}
-			</p>
+			<p class="text-fg">{results}</p>
+			<p class="text-xs text-muted">{waiting}</p>
 			<p class="text-xs text-muted">
 				Last lookup <RelTime value={s.last_lookup_at} />{#if s.next_retry_at}
 					· next retry <RelTime value={s.next_retry_at} />{/if}

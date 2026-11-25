@@ -25,6 +25,10 @@ const (
 	RequiredScope = "user-read-currently-playing"
 	// PlaylistWriteScope is needed to create and fill the public top playlists.
 	PlaylistWriteScope = "playlist-modify-public"
+	// PlaybackControlScope is needed to control the player from the admin
+	// (play, pause, skip, seek, volume, shuffle, repeat, device transfer,
+	// add to queue).
+	PlaybackControlScope = "user-modify-playback-state"
 )
 
 // Scopes requested when (re)authorizing.
@@ -34,6 +38,8 @@ var Scopes = []string{
 	"playlist-read-private", "playlist-read-collaborative",
 	// Creating and filling the auto-generated public "Top 50" playlists.
 	PlaylistWriteScope,
+	// Controlling playback, devices and the queue from the admin.
+	PlaybackControlScope,
 }
 
 // ErrInvalidGrant means the refresh token was revoked or expired (Spotify

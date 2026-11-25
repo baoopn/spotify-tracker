@@ -212,7 +212,7 @@ func TestExchangeAndAuthorizeURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if q.Get("state") != "st4te" || q.Get("response_type") != "code" || !strings.Contains(q.Get("scope"), RequiredScope) {
+	if q.Get("state") != "st4te" || q.Get("response_type") != "code" || !strings.Contains(q.Get("scope"), RequiredScope) || !strings.Contains(q.Get("scope"), PlaybackControlScope) {
 		t.Errorf("bad authorize url %s", u)
 	}
 }

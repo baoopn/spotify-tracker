@@ -360,6 +360,12 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 		w.Log.WarnContext(ctx, "translation refused", slog.String("track_id", c.TrackID), slog.String("category", re.Category))
 		w.deferTrack(ctx, c, domain.TranslationRefused, nil, err.Error())
 		return 0, outcomeFailed
+	case errors.As(err, &ae) && ae.ContentFiltered():
+		// The API blocks the same answer every time: final, like a refusal.
+		s.refused++
+		w.Log.WarnContext(ctx, "translation blocked by content filtering", slog.String("track_id", c.TrackID))
+		w.deferTrack(ctx, c, domain.TranslationRefused, nil, err.Error())
+		return 0, outcomeFailed
 	case err != nil:
 		s.failed++
 		w.Log.WarnContext(ctx, "translation failed", slog.String("track_id", c.TrackID), logging.Err(err))

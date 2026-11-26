@@ -373,6 +373,21 @@ func TestWorkerOutcomes(t *testing.T) {
 			t.Errorf("deferred = %+v", st.deferred)
 		}
 	})
+	t.Run("content filter is terminal, not retried", func(t *testing.T) {
+		c := cand("a", x)
+		c.Status, c.Attempts = domain.TranslationError, 1 // an earlier failure: still not retried
+		st := newFakeStore(c, cand("b", x))
+		blocked := &APIError{Status: 400, Type: "invalid_request_error", Code: CodeContentFiltered}
+		tr := &fakeTranslator{errs: map[string]error{"a": blocked}}
+		w := testWorker(st, tr, nil)
+		if p := w.RunOnce(ctx); p != 0 || len(tr.order) != 2 {
+			t.Errorf("pause %s after %v", p, tr.order)
+		}
+		if len(st.deferred) != 1 || st.deferred[0].status != domain.TranslationRefused || st.deferred[0].next != nil ||
+			!strings.Contains(st.deferred[0].msg, CodeContentFiltered) {
+			t.Errorf("deferred = %+v", st.deferred)
+		}
+	})
 	t.Run("three transient errors pause the batch", func(t *testing.T) {
 		st := newFakeStore(cand("a", x), cand("b", x), cand("c", x), cand("d", x))
 		boom := &APIError{Status: 529}

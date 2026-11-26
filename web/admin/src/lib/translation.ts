@@ -46,13 +46,15 @@ export function translatedLines(text: string | null, lineCount: number): string[
 
 /**
  * Plain lyrics with their translation, line by line when both have the same
- * number of lines (null otherwise: show the translation below instead).
+ * number of lines (null otherwise: show the translation below instead). The
+ * translation lines up with the trimmed text (what Claude saw); an empty
+ * translated line (already in that language) shows nothing.
  */
 export function interleave(
 	original: string,
 	translation: string
 ): { text: string; tr: string }[] | null {
-	const a = original.split('\n');
+	const a = original.trim().split('\n');
 	const b = translation.split('\n');
 	if (a.length !== b.length) return null;
 	return a.map((text, i) => ({ text, tr: b[i] }));
@@ -69,7 +71,7 @@ export function translationNote(t: TrackTranslation | null | undefined): string 
 		case 'skipped':
 			return 'Not translated: nothing to translate, or too long.';
 		case 'refused':
-			return 'Claude declined to translate these lyrics.';
+			return 'Claude declined to translate these lyrics, or its answer was blocked.';
 		case 'error':
 			return t.next_attempt_at
 				? 'Translation failed. It will be tried again later.'

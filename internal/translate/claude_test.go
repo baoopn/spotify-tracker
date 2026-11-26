@@ -60,6 +60,9 @@ func errBody(typ, code string) string {
 	return string(b)
 }
 
+// filterBody is the API's answer when its output filter blocks the answer.
+const filterBody = `{"type":"error","error":{"type":"invalid_request_error","message":"Output blocked by content filtering policy"}}`
+
 func newTestClaude(t *testing.T, api *fakeAPI) *Claude {
 	t.Helper()
 	srv := httptest.NewServer(api)
@@ -72,7 +75,7 @@ var syncedReq = Request{TrackID: "t1", Title: "Song", Artist: "A", Kind: domain.
 
 func TestClaudeRequest(t *testing.T) {
 	api := &fakeAPI{status: 200, body: message("end_turn",
-		`{"languages":["vi"],"source_language":"vi","en":["one","two"],"vi":null}`)}
+		`{"languages":["vi"],"source_language":"vi","en":[{"n":1,"text":"one"},{"n":2,"text":"two"}],"vi":null}`)}
 	res, err := newTestClaude(t, api).Translate(context.Background(), syncedReq)
 	if err != nil {
 		t.Fatal(err)
@@ -137,14 +140,21 @@ func TestClaudeErrors(t *testing.T) {
 		}},
 		"max tokens": {&fakeAPI{status: 200, body: message("max_tokens", "{")},
 			func(err error) bool { return errors.Is(err, ErrTruncated) }},
-		"bad output": {&fakeAPI{status: 200, body: message("end_turn", `{"source_language":"vi","en":["x"],"vi":null}`)},
+		"bad output": {&fakeAPI{status: 200, body: message("end_turn", `{"source_language":"vi","en":[{"n":3,"text":"x"}],"vi":null}`)},
 			func(err error) bool { var ie *InvalidOutputError; return errors.As(err, &ie) }},
 		"rate limit": {&fakeAPI{status: 429, header: http.Header{"Retry-After": {"30"}}, body: errBody("rate_limit_error", "")},
 			isAPI(func(e *APIError) bool { return e.RateLimited() && e.RetryAfter.Seconds() == 30 })},
 		"spend limit": {&fakeAPI{status: 429, body: errBody("rate_limit_error", "enforced_spend_limit_reached")},
 			isAPI(func(e *APIError) bool { return e.SpendLimit() && !e.RateLimited() })},
-		"auth":      {&fakeAPI{status: 401, body: errBody("authentication_error", "")}, isAPI((*APIError).Auth)},
-		"permanent": {&fakeAPI{status: 400, body: errBody("invalid_request_error", "")}, isAPI((*APIError).Permanent)},
+		"auth": {&fakeAPI{status: 401, body: errBody("authentication_error", "")}, isAPI((*APIError).Auth)},
+		"permanent": {&fakeAPI{status: 400, body: errBody("invalid_request_error", "")},
+			isAPI(func(e *APIError) bool { return e.Permanent() && !e.ContentFiltered() && e.Code == "" })},
+		"content filter": {&fakeAPI{status: 400, body: filterBody},
+			isAPI(func(e *APIError) bool {
+				return e.ContentFiltered() && e.Permanent() && e.Error() == "claude: status 400 invalid_request_error (content_filtered)"
+			})},
+		"content filter text on another status": {&fakeAPI{status: 500, body: filterBody},
+			isAPI(func(e *APIError) bool { return !e.ContentFiltered() })},
 		"overloaded": {&fakeAPI{status: 529, body: errBody("overloaded_error", "")},
 			isAPI(func(e *APIError) bool {
 				return !e.Permanent() && !e.RateLimited() && !e.Auth() && e.Type == "overloaded_error"

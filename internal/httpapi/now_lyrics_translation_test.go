@@ -124,6 +124,18 @@ func TestNowLyricsTranslation(t *testing.T) {
 			t.Fatalf("plain translation = %+v", tr)
 		}
 	})
+	t.Run("plain keeps leading and trailing empty lines", func(t *testing.T) {
+		// Lines already in English are empty, so line N stays line N.
+		st := &fakeLyrics{rec: map[string]store.NowLyrics{"p": {Status: domain.LyricsFound, Plain: "Hello\n내 맘\nBye",
+			Translation: &store.NowTranslation{Status: domain.TranslationDone, Kind: domain.TranslationPlain,
+				SourceLanguage: "en", ENText: "\nMy heart\n"}}}}
+		h := lyricsHandler(st, playing("p"))
+		h.opts.Translation = true
+		_, body := getLyrics(t, h, target)
+		if tr := body.Translation; tr == nil || tr.EN == nil || tr.EN.Plain == nil || *tr.EN.Plain != "\nMy heart\n" {
+			t.Fatalf("plain translation = %+v", tr)
+		}
+	})
 	t.Run("kind mismatch shows none", func(t *testing.T) {
 		rec := syncedTr(domain.TranslationDone, nil, nil)
 		rec.Translation.Kind = domain.TranslationPlain

@@ -299,7 +299,9 @@ func buildTranslation(t *store.NowTranslation, kind string, parsed, served int) 
 			}
 			return &translationText{Lines: cut}
 		}
-		if plain = strings.TrimSpace(plain); plain == "" {
+		// Not trimmed: leading and trailing empty lines (lines already in
+		// that language) keep line N of the translation on line N.
+		if strings.TrimSpace(plain) == "" {
 			return nil
 		}
 		p := lrc.CutRunes(plain, nowLyricsMaxTrPlain)

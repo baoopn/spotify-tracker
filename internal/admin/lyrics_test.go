@@ -124,6 +124,19 @@ func TestTrackLyricsHandler(t *testing.T) {
 	}
 }
 
+// The translated title and album are { en, vi } objects next to the
+// lyrics translation; null when there is none.
+func TestTrackLyricsTranslatedNames(t *testing.T) {
+	vi := "Chờ em"
+	f := &fakeLyrics{tr: &store.TrackTranslation{Status: domain.TranslationDone, Title: &store.TranslatedName{VI: &vi}}}
+	rec := getLyrics(ReadOnlyHandler(lyricsAPI(f)), "/tracks/abc/lyrics")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"title":{"en":null,"vi":"Chờ em"}`) ||
+		!strings.Contains(body, `"album":null`) {
+		t.Errorf("body = %s", body)
+	}
+}
+
 func TestSearchLyricsHandler(t *testing.T) {
 	f := &fakeLyrics{}
 	h := ReadOnlyHandler(lyricsAPI(f))

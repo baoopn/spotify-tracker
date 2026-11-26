@@ -376,6 +376,7 @@ func (w *Worker) process(ctx context.Context, c domain.TranslationCandidate, s *
 	}
 	tr := domain.Translation{Kind: req.Kind, SourceLanguage: res.SourceLanguage, Languages: res.Languages, EN: res.EN, VI: res.VI,
 		ENText: res.ENText, VIText: res.VIText, Model: res.Model,
+		TitleEN: res.TitleEN, TitleVI: res.TitleVI, AlbumEN: res.AlbumEN, AlbumVI: res.AlbumVI,
 		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens}
 	stored, err := w.Store.SetTranslation(ctx, w.Owner, c.TrackID, c.SourceHash, tr)
 	switch {

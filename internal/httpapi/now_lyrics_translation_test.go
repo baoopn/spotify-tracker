@@ -98,6 +98,20 @@ func TestNowLyricsTranslation(t *testing.T) {
 			t.Errorf("reads = %d, want 2", st.callCount())
 		}
 	})
+	t.Run("names", func(t *testing.T) {
+		rec := syncedTr(domain.TranslationDone, []string{"one", "", "three"}, nil)
+		en := "Wait for You"
+		rec.Translation.Title = &store.TranslatedName{EN: &en}
+		st := &fakeLyrics{rec: map[string]store.NowLyrics{"s": rec}}
+		h := lyricsHandler(st, playing("s"))
+		h.opts.Translation = true
+		res, body := getLyrics(t, h, target)
+		raw := res.Body.String()
+		if !strings.Contains(raw, `"title":{"en":"Wait for You","vi":null}`) || !strings.Contains(raw, `"album":null`) ||
+			body.Translation.Title == nil || body.Translation.Album != nil {
+			t.Fatalf("names = %s", raw)
+		}
+	})
 	t.Run("plain", func(t *testing.T) {
 		st := &fakeLyrics{rec: map[string]store.NowLyrics{"p": {Status: domain.LyricsFound, Plain: "xin chào\n\nbạn",
 			Translation: &store.NowTranslation{Status: domain.TranslationDone, Kind: domain.TranslationPlain,

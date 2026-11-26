@@ -68,7 +68,7 @@ make test lint # quality gates (same as CI)
 |---|---|
 | `GET /api/v1/now-playing` | Current playback (track, album, artists, progress). |
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
-| `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, status, synced, instrumental, lines: [{ start_ms, text }], plain, credit, translation }`, synced lines when there are any, else the plain text. `status` is found, instrumental or pending (looked up soon); `translation` holds the English and Vietnamese Claude translation when enabled. `null` when nothing plays or no lyrics were found (a paused track keeps its lyrics). |
+| `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, status, synced, instrumental, lines: [{ start_ms, text }], plain, credit, translation }`, synced lines when there are any, else the plain text. `status` is found, instrumental or pending (looked up soon); `translation` holds the English and Vietnamese Claude translation when enabled, with the translated song title and album name as `title` / `album: { en, vi }`. `null` when nothing plays or no lyrics were found (a paused track keeps its lyrics). |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |
 | `GET /api/v1/tracks/{id}` | A played (or now playing) track with audio features, genres and play count (404 for a track never played), plus track and disc number, album type, size, UPC and copyrights, and the artists' Spotify genres. |
 | `GET /api/v1/stats/summary?range=` | Totals: plays, unique tracks/artists, listening time. |

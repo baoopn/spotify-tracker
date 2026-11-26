@@ -8,6 +8,7 @@ import {
 	interleave,
 	lineKeys,
 	lyricsState,
+	nameIn,
 	pickLang
 } from '../src/lib/lyrics.ts';
 import { estimatePositionMs } from '../src/lib/playback.ts';
@@ -154,5 +155,13 @@ assert.equal(
 assert.equal(creditHref({ text: 'Lyrics added by Bao', url: null }), null, 'manual lyrics');
 assert.equal(creditHref({ text: 'x', url: '' }), null, 'empty url');
 assert.equal(creditHref({ text: 'x', url: 'javascript:alert(1)' }), null, 'not https');
+
+// nameIn: the translated title or album in the language shown, else null.
+assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'en'), 'Wait for You');
+assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'vi'), null);
+assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'orig'), null);
+assert.equal(nameIn({ en: '  ', vi: null }, 'en'), null);
+assert.equal(nameIn(null, 'en'), null);
+assert.equal(nameIn(undefined, 'vi'), null);
 
 console.log('lyrics checks passed');

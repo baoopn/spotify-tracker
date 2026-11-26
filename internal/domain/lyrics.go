@@ -80,13 +80,17 @@ type TranslationContext struct {
 // one entry per parsed LRC line; for plain lyrics ENText and VIText hold the
 // text. A nil / empty language means the song is already all in that
 // language. Languages lists every language in the lyrics, main first.
+// TitleEN, TitleVI, AlbumEN and AlbumVI are the song title and album name
+// in each language; "" = none (kept as written, or no album).
 type Translation struct {
-	Kind           string
-	SourceLanguage string
-	Languages      []string
-	EN, VI         []string
-	ENText, VIText string
-	Model          string
-	InputTokens    int64
-	OutputTokens   int64
+	Kind             string
+	SourceLanguage   string
+	Languages        []string
+	EN, VI           []string
+	ENText, VIText   string
+	TitleEN, TitleVI string
+	AlbumEN, AlbumVI string
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
 }

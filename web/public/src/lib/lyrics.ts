@@ -56,6 +56,18 @@ export function pickLang(pref: LyricsLang, available: readonly ('en' | 'vi')[]):
 }
 
 /**
+ * A translated title or album name in the language shown, or null (the
+ * original, no translation, or the name stays as written).
+ */
+export function nameIn(
+	name: { en: string | null; vi: string | null } | null | undefined,
+	lang: LyricsLang
+): string | null {
+	if (!name || lang === 'orig') return null;
+	return name[lang]?.trim() || null;
+}
+
+/**
  * Plain lyrics with their translation, line by line when both have the same
  * number of lines (null otherwise: show the translation below instead).
  */

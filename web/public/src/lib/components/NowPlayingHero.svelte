@@ -14,7 +14,8 @@
 	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
 	import { lyricsLayout } from '#lib/lyricsLayout.svelte.js';
-	import { lyricsState } from '#lib/lyrics.js';
+	import { availableLangs, lyricsState, nameIn, pickLang } from '#lib/lyrics.js';
+	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { loadLyricsFonts } from '#lib/lyricsFonts.js';
 	import { scriptLang } from '#lib/scriptLang.js';
 	import { historyQuery, loadStatus, nowLyricsQuery, nowPlayingQuery } from '#lib/queries.js';
@@ -70,6 +71,17 @@
 	);
 	// No lyrics: the standard card, without changing the saved choice.
 	const focus = $derived(canFocus && lyricsLayout.value === 'lyrics');
+
+	// The translated title and album, in the language the lyrics show (the
+	// same choice as NowLyrics); the original stays primary.
+	const lyricsTr = $derived(
+		lyrics.data?.track_id === track?.id && lyrics.data?.status === 'found'
+			? lyrics.data.translation
+			: null
+	);
+	const nameLang = $derived(pickLang(lyricsLang.value, availableLangs(lyricsTr)));
+	const trTitle = $derived(nameIn(lyricsTr?.title, nameLang));
+	const trAlbum = $derived(nameIn(lyricsTr?.album, nameLang));
 
 	// Last played, for the idle state: the newest history entry, or the stale paused track.
 	const lastPlayed = $derived(
@@ -136,7 +148,7 @@
 	{/if}
 {/snippet}
 
-{#snippet title(cls: string)}
+{#snippet title(cls: string, trCls: string)}
 	{#if track}
 		<h3
 			lang={scriptLang(track.name)}
@@ -152,6 +164,11 @@
 			{/if}
 			{#if track.explicit}<span class="ml-1 inline-block align-middle"><ExplicitBadge /></span>{/if}
 		</h3>
+		{#if trTitle}
+			<p lang={nameLang} dir="auto" class={['font-lyrics break-words text-ink-soft', trCls]}>
+				{trTitle}
+			</p>
+		{/if}
 	{/if}
 {/snippet}
 
@@ -261,7 +278,10 @@
 							'print size-20 rounded-[12px] [--print:var(--spot-now)] sm:size-24 lg:size-auto lg:w-full lg:max-w-[min(16rem,32svh)] lg:rounded-brand'
 						)}
 						<div class="min-w-0 flex-1 lg:mt-5">
-							{@render title('text-xl sm:text-2xl lg:text-3xl')}
+							{@render title(
+								'text-xl sm:text-2xl lg:text-3xl',
+								'mt-0.5 truncate text-sm lg:mt-1 lg:whitespace-normal'
+							)}
 							<p
 								lang={artistLang}
 								class="mt-1 truncate font-lyrics font-medium lg:mt-2 lg:text-lg lg:whitespace-normal"
@@ -295,7 +315,7 @@
 				{@render coverArt('print w-full rounded-brand [--print:var(--spot-now)]')}
 
 				<div class="min-w-0">
-					{@render title('text-4xl sm:text-5xl lg:text-6xl')}
+					{@render title('text-4xl sm:text-5xl lg:text-6xl', 'mt-2 text-lg sm:text-xl')}
 
 					<p lang={artistLang} class="mt-3 font-lyrics text-lg font-medium break-words sm:text-xl">
 						<ArtistLinks artists={track.artists} />
@@ -313,6 +333,9 @@
 									>
 								{:else}
 									{track.album.name}
+								{/if}
+								{#if trAlbum}
+									<span lang={nameLang} dir="auto" class="block text-ink-soft">{trAlbum}</span>
 								{/if}
 							</dd>
 						{/if}

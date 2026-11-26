@@ -344,12 +344,19 @@ type TrackTranslation = {
   // null = the song is all in that language (a mixed song has both).
   en: string | null;
   vi: string | null;
+  // The song title and album name in each language, from the same Claude call.
+  // A null language stays as written (already in that language, or only a name);
+  // the whole field is null when neither language has one, when there is no
+  // album, and for translations made before it was stored (no backfill).
+  title: TranslatedName | null;
+  album: TranslatedName | null;
   model: string;             // the model that answered
   attempts: number;          // failures in a row
   last_error: string;
   translated_at: string | null;
   next_attempt_at: string | null; // retry of an error; null after giving up
 };
+type TranslatedName = { en: string | null; vi: string | null };
 type TranslationQueue = {
   enabled: boolean; daily_cap: number; monthly_cap: number;
   model: string;        // TRANSLATE_MODEL, e.g. "claude-sonnet-5-5"

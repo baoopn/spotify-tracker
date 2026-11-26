@@ -128,7 +128,7 @@ func TestPGTranslationQueue(t *testing.T) {
 
 	// Results are written only by the claim holder.
 	tr := domain.Translation{Kind: domain.TranslationSynced, SourceLanguage: "vi", Languages: []string{"vi"},
-		EN: []string{"one", "", "three"}, Model: "m"}
+		EN: []string{"one", "", "three"}, Model: "m", TitleEN: "Wait for You", AlbumVI: "Mùa hè"}
 	if ok, err := st.SetTranslation(ctx, "w2", "now", got[0].SourceHash, tr); err != nil || ok {
 		t.Fatalf("foreign set = %v, %v", ok, err)
 	}
@@ -193,6 +193,14 @@ func TestPGTranslationQueue(t *testing.T) {
 		strings.Join(nl.Translation.EN, "|") != "one||three" || nl.Translation.VI != nil ||
 		strings.Join(nl.Translation.Languages, ",") != "vi" {
 		t.Fatalf("now lyrics = %+v %+v, %v", nl, nl.Translation, err)
+	}
+	if ti, al := nl.Translation.Title, nl.Translation.Album; ti == nil || ti.EN == nil || *ti.EN != "Wait for You" || ti.VI != nil ||
+		al == nil || al.EN != nil || al.VI == nil || *al.VI != "Mùa hè" {
+		t.Errorf("now lyrics names = %+v %+v", ti, al)
+	}
+	if tl, err := st.TrackLyrics(ctx, "now", false, caps); err != nil || tl.Translation == nil ||
+		tl.Translation.Title == nil || *tl.Translation.Title.EN != "Wait for You" || tl.Translation.Album == nil {
+		t.Errorf("track lyrics names = %+v, %v", tl.Translation, err)
 	}
 	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id) VALUES ('nolyrics', 'ar')`) // lookupable
 	if nl, _ := st.NowLyrics(ctx, "nolyrics", caps); nl.Status != domain.LyricsPending {

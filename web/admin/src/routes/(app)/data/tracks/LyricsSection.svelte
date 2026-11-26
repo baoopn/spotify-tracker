@@ -6,6 +6,7 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import LyricsLangPicker from '#lib/components/lyrics/LyricsLangPicker.svelte';
 	import LyricsLookupStatus from '#lib/components/lyrics/LyricsLookupStatus.svelte';
+	import TranslatedNames from '#lib/components/lyrics/TranslatedNames.svelte';
 	import TranslationStatus from '#lib/components/lyrics/TranslationStatus.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -105,6 +106,7 @@
 	{:else if editing}
 		<LyricsEditor lyrics={l} {durationMs} onclose={closeEditor} />
 	{:else if l.status === 'found' && l.plain}
+		<TranslatedNames translation={tr} {lang} />
 		<!-- A scrollable box must be focusable so keyboard users can scroll it. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div

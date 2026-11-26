@@ -58,17 +58,43 @@ type TrackTranslation struct {
 	Stale  bool   `json:"stale"` // the lyrics changed since; it is being redone
 	// Waiting is true while the translation will be worked on soon (leased,
 	// queued, stale or a retry due within minutes, and no cap reached).
-	Waiting        bool       `json:"waiting"`
-	Kind           *string    `json:"kind"`
-	SourceLanguage *string    `json:"source_language"`
-	Languages      []string   `json:"languages"` // main first; null if translated before it was stored
-	EN             *string    `json:"en"`
-	VI             *string    `json:"vi"`
-	Model          string     `json:"model"`
-	Attempts       int32      `json:"attempts"`
-	LastError      string     `json:"last_error"`
-	TranslatedAt   *time.Time `json:"translated_at"`
-	NextAttemptAt  *time.Time `json:"next_attempt_at"`
+	Waiting        bool     `json:"waiting"`
+	Kind           *string  `json:"kind"`
+	SourceLanguage *string  `json:"source_language"`
+	Languages      []string `json:"languages"` // main first; null if translated before it was stored
+	EN             *string  `json:"en"`
+	VI             *string  `json:"vi"`
+	// Title and Album are the song title and album name in each language;
+	// null when neither language has one (or translated before they were
+	// stored).
+	Title         *TranslatedName `json:"title"`
+	Album         *TranslatedName `json:"album"`
+	Model         string          `json:"model"`
+	Attempts      int32           `json:"attempts"`
+	LastError     string          `json:"last_error"`
+	TranslatedAt  *time.Time      `json:"translated_at"`
+	NextAttemptAt *time.Time      `json:"next_attempt_at"`
+}
+
+// TranslatedName is a song title or album name in each target language; a
+// null language stays as written (already in that language, or only a name).
+type TranslatedName struct {
+	EN *string `json:"en"`
+	VI *string `json:"vi"`
+}
+
+// translatedName is nil when neither language has a translation.
+func translatedName(en, vi *string) *TranslatedName {
+	if en != nil && *en == "" {
+		en = nil
+	}
+	if vi != nil && *vi == "" {
+		vi = nil
+	}
+	if en == nil && vi == nil {
+		return nil
+	}
+	return &TranslatedName{EN: en, VI: vi}
 }
 
 // LyricsMatch is one lyrics search result.
@@ -91,16 +117,17 @@ const searchTimeout = 5 * time.Second
 // pending; an unknown track is domain.ErrNotFound.
 func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bool, caps TranslationCaps) (TrackLyrics, error) {
 	var (
-		out            TrackLyrics
-		status, source *string
-		trStatus       *string
-		tr             TrackTranslation
-		fresh          bool
-		en, vi         []string
-		enText, viText *string
-		model          *string
-		trAttempts     *int32
-		trErr          *string
+		out                                TrackLyrics
+		status, source                     *string
+		trStatus                           *string
+		tr                                 TrackTranslation
+		fresh                              bool
+		en, vi                             []string
+		enText, viText                     *string
+		model                              *string
+		trAttempts                         *int32
+		trErr                              *string
+		titleEN, titleVI, albumEN, albumVI *string
 	)
 	err := q.db.QueryRow(ctx, `
 		SELECT t.id, l.status, l.source, l.lrclib_id, l.plain_lyrics,
@@ -113,7 +140,8 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 			l.manual_at, COALESCE(l.manual_by, ''), COALESCE(l.replace_manual, false),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), tr.kind, tr.source_language,
 			tr.languages, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text, tr.model, tr.attempts, tr.last_error,
-			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL("false")+`
+			tr.translated_at, tr.next_attempt_at, `+trWaitingSQL("false")+`,
+			tr.title_en, tr.title_vi, tr.album_en, tr.album_vi
 		FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$3", "$4")+` AS reached) cap
@@ -121,7 +149,7 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 		&out.Plain, &out.Synced, &out.HasSynced, &out.Attempts, &out.LastError, &out.FetchedAt, &out.NextAttemptAt,
 		&out.Waiting, &out.Queued, &out.LookingUp, &out.RequestedAt, &out.ManualAt, &out.ManualBy, &out.ReplaceManual,
 		&trStatus, &fresh, &tr.Kind, &tr.SourceLanguage, &tr.Languages, &en, &vi, &enText, &viText, &model, &trAttempts, &trErr,
-		&tr.TranslatedAt, &tr.NextAttemptAt, &tr.Waiting)
+		&tr.TranslatedAt, &tr.NextAttemptAt, &tr.Waiting, &titleEN, &titleVI, &albumEN, &albumVI)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TrackLyrics{}, domain.ErrNotFound
 	}
@@ -153,6 +181,7 @@ func (q *Queries) TrackLyrics(ctx context.Context, trackID string, withSynced bo
 		tr.Attempts = *trAttempts
 	}
 	tr.EN, tr.VI = joinedTranslation(en, enText), joinedTranslation(vi, viText)
+	tr.Title, tr.Album = translatedName(titleEN, titleVI), translatedName(albumEN, albumVI)
 	out.Translation = &tr
 	return out, nil
 }
@@ -194,6 +223,9 @@ type NowTranslation struct {
 	Languages      []string // every language in the lyrics, main first; nil = not recorded
 	EN, VI         []string // synced: one per parsed LRC line; nil = none
 	ENText, VIText string   // plain; "" = none
+	// Title and Album are the song title and album name in each language;
+	// nil when neither has one.
+	Title, Album *TranslatedName
 }
 
 // NowLyrics returns what the public now-playing lyrics show for a track:
@@ -205,26 +237,28 @@ type NowTranslation struct {
 // playing right now.
 func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps TranslationCaps) (NowLyrics, error) {
 	var (
-		out                  NowLyrics
-		status               *string
-		waitingLookup        bool
-		trStatus, kind, lang *string
-		enText, viText       *string
-		fresh, waiting       bool
-		en, vi, langs        []string
+		out                                NowLyrics
+		status                             *string
+		waitingLookup                      bool
+		trStatus, kind, lang               *string
+		enText, viText                     *string
+		fresh, waiting                     bool
+		en, vi, langs                      []string
+		titleEN, titleVI, albumEN, albumVI *string
 	)
 	err := q.db.QueryRow(ctx, `
 		SELECT l.status, COALESCE(l.source, ''), (`+lookupableSQL+`) AND COALESCE(l.track_id IS NULL OR `+lyricsWaitingSQL+`, false),
 			COALESCE(l.synced_lyrics, ''), COALESCE(l.plain_lyrics, ''),
 			tr.status, COALESCE(tr.source_hash = `+srcHashSQL+`, false), `+trWaitingSQL("NOT cap.reached")+`,
-			tr.kind, tr.source_language, tr.languages, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text
+			tr.kind, tr.source_language, tr.languages, tr.en_lines, tr.vi_lines, tr.en_text, tr.vi_text,
+			tr.title_en, tr.title_vi, tr.album_en, tr.album_vi
 		FROM tracks t
 		LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN lyrics_translations tr ON tr.track_id = l.track_id
 		CROSS JOIN LATERAL (SELECT `+capReachedSQL("$2", "$3")+` AS reached) cap
 		WHERE t.id = $1`,
 		trackID, caps.Daily, caps.Monthly).Scan(&status, &out.Source, &waitingLookup, &out.Synced, &out.Plain, &trStatus, &fresh,
-		&waiting, &kind, &lang, &langs, &en, &vi, &enText, &viText)
+		&waiting, &kind, &lang, &langs, &en, &vi, &enText, &viText, &titleEN, &titleVI, &albumEN, &albumVI)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NowLyrics{}, nil
 	}
@@ -249,6 +283,7 @@ func (q *Queries) NowLyrics(ctx context.Context, trackID string, caps Translatio
 	if tr.Status == domain.TranslationDone {
 		tr.Kind, tr.SourceLanguage, tr.Languages = deref(kind), deref(lang), langs
 		tr.EN, tr.VI, tr.ENText, tr.VIText = en, vi, deref(enText), deref(viText)
+		tr.Title, tr.Album = translatedName(titleEN, titleVI), translatedName(albumEN, albumVI)
 	}
 	out.Translation = tr
 	return out, nil

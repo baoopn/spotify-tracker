@@ -124,7 +124,8 @@ var adminTools = []toolDef{
 			"translation: status (pending, done, skipped, refused, error), stale, source_language (main), languages " +
 			"(every language in the lyrics, main first), and en / vi machine translations by Claude (null only when " +
 			"the song is all in that language; for synced lyrics " +
-			"one line per LRC line, joined with newlines).",
+			"one line per LRC line, joined with newlines), and title / album: the song title and album name as " +
+			"{en, vi} (a null language stays as written; null when neither has one).",
 		params: []param{idParam("Spotify track ID."),
 			{name: "synced", enum: []string{"true", "false"}, def: "false",
 				desc: "Also return the time-synced LRC lyrics."}}},

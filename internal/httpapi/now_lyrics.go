@@ -90,12 +90,17 @@ type nowLyricsBody struct {
 // the languages are null. A null language means the song is all in that
 // language (or the translation did not line up).
 type translationBody struct {
-	Status         string                `json:"status"` // pending or done
-	SourceLanguage *string               `json:"source_language"`
-	Languages      []string              `json:"languages"` // main first; null when not recorded
-	EN             *translationText      `json:"en"`
-	VI             *translationText      `json:"vi"`
-	Credit         translationCreditBody `json:"credit"`
+	Status         string           `json:"status"` // pending or done
+	SourceLanguage *string          `json:"source_language"`
+	Languages      []string         `json:"languages"` // main first; null when not recorded
+	EN             *translationText `json:"en"`
+	VI             *translationText `json:"vi"`
+	// Title and Album are the song title and album name in each language
+	// ({ en, vi }, a null language stays as written); null when neither
+	// language has one, while pending, and for older translations.
+	Title  *store.TranslatedName `json:"title"`
+	Album  *store.TranslatedName `json:"album"`
+	Credit translationCreditBody `json:"credit"`
 }
 
 // translationText is one language: Lines lines up with the body's Lines
@@ -273,6 +278,8 @@ func buildTranslation(t *store.NowTranslation, kind string, parsed, served int) 
 	if t.Status == domain.TranslationPending {
 		return out
 	}
+	// The names do not depend on the form of the lyrics.
+	out.Title, out.Album = t.Title, t.Album
 	if t.Kind != kind {
 		return out // translated from a different form of the lyrics: show none
 	}

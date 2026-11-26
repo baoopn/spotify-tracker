@@ -40,9 +40,13 @@ type Result struct {
 	MixedNull      []string
 	EN, VI         []string
 	ENText, VIText string
-	Model          string // the model that answered (a fallback shows here)
-	InputTokens    int64
-	OutputTokens   int64
+	// TitleEN, TitleVI, AlbumEN and AlbumVI are the song title and album
+	// name in each target language; "" = none (kept as written, or no album).
+	TitleEN, TitleVI string
+	AlbumEN, AlbumVI string
+	Model            string // the model that answered (a fallback shows here)
+	InputTokens      int64
+	OutputTokens     int64
 }
 
 // Translator translates one song (implemented by *Claude).

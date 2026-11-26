@@ -41,6 +41,10 @@ export type LyricLine = { start_ms: number; text: string };
  * lines (same length, "" for empty lines); `plain` for plain lyrics. */
 export type LyricsTranslationText = { lines: string[]; plain: string | null };
 
+/** A song title or album name in each language; a null language stays as
+ * written (already in that language, or only a name). */
+export type TranslatedName = { en: string | null; vi: string | null };
+
 /** The Claude translation of found lyrics. A null language means the song
  * is already in that language (or there is none). */
 export type LyricsTranslation = {
@@ -50,6 +54,10 @@ export type LyricsTranslation = {
 	languages: string[] | null;
 	en: LyricsTranslationText | null;
 	vi: LyricsTranslationText | null;
+	/** The song title and album name; null when neither language has one
+	 * (also while pending and for older translations). */
+	title?: TranslatedName | null;
+	album?: TranslatedName | null;
 	credit: { text: string };
 };
 

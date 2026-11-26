@@ -56,6 +56,28 @@ export function pickLang(pref: LyricsLang, available: readonly ('en' | 'vi')[]):
 }
 
 /**
+ * The translated title or album name in the viewer's chosen language, or
+ * null. It follows the raw preference, not the lyrics: a song whose lyrics
+ * are all Vietnamese can still have a Vietnamese title. Only a done
+ * translation counts; 'orig' (the default, or picked) shows none.
+ */
+export function nameIn(
+	t:
+		| {
+				status: string;
+				title?: { en: string | null; vi: string | null } | null;
+				album?: { en: string | null; vi: string | null } | null;
+		  }
+		| null
+		| undefined,
+	field: 'title' | 'album',
+	pref: LyricsLang
+): string | null {
+	if (!t || t.status !== 'done' || pref === 'orig') return null;
+	return t[field]?.[pref]?.trim() || null;
+}
+
+/**
  * Plain lyrics with their translation, line by line when both have the same
  * number of lines (null otherwise: show the translation below instead).
  */

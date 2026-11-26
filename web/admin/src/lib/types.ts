@@ -428,6 +428,10 @@ export type TrackLyrics = {
 /** not_queued: never queued (songs are queued when they play; there is no backfill). */
 export type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
 
+/** A song title or album name in each language; a null language stays as
+ * written (already in that language, or only a name). */
+export type TranslatedName = { en: string | null; vi: string | null };
+
 /**
  * Claude translation of a track's lyrics. For synced lyrics `en` / `vi` hold
  * one line per parsed LRC line, joined with newlines (split to line them up);
@@ -445,6 +449,10 @@ export type TrackTranslation = {
 	languages: string[] | null;
 	en: string | null;
 	vi: string | null;
+	/** The song title and album name; null when neither language has one
+	 * (also for translations made before they were stored). */
+	title?: TranslatedName | null;
+	album?: TranslatedName | null;
 	model: string;
 	attempts: number;
 	last_error: string;

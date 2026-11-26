@@ -20,6 +20,21 @@ export function pickLang(pref: LyricsLang, available: readonly ('en' | 'vi')[]):
 }
 
 /**
+ * The translated title or album name in the chosen language, or null. It
+ * follows the raw preference, not the lyrics: a song whose lyrics are all
+ * Vietnamese can still have a Vietnamese title. Only a done, current
+ * translation counts; 'orig' (the default, or picked) shows none.
+ */
+export function nameIn(
+	t: TrackTranslation | null | undefined,
+	field: 'title' | 'album',
+	pref: LyricsLang
+): string | null {
+	if (!t || t.status !== 'done' || t.stale || pref === 'orig') return null;
+	return t[field]?.[pref]?.trim() || null;
+}
+
+/**
  * The translated lines of synced lyrics, one per parsed LRC line, or null
  * when the counts differ (the parser and the stored translation disagree).
  */

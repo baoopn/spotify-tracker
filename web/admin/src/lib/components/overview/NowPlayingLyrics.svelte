@@ -5,6 +5,7 @@
 	import Skeleton from '../Skeleton.svelte';
 	import LyricsLangPicker from '../lyrics/LyricsLangPicker.svelte';
 	import LyricsLookupStatus from '../lyrics/LyricsLookupStatus.svelte';
+	import TranslatedNames from '../lyrics/TranslatedNames.svelte';
 	import TranslationStatus from '../lyrics/TranslationStatus.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import { fastClock } from '#lib/clock.svelte.js';
@@ -81,6 +82,8 @@
 			<LyricsLangPicker {available} bind:value={lyricsLang.value} />
 		</div>
 	</div>
+
+	<TranslatedNames translation={tr} lang={lyricsLang.value} />
 
 	{#if lyrics.isError && !l}
 		<p class="text-sm text-ink-soft" role="alert">

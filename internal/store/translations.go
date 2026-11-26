@@ -188,13 +188,15 @@ func (q *Queries) SetTranslation(ctx context.Context, owner, trackID, sourceHash
 			source_hash = $3, kind = $4, source_language = $5, languages = $13,
 			en_lines = $6, vi_lines = $7, en_text = $8, vi_text = $9, model = $10,
 			input_tokens = $11, output_tokens = $12, attempts = 0, last_error = NULL,
+			title_en = $14, title_vi = $15, album_en = $16, album_vi = $17,
 			translated_at = now(), updated_at = now(), next_attempt_at = NULL,
 			claimed_by = NULL, claimed_until = NULL, claim_requested_at = NULL
 		WHERE tr.track_id = $2 AND tr.claimed_by = $1
 			AND EXISTS (SELECT 1 FROM lyrics l WHERE l.track_id = $2 AND l.status = 'found' AND `+srcHashSQL+` = $3)`,
 		owner, trackID, sourceHash, r.Kind, nullIfEmpty(r.SourceLanguage), r.EN, r.VI,
 		nullIfEmpty(r.ENText), nullIfEmpty(r.VIText), nullIfEmpty(r.Model),
-		clampInt32(r.InputTokens), clampInt32(r.OutputTokens), r.Languages)
+		clampInt32(r.InputTokens), clampInt32(r.OutputTokens), r.Languages,
+		nullIfEmpty(r.TitleEN), nullIfEmpty(r.TitleVI), nullIfEmpty(r.AlbumEN), nullIfEmpty(r.AlbumVI))
 	if err != nil {
 		return false, fmt.Errorf("set translation %s: %w", trackID, err)
 	}

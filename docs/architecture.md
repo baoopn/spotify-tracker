@@ -422,13 +422,16 @@ public page the full lyrics of the song playing now, and of no other song:
   `instrumental: true` and no text. The page highlights the current line
   from its own position estimate.
 - **Translation.** With `TRANSLATE_ENABLED`, found lyrics carry
-  `translation: { status: 'pending' | 'done', source_language, languages, en, vi, credit }`
+  `translation: { status: 'pending' | 'done', source_language, languages, en, vi, title, album, credit }`
   (see [Lyrics translation](#lyrics-translation)). Each language is
   `{ lines, plain }`: for synced lyrics `lines` has one entry per served line
   (`""` for empty lines; a language whose line count does not match the
   parsed LRC is dropped), for plain lyrics `plain` holds the text. A null
   language means the song is all in that language; `languages` lists every
-  language in the lyrics, main first (null for older translations). `translation` is null when the
+  language in the lyrics, main first (null for older translations). `title`
+  and `album` are the song title and album name as `{ en, vi }` (a null
+  language stays as written); each is null when neither language has one,
+  while pending, and for older translations. `translation` is null when the
   feature is off, for instrumental or pending lyrics, and when there will be
   no translation (skipped, refused, given up). The translation is `pending`
   only while it will be worked on soon: leased now, or queued, stale or a
@@ -456,6 +459,18 @@ the Claude API (Go SDK `anthropic-sdk-go/v2`), off unless `TRANSLATE_ENABLED`
 and `ANTHROPIC_API_KEY` are set. Results are stored in `lyrics_translations`
 (migration `00015_lyrics_translations.sql`) and shown on the public
 now-playing lyrics and in the admin.
+
+- **Title and album.** The same call also translates the song title and the
+  album name (from the `<song>` block) into `en` and `vi`, as
+  `title: { en, vi }` and `album: { en, vi }` in the answer. A language is
+  null when the name stays as written (already in that language, or only a
+  proper noun, brand or the artist's name) or there is no album. The parser
+  is tolerant: a missing or malformed name object, an empty value, or one
+  equal to the original (case-insensitive) is stored as NULL and never fails
+  the lyrics; values are one line, cut to 200 runes. Stored in `title_en`,
+  `title_vi`, `album_en`, `album_vi` (migration
+  `00020_translation_names.sql`); older rows stay NULL (no backfill,
+  re-queue a song to fill them).
 
 - **Queue, no backfill.** A song is queued only when it plays: the tracker
   wakes the worker with the song playing now (`Wake`), and each batch also
@@ -495,7 +510,7 @@ now-playing lyrics and in the admin.
 - **Request.** Model `TRANSLATE_MODEL` (`claude-sonnet-5-5`, $2 / $10 per
   MTok), effort `TRANSLATE_EFFORT` (low; set explicitly, the API default is
   high), thinking left unset (adaptive; `disabled` is a 400 on this model), structured JSON
-  output (`{ languages, source_language, en, vi }`), the fixed system prompt first with a
+  output (`{ languages, source_language, en, vi, title, album }`), the fixed system prompt first with a
   cache breakpoint, the server-side refusal fallback (`fallbacks: "default"`).
   Synced lyrics go as numbered non-empty lines and come back as one line per
   input line; the worker puts empty lines back, so `en_lines` / `vi_lines`

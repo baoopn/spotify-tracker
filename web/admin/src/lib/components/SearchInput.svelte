@@ -8,6 +8,7 @@
 		label = 'Search',
 		delay = 300,
 		maxlength,
+		class: cls = 'sm:w-72',
 		onsearch
 	}: {
 		value?: string;
@@ -15,6 +16,8 @@
 		label?: string;
 		delay?: number;
 		maxlength?: number;
+		/** Width classes of the wrapper (default: full width on phones, 18rem from sm). */
+		class?: string;
 		onsearch: (q: string) => void;
 	} = $props();
 
@@ -36,7 +39,7 @@
 	}
 </script>
 
-<div class="relative w-full sm:w-72">
+<div class={['relative w-full', cls]}>
 	<Search
 		class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted"
 		aria-hidden="true"

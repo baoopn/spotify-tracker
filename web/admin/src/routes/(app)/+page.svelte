@@ -5,26 +5,33 @@
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import NowPlayingCard from '#lib/components/overview/NowPlayingCard.svelte';
-	import PlayerCard from '#lib/components/overview/PlayerCard.svelte';
-	import SpotifyTokenCard from '#lib/components/overview/SpotifyTokenCard.svelte';
-	import BackupsCard from '#lib/components/overview/BackupsCard.svelte';
-	import LyricsQueueCard from '#lib/components/overview/LyricsQueueCard.svelte';
-	import TranslationQueueCard from '#lib/components/overview/TranslationQueueCard.svelte';
-	import ServiceList from '#lib/components/overview/ServiceList.svelte';
-	import EnrichmentProgress from '#lib/components/overview/EnrichmentProgress.svelte';
+	import NowPlayingControls from '#lib/components/overview/NowPlayingControls.svelte';
+	import HealthStrip from '#lib/components/overview/HealthStrip.svelte';
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { compact, date, hours } from '#lib/format.js';
-	import { queries } from '#lib/queries.js';
+	import { qk, queries } from '#lib/queries.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
+	import type { LocalPause } from '#lib/player-control.svelte.js';
 
 	// Counters/health poll (see queries.ts); now-playing is live via SSE.
 	const overview = createQuery(() => queries.overview());
+	const queryClient = useQueryClient();
 	// Dim/spin only for this (user-triggered) refetch, never for background polls.
-	const manual = new ManualRefetch(() => overview.refetch());
+	// Also refreshes the health strip's queue and backup queries.
+	const manual = new ManualRefetch(() =>
+		Promise.all([
+			overview.refetch(),
+			...[qk.backups, qk.lyrics.queue, qk.lyrics.translationQueue].map((queryKey) =>
+				queryClient.refetchQueries({ queryKey, exact: true })
+			)
+		])
+	);
 
 	const d = $derived(overview.data);
+	// A pause sent from the mini controls: the card stops its clock until the stream catches up.
+	let localPause = $state<LocalPause>(null);
 </script>
 
 <PageHeader
@@ -32,7 +39,7 @@
 	eyebrow="baoopn listening"
 	description={d
 		? `${compact(d.summary_7d.total_plays)} plays this week · ${hours(d.summary_7d.listening_ms)} of music`
-		: 'What Bao is listening to, and whether the machinery behind it is healthy.'}
+		: 'What Bao is listening to right now, at a glance.'}
 >
 	{#snippet actions()}
 		<button
@@ -52,36 +59,21 @@
 		<ErrorState message={errorMessage(overview.error)} onretry={() => manual.run()} />
 	</div>
 {:else}
-	<div class="grid items-start gap-8 lg:grid-cols-3">
-		<div class="min-w-0 lg:col-span-2">
-			{#if d}
-				<NowPlayingCard initial={d.now_playing} />
-			{:else}
-				<div class="card-print flex gap-5 p-5">
-					<Skeleton class="size-32" />
-					<div class="flex flex-1 flex-col gap-2 pt-2">
-						<Skeleton class="h-4 w-24" />
-						<Skeleton class="h-6 w-2/3" />
-						<Skeleton class="h-4 w-1/2" />
-						<Skeleton class="mt-4 h-2 w-full" />
-					</div>
-				</div>
-			{/if}
-			<PlayerCard />
+	{#if d}
+		<NowPlayingCard initial={d.now_playing} paused={localPause}>
+			{#snippet controls()}<NowPlayingControls bind:paused={localPause} />{/snippet}
+		</NowPlayingCard>
+	{:else}
+		<div class="card-print flex gap-5 p-5">
+			<Skeleton class="size-32" />
+			<div class="flex flex-1 flex-col gap-2 pt-2">
+				<Skeleton class="h-4 w-24" />
+				<Skeleton class="h-6 w-2/3" />
+				<Skeleton class="h-4 w-1/2" />
+				<Skeleton class="mt-4 h-2 w-full" />
+			</div>
 		</div>
-		<div class="flex flex-col gap-8">
-			{#if d}
-				<SpotifyTokenCard status={d.spotify} />
-			{:else}
-				<div class="flex flex-col gap-3">
-					<Skeleton class="h-4 w-24" /><Skeleton class="h-9 w-32" /><Skeleton class="h-2 w-full" />
-				</div>
-			{/if}
-			<BackupsCard />
-			<LyricsQueueCard />
-			<TranslationQueueCard />
-		</div>
-	</div>
+	{/if}
 
 	<section class="mt-10" aria-labelledby="totals-h">
 		<h2 id="totals-h" class="eyebrow mb-3">Listening totals</h2>
@@ -117,20 +109,11 @@
 		/>
 	</section>
 
-	<div class="ruled-cols mt-10 grid gap-y-10 lg:grid-cols-3">
-		{#if d}
-			<EnrichmentProgress counts={d.enrichment} />
-			<ServiceList services={d.services} />
-		{:else}
-			<div class="flex flex-col gap-3 lg:px-6">
-				<Skeleton class="h-4 w-32" /><Skeleton class="h-2.5 w-full" /><Skeleton class="h-16" />
-			</div>
-			<div class="flex flex-col gap-3 lg:px-6">
-				<Skeleton class="h-4 w-32" /><Skeleton class="h-8" /><Skeleton class="h-8" /><Skeleton
-					class="h-8"
-				/>
-			</div>
-		{/if}
+	<div class="mt-10">
+		<HealthStrip overview={d} />
+	</div>
+
+	<div class="mt-10">
 		<RecentPlaylistsCard />
 	</div>
 

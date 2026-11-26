@@ -34,11 +34,11 @@ export function tokenDaysLeft(
 }
 
 /** ≤ 3 days (or disconnected / errored) is critical, ≤ 14 days is a warning. */
-export function tokenHealth(s: SpotifyStatus | null | undefined): TokenHealth {
+export function tokenHealth(s: SpotifyStatus | null | undefined, now = Date.now()): TokenHealth {
 	if (!s) return 'unknown';
 	if (!s.connected) return 'danger';
 	if (s.last_error) return 'danger';
-	const days = tokenDaysLeft(s);
+	const days = tokenDaysLeft(s, now);
 	if (days == null) return 'unknown';
 	if (days <= 3) return 'danger';
 	if (days <= 14) return 'warn';

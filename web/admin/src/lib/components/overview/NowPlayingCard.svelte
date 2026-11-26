@@ -11,8 +11,20 @@
 	import { NowPlayingStream, snapshot } from '#lib/now-playing.svelte.js';
 	import { scriptLang } from '#lib/scriptLang.js';
 	import type { NowPlaying } from '#lib/types.js';
+	import type { LocalPause } from '#lib/player-control.svelte.js';
+	import type { Snippet } from 'svelte';
 
-	let { initial }: { initial: NowPlaying | null } = $props();
+	let {
+		initial,
+		controls,
+		paused = null
+	}: {
+		initial: NowPlaying | null;
+		/** A pause sent from the controls that the stream does not show yet. */
+		paused?: LocalPause;
+		/** Rendered at the bottom of the card, e.g. transport buttons. */
+		controls?: Snippet;
+	} = $props();
 
 	// Seeded from the overview response; live SSE events take over once they arrive.
 	const stream = new NowPlayingStream();
@@ -20,9 +32,12 @@
 	const live = $derived(stream.status);
 
 	const track = $derived(snap.np?.track ?? null);
-	const playing = $derived(!!snap.np?.is_playing && !!track);
+	// Stops the clock at once when paused from here (the stream lags behind).
+	const frozen = $derived(paused && track && paused.trackId === track.id ? paused : null);
+	const playing = $derived(!!snap.np?.is_playing && !!track && !frozen);
 	const durationMs = $derived(track?.duration_ms ?? 0);
 	const progress = $derived.by(() => {
+		if (frozen) return Math.min(durationMs || Infinity, frozen.progressMs);
 		const base = snap.np?.progress_ms ?? 0;
 		const elapsed = playing ? Math.max(0, secondClock.now - snap.at) : 0;
 		return Math.min(durationMs || Infinity, base + elapsed);
@@ -127,6 +142,9 @@
 				<p class="text-sm text-ink-soft">This updates by itself when Bao presses play.</p>
 			</div>
 		</div>
+	{/if}
+	{#if controls}
+		<div class="mt-4 border-t border-rule pt-1">{@render controls()}</div>
 	{/if}
 </section>
 

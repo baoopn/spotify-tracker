@@ -46,7 +46,7 @@
 
 <PageHeader
 	title="Artists"
-	eyebrow="Data"
+	eyebrow="Library"
 	description="Who gets played most, and how many of their songs are in the library."
 >
 	{#snippet actions()}

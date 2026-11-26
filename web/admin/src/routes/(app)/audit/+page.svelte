@@ -34,7 +34,7 @@
 
 <PageHeader
 	title="Audit log"
-	eyebrow="Settings"
+	eyebrow="System"
 	description="Sign-ins, re-authorisations and settings changes, newest first."
 />
 

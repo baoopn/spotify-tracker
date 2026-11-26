@@ -98,7 +98,7 @@
 
 <PageHeader
 	title="Tracks"
-	eyebrow="Data"
+	eyebrow="Library"
 	description="Every song in the library, with play counts and audio-feature status."
 >
 	{#snippet actions()}

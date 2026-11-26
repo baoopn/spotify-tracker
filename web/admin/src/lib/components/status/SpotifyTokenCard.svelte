@@ -8,7 +8,7 @@
 
 	let { status }: { status: SpotifyStatus } = $props();
 
-	const health = $derived(tokenHealth(status));
+	const health = $derived(tokenHealth(status, relativeClock.now));
 	const daysLeft = $derived(tokenDaysLeft(status, relativeClock.now));
 	let busy = $state(false);
 

@@ -7,6 +7,8 @@
 // they run and for HOLD_MS after: Spotify's GET /me/player lags 0.5–2 s
 // behind a command, so an earlier poll would undo the optimistic state.
 // Releasing the hold re-enables (and so refetches) the player queries.
+// The hold is module-wide: it outlives the component that sent the command,
+// so opening the Player page right after a click on the Overview still waits.
 
 import { onDestroy } from 'svelte';
 import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -18,6 +20,31 @@ import type { PlaybackState, PlayerStateView } from './types';
 
 const HOLD_MS = 1500;
 
+// Commands in flight (any instance) and the cool-down after the last one.
+const hold = $state({ pending: 0, cooling: false });
+let coolTimer: ReturnType<typeof setTimeout> | undefined;
+
+function holdStart() {
+	hold.pending++;
+	clearTimeout(coolTimer);
+	hold.cooling = false;
+}
+
+function holdEnd() {
+	hold.pending = Math.max(0, hold.pending - 1);
+	clearTimeout(coolTimer);
+	hold.cooling = true;
+	coolTimer = setTimeout(() => (hold.cooling = false), HOLD_MS);
+}
+
+/** True while a player command runs and for HOLD_MS after: polls are paused. */
+export function playerHolding(): boolean {
+	return hold.pending > 0 || hold.cooling;
+}
+
+/** A pause sent from here that the now-playing stream may not show yet. */
+export type LocalPause = { trackId: string; progressMs: number } | null;
+
 export type PlayerCmd = {
 	/** "pause", "skip to the next track": used in the error toast. */
 	label: string;
@@ -27,9 +54,7 @@ export type PlayerCmd = {
 };
 
 export class PlayerControl {
-	/** True while a command runs and for HOLD_MS after: polls are paused. */
-	holding = $state(false);
-	#holdTimer: ReturnType<typeof setTimeout> | undefined;
+	#destroyed = false;
 	// A slider change made while a command runs waits for it (latest wins).
 	#queued: PlayerCmd | null = null;
 	#cmd;
@@ -38,12 +63,11 @@ export class PlayerControl {
 
 	constructor() {
 		const queryClient = useQueryClient();
-		this.query = createQuery(() => ({ ...queries.playerState(), enabled: !this.holding }));
+		this.query = createQuery(() => ({ ...queries.playerState(), enabled: !playerHolding() }));
 		this.#cmd = createMutation(() => ({
 			mutationFn: (c: PlayerCmd) => c.run(),
 			onMutate: async (c: PlayerCmd) => {
-				this.holding = true;
-				clearTimeout(this.#holdTimer);
+				holdStart();
 				await queryClient.cancelQueries({ queryKey: qk.player.state, exact: true });
 				const prev = queryClient.getQueryData<PlayerStateView>(qk.player.state);
 				if (prev?.state && c.patch) {
@@ -62,19 +86,29 @@ export class PlayerControl {
 				if (c.done) toasts.success(c.done);
 			},
 			onSettled: () => {
+				// Ends this command's share of the shared hold (its cool-down
+				// timer is module-wide, so it runs after an unmount too).
+				holdEnd();
 				const next = this.#queued;
 				this.#queued = null;
-				if (next) {
-					setTimeout(() => this.#cmd.mutate(next));
-					return;
+				// After unmount: no queued slider change is sent.
+				if (next && !this.#destroyed) {
+					setTimeout(() => {
+						if (!this.#destroyed) this.#cmd.mutate(next);
+					});
 				}
-				clearTimeout(this.#holdTimer);
-				this.#holdTimer = setTimeout(() => (this.holding = false), HOLD_MS);
 			}
 		}));
-		onDestroy(() => clearTimeout(this.#holdTimer));
+		onDestroy(() => {
+			this.#destroyed = true;
+			this.#queued = null;
+		});
 	}
 
+	/** True while a command runs (any instance) and for HOLD_MS after. */
+	get holding(): boolean {
+		return playerHolding();
+	}
 	get view(): PlayerStateView | undefined {
 		return this.query.data;
 	}

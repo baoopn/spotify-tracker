@@ -75,6 +75,7 @@
 		label="Search Spotify for a track"
 		placeholder="Search for a song…"
 		maxlength={200}
+		class="max-w-md"
 		onsearch={(s) => (q = s)}
 	/>
 	{#if q}

@@ -53,7 +53,7 @@ function chip(
 export function spotifyChip(s: SpotifyStatus | undefined, now = Date.now()): HealthChip {
 	const label = 'Spotify token';
 	if (!s) return chip('spotify-token', label, 'unknown', 'Unavailable');
-	const h = tokenHealth(s);
+	const h = tokenHealth(s, now);
 	const days = tokenDaysLeft(s, now);
 	const level: HealthLevel =
 		h === 'ok' ? 'ok' : h === 'warn' ? 'warn' : h === 'danger' ? 'error' : 'unknown';
@@ -87,22 +87,28 @@ export function backupsChip(s: BackupStatus | undefined, now = Date.now()): Heal
 	const level: HealthLevel =
 		m.tone === 'ok' ? 'ok' : m.tone === 'danger' ? 'error' : m.tone === 'info' ? 'off' : 'warn';
 	const last = s.last_success;
-	const value = last ? relative(last.finished_at ?? last.started_at, now) : 'No backup yet';
+	const value = last
+		? `Last backup ${relative(last.finished_at ?? last.started_at, now)}`
+		: 'No backup yet';
 	return chip('backups', label, level, value, m.label.toLowerCase());
 }
 
-/** Failed lookups (retried later) → warning. */
+/** Failed lookups (retried later) → warning. Like the card, the never
+ * looked up backlog (part of queued) is named. */
 export function lyricsChip(s: LyricsQueue | undefined): HealthChip {
 	const label = 'Lyrics queue';
 	if (!s) return chip('lyrics-queue', label, 'unknown', 'Unavailable');
 	if (!s.enabled) return chip('lyrics-queue', label, 'off', 'Off');
 	const waiting = s.queued + s.in_progress;
-	const parts = [`${compact(waiting)} queued`];
+	const parts = [
+		`${compact(waiting)} queued` + (s.backlog ? ` (${compact(s.backlog)} never looked up)` : '')
+	];
 	if (s.error) parts.push(`${compact(s.error)} failed`);
 	return chip('lyrics-queue', label, s.error > 0 ? 'warn' : 'ok', parts.join(' · '));
 }
 
-/** The daily or monthly cap reached → warning. */
+/** The daily or monthly cap reached, or failed translations (retrying,
+ * given up or refused, as on the card) → warning. */
 export function translationsChip(s: TranslationQueue | undefined): HealthChip {
 	const label = 'Translations';
 	if (!s) return chip('translations', label, 'unknown', 'Unavailable');
@@ -113,7 +119,11 @@ export function translationsChip(s: TranslationQueue | undefined): HealthChip {
 		? `${compact(s.calls_today)}/${compact(s.daily_cap)} today`
 		: `${compact(s.calls_today)} today`;
 	const queued = s.queued + s.in_progress;
-	const value = queued ? `${today} · ${compact(queued)} queued` : today;
+	const failed = s.error + s.given_up + s.refused;
+	const parts = [today];
+	if (queued) parts.push(`${compact(queued)} queued`);
+	if (failed) parts.push(`${compact(failed)} failed`);
+	const value = parts.join(' · ');
 	if (dayFull || monthFull) {
 		return chip(
 			'translations',
@@ -123,7 +133,7 @@ export function translationsChip(s: TranslationQueue | undefined): HealthChip {
 			monthFull ? 'monthly cap reached' : 'daily cap reached'
 		);
 	}
-	return chip('translations', label, 'ok', value);
+	return chip('translations', label, failed > 0 ? 'warn' : 'ok', value);
 }
 
 /** Share of tracks enriched; failed enrichments → warning. */

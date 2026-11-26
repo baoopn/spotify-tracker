@@ -2,7 +2,14 @@
 	import { resolve } from '$app/paths';
 	import { ArrowRight, Pause, Play, SkipBack, SkipForward } from '@lucide/svelte';
 	import Skeleton from '../Skeleton.svelte';
-	import { PlayerControl } from '#lib/player-control.svelte.js';
+	import { PlayerControl, type LocalPause } from '#lib/player-control.svelte.js';
+
+	let {
+		paused = $bindable(null)
+	}: {
+		/** Set while a pause sent from here is held (the now-playing card stops its clock). */
+		paused?: LocalPause;
+	} = $props();
 
 	// Previous / play-pause / next under the now-playing card, and a link to
 	// the full Player page. Polls only the playback state (not the devices or
@@ -11,6 +18,14 @@
 	const st = $derived(ctl.state);
 	const disallows = $derived(st?.disallows ?? {});
 	const device = $derived(st?.device ?? null);
+	const unauthorized = $derived(!!ctl.view?.connected && !ctl.canControl);
+
+	$effect(() => {
+		paused =
+			ctl.holding && st?.item && !st.is_playing
+				? { trackId: st.item.id, progressMs: st.progress_ms }
+				: null;
+	});
 </script>
 
 <div class="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 pt-3" aria-busy={ctl.busy}>
@@ -61,6 +76,12 @@
 				</span>
 			{/if}
 		</div>
+	{:else if unauthorized}
+		<a
+			href={resolve('settings/spotify')}
+			class="text-sm font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
+			>Playback control not authorized</a
+		>
 	{/if}
 	<a href={resolve('player')} class="btn btn-secondary btn-sm ml-auto">
 		Open player <ArrowRight class="size-4" aria-hidden="true" />

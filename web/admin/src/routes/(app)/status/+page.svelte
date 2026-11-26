@@ -61,20 +61,26 @@
 {/if}
 
 <div class="grid items-start gap-x-10 gap-y-10 lg:grid-cols-2">
-	<div id="spotify-token" class="scroll-mt-24">
+	<div id="spotify-token" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
 		{#if d}
 			<SpotifyTokenCard status={d.spotify} />
 		{:else if !overview.isError}{@render loading()}{/if}
 	</div>
-	<div id="services" class="scroll-mt-24">
+	<div id="services" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
 		{#if d}
 			<div class="border-t border-ink pt-4"><ServiceList services={d.services} /></div>
 		{:else if !overview.isError}{@render loading()}{/if}
 	</div>
-	<div id="backups" class="scroll-mt-24"><BackupsCard /></div>
-	<div id="lyrics-queue" class="scroll-mt-24"><LyricsQueueCard /></div>
-	<div id="translations" class="scroll-mt-24"><TranslationQueueCard /></div>
-	<div id="enrichment" class="scroll-mt-24">
+	<div id="backups" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
+		<BackupsCard />
+	</div>
+	<div id="lyrics-queue" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
+		<LyricsQueueCard />
+	</div>
+	<div id="translations" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
+		<TranslationQueueCard />
+	</div>
+	<div id="enrichment" class="scroll-mt-[calc(5rem+env(safe-area-inset-top,0px))]">
 		{#if d}
 			<div class="border-t border-ink pt-4"><EnrichmentProgress counts={d.enrichment} /></div>
 		{:else if !overview.isError}{@render loading()}{/if}

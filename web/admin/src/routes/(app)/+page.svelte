@@ -13,6 +13,7 @@
 	import { compact, date, hours } from '#lib/format.js';
 	import { qk, queries } from '#lib/queries.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
+	import type { LocalPause } from '#lib/player-control.svelte.js';
 
 	// Counters/health poll (see queries.ts); now-playing is live via SSE.
 	const overview = createQuery(() => queries.overview());
@@ -29,6 +30,8 @@
 	);
 
 	const d = $derived(overview.data);
+	// A pause sent from the mini controls: the card stops its clock until the stream catches up.
+	let localPause = $state<LocalPause>(null);
 </script>
 
 <PageHeader
@@ -57,8 +60,8 @@
 	</div>
 {:else}
 	{#if d}
-		<NowPlayingCard initial={d.now_playing}>
-			{#snippet controls()}<NowPlayingControls />{/snippet}
+		<NowPlayingCard initial={d.now_playing} paused={localPause}>
+			{#snippet controls()}<NowPlayingControls bind:paused={localPause} />{/snippet}
 		</NowPlayingCard>
 	{:else}
 		<div class="card-print flex gap-5 p-5">

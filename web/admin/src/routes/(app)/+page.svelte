@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { RefreshCw } from '@lucide/svelte';
+	import { ArrowRight, RefreshCw } from '@lucide/svelte';
+	import { resolve } from '$app/paths';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import KpiRow from '#lib/components/KpiRow.svelte';
 	import Skeleton from '#lib/components/Skeleton.svelte';
@@ -10,7 +11,7 @@
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
-	import { compact, date, hours } from '#lib/format.js';
+	import { compact, date, hours, num } from '#lib/format.js';
 	import { qk, queries } from '#lib/queries.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import type { LocalPause } from '#lib/player-control.svelte.js';
@@ -112,6 +113,22 @@
 	<div class="mt-10">
 		<HealthStrip overview={d} />
 	</div>
+
+	{#if d && d.lyrics_missing > 0}
+		<a
+			href={resolve('data/tracks?lyrics=missing')}
+			class="card mt-4 flex items-center justify-between gap-3 p-3 transition-colors duration-150 hover:border-ink hover:bg-paper-3"
+		>
+			<span class="flex min-w-0 flex-col">
+				<span class="eyebrow">Lyrics</span>
+				<span class="text-sm font-medium text-ink">
+					{num(d.lyrics_missing)}
+					{d.lyrics_missing === 1 ? 'song' : 'songs'} without lyrics
+				</span>
+			</span>
+			<ArrowRight class="size-4 shrink-0 text-ink-soft" aria-hidden="true" />
+		</a>
+	{/if}
 
 	<div class="mt-10">
 		<RecentPlaylistsCard />

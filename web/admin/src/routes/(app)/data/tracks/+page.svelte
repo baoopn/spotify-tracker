@@ -22,8 +22,11 @@
 	import { toasts } from '#lib/toast.svelte.js';
 	import {
 		ENRICHMENT_STATUSES,
+		LYRICS_FILTERS,
 		type EnrichmentStatus,
+		type LyricsFilter,
 		type SortOrder,
+		type TrackRow,
 		type TrackSort
 	} from '#lib/types.js';
 
@@ -34,11 +37,40 @@
 		return ENRICHMENT_STATUSES.includes(s as EnrichmentStatus) ? (s as EnrichmentStatus) : '';
 	}
 
+	function initialLyrics(): LyricsFilter | '' {
+		const s = page.url.searchParams.get('lyrics');
+		return LYRICS_FILTERS.includes(s as LyricsFilter) ? (s as LyricsFilter) : '';
+	}
+
+	const LYRICS_OPTIONS: Record<LyricsFilter, string> = {
+		missing: 'Missing',
+		unsynced: 'Plain only (no timing)',
+		found: 'Found',
+		instrumental: 'Instrumental'
+	};
+
+	/** The lyrics chip of a row; muted text for states with no lyrics. */
+	function lyricsState(row: TrackRow): { label: string; chip: boolean } {
+		switch (row.lyrics_status) {
+			case 'found':
+				return { label: row.lyrics_synced ? 'Synced' : 'Plain', chip: true };
+			case 'instrumental':
+				return { label: 'Instrumental', chip: true };
+			case 'not_found':
+				return { label: 'Not found', chip: false };
+			case 'error':
+				return { label: 'Failed', chip: false };
+			default:
+				return { label: 'Not looked up', chip: false };
+		}
+	}
+
 	let q = $state('');
 	/** Search by track names (the paginated table) or by lyric text. */
 	let mode = $state<'names' | 'lyrics'>('names');
 	let lyricsQ = $state('');
 	let status = $state<EnrichmentStatus | ''>(initialStatus());
+	let lyrics = $state<LyricsFilter | ''>(initialLyrics());
 	let sort = $state<TrackSort>('plays');
 	let order = $state<SortOrder>('desc');
 	let offset = $state(0);
@@ -48,11 +80,20 @@
 	const queryClient = useQueryClient();
 	// Only the names table polls; it is hidden in lyrics mode.
 	const list = createQuery(() => ({
-		...queries.tracks({ q, status, sort, order, limit: LIMIT, offset }),
+		...queries.tracks({ q, status, lyrics, sort, order, limit: LIMIT, offset }),
 		enabled: mode === 'names'
 	}));
 	// Dim/spin only for this (user-triggered) refetch, never for background polls.
 	const manual = new ManualRefetch(() => list.refetch());
+
+	const emptyMessage = $derived.by(() => {
+		if (lyrics === 'missing' && !q && !status)
+			return 'Every track has lyrics, or is marked instrumental.';
+		if (lyrics)
+			return `No tracks match the lyrics filter “${LYRICS_OPTIONS[lyrics]}”. Try another filter or search.`;
+		if (q || status) return 'Try a different search or filter.';
+		return 'No tracks have been recorded yet.';
+	});
 
 	function setSort(s: TrackSort) {
 		if (sort === s) order = order === 'desc' ? 'asc' : 'desc';
@@ -92,6 +133,7 @@
 		{ key: 'plays', label: 'Plays', cls: 'w-24 text-right' },
 		{ key: 'last_played', label: 'Last played', cls: 'w-40' },
 		{ key: null, label: 'Enrichment', cls: 'w-36' },
+		{ key: null, label: 'Lyrics', cls: 'w-32' },
 		{ key: 'created', label: 'Added', cls: 'w-36' }
 	];
 </script>
@@ -151,6 +193,20 @@
 				{/each}
 			</select>
 		</label>
+		<label class="flex items-center gap-2 text-sm text-muted">
+			Lyrics
+			<select
+				class="input w-auto"
+				bind:value={lyrics}
+				onchange={() => (offset = 0)}
+				aria-label="Filter by lyrics"
+			>
+				<option value="">All</option>
+				{#each LYRICS_FILTERS as f (f)}
+					<option value={f}>{LYRICS_OPTIONS[f]}</option>
+				{/each}
+			</select>
+		</label>
 	{/if}
 </div>
 
@@ -169,13 +225,7 @@
 				{/each}
 			</div>
 		{:else if list.data.data.length === 0}
-			<EmptyState
-				icon={Music}
-				title="No tracks found"
-				message={q || status
-					? 'Try a different search or filter.'
-					: 'No tracks have been recorded yet.'}
-			/>
+			<EmptyState icon={Music} title="No tracks found" message={emptyMessage} />
 		{:else}
 			<div
 				class={[
@@ -224,6 +274,7 @@
 					</thead>
 					<tbody>
 						{#each list.data.data as row (row.track.id)}
+							{@const ly = lyricsState(row)}
 							<tr class="row-link" onclick={() => (selected = row.track.id)}>
 								<td class="max-w-0 min-w-64">
 									<button
@@ -241,6 +292,13 @@
 								<td class="text-right font-medium tabular-nums">{num(row.plays)}</td>
 								<td><RelTime value={row.last_played} /></td>
 								<td><EnrichmentBadge status={row.enrichment_status} /></td>
+								<td>
+									{#if ly.chip}
+										<span class="chip whitespace-nowrap">{ly.label}</span>
+									{:else}
+										<span class="text-xs whitespace-nowrap text-muted">{ly.label}</span>
+									{/if}
+								</td>
 								<td><RelTime value={row.created_at} /></td>
 							</tr>
 						{/each}

@@ -96,7 +96,8 @@ var publicTools = []toolDef{
 var adminTools = []toolDef{
 	{name: "admin_overview", title: "Admin overview", path: "/overview",
 		desc: "Service health (api, poller, enricher, postgres, redis), now playing, all-time and 7-day summaries, " +
-			"enrichment queue counts, Spotify connection status, and up_next: the next tracks of the Spotify queue (private, null when none)."},
+			"enrichment queue counts, lyrics_missing (songs with no lyrics to show: never looked up, not found or " +
+			"failed; list them with admin_tracks lyrics=missing), Spotify connection status, and up_next: the next tracks of the Spotify queue (private, null when none)."},
 	{name: "admin_spotify_status", title: "Spotify connection", path: "/spotify",
 		desc: "Spotify connection status: connected account, scopes, authorization date, refresh-token expiry, last error. " +
 			"Contains no tokens."},
@@ -104,11 +105,18 @@ var adminTools = []toolDef{
 		desc:   "Full play history, newest first, with search. Use next_cursor from the result as cursor for older plays.",
 		params: []param{limitParam(50, 100), cursorParam(), searchParam("Search by track, artist or album name, or a Spotify ID/URI.")}},
 	{name: "admin_tracks", title: "Tracks (admin)", path: "/tracks",
-		desc: "Every tracked track with play counts and enrichment status. Result has data and total.",
+		desc: "Every tracked track with play counts, enrichment status and lyrics state. Result has data and total; " +
+			"each row has lyrics_status (found, instrumental, not_found, error, or pending = not looked up yet) and " +
+			"lyrics_synced (true when the lyrics are time-synced). Use lyrics=missing to find songs to add lyrics to " +
+			"with admin_set_lyrics.",
 		params: []param{
 			searchParam("Search by track, artist or album name, ISRC, or a Spotify ID/URI."),
 			{name: "status", enum: []string{"pending", "enriched", "unavailable", "failed"},
 				desc: "Only tracks with this enrichment status."},
+			{name: "lyrics", enum: []string{"missing", "unsynced", "found", "instrumental"},
+				desc: "Only tracks with this lyrics state: missing = no lyrics to show (never looked up, not found, " +
+					"or the lookup failed); unsynced = found plain lyrics with no time-synced version; found = any " +
+					"found lyrics (synced or plain); instrumental = marked instrumental."},
 			{name: "sort", enum: []string{"plays", "last_played", "name", "created"}, def: "last_played", desc: "Sort column."},
 			{name: "order", enum: sortOrders, def: "desc", desc: "Sort direction."},
 			limitParam(25, 100), offsetParam(),

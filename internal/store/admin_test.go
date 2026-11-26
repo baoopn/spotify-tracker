@@ -66,7 +66,7 @@ func TestAdminSearchFoldsNames(t *testing.T) {
 			return err
 		}, "$3", []string{"t.name", "al.name", "a.name"}, nil},
 		{"tracks", func(q *Queries) error {
-			_, _, err := q.AdminTracks(ctx, "ngay roi", "", "", "", 50, 0)
+			_, _, err := q.AdminTracks(ctx, "ngay roi", "", "", "", "", 50, 0)
 			return err
 		}, "$1", []string{"t.name", "al.name", "a.name"}, []string{"t.isrc ILIKE $1"}},
 		{"artists", func(q *Queries) error {
@@ -131,5 +131,53 @@ func TestSearchFoldMigration(t *testing.T) {
 	}
 	if !strings.Contains(down, "DROP FUNCTION IF EXISTS search_fold(text)") {
 		t.Errorf("unexpected down:\n%s", down)
+	}
+}
+
+// The lyrics filter adds a fixed condition on the joined lyrics row and no
+// parameter; an unknown value adds nothing.
+func TestAdminTracksLyricsFilter(t *testing.T) {
+	ctx := context.Background()
+	for filter, want := range map[string]string{
+		LyricsFilterMissing:      "(COALESCE(l.status, 'pending') IN ('pending', 'not_found', 'error'))",
+		LyricsFilterUnsynced:     "l.status = 'found' AND COALESCE(l.plain_lyrics, '') <> '' AND COALESCE(l.synced_lyrics, '') = ''",
+		LyricsFilterFound:        "(l.status = 'found')",
+		LyricsFilterInstrumental: "(l.status = 'instrumental')",
+	} {
+		db := &captureDB{}
+		_, _, _ = (&Queries{db: db}).AdminTracks(ctx, "", "enriched", filter, "", "", 50, 0)
+		if !strings.Contains(db.sql, want) || !strings.Contains(db.sql, "LEFT JOIN lyrics l ON l.track_id = t.id") {
+			t.Errorf("%s: sql lacks %q:\n%s", filter, want, db.sql)
+		}
+		if len(db.args) != 1 {
+			t.Errorf("%s: args = %v, want only the status", filter, db.args)
+		}
+	}
+	db := &captureDB{}
+	_, _, _ = (&Queries{db: db}).AdminTracks(ctx, "", "", "bogus", "", "", 50, 0)
+	if strings.Contains(db.sql, "l.status") || len(db.args) != 0 {
+		t.Errorf("unknown filter changed the query: %s %v", db.sql, db.args)
+	}
+	for _, f := range []string{"", "missing", "unsynced", "found", "instrumental"} {
+		if !ValidLyricsFilter(f) {
+			t.Errorf("ValidLyricsFilter(%q) = false", f)
+		}
+	}
+	for _, f := range []string{"pending", "not_found", "MISSING", "missing;"} {
+		if ValidLyricsFilter(f) {
+			t.Errorf("ValidLyricsFilter(%q) = true", f)
+		}
+	}
+}
+
+// The overview's missing-lyrics count uses the same condition as the tracks
+// filter.
+func TestLyricsMissingCountSharesFilter(t *testing.T) {
+	db := &captureDB{}
+	if _, err := (&Queries{db: db}).LyricsMissingCount(context.Background()); !errors.Is(err, errCaptured) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(db.sql, lyricsFilters[LyricsFilterMissing]) || !strings.Contains(db.sql, "LEFT JOIN lyrics l ON l.track_id = t.id") {
+		t.Errorf("sql does not use the missing filter:\n%s", db.sql)
 	}
 }

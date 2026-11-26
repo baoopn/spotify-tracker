@@ -124,6 +124,8 @@ export type Overview = {
 	summary_all: Summary;
 	summary_7d: Summary;
 	enrichment: EnrichmentCounts;
+	/** Tracks with no lyrics to show (never looked up, not found or failed). */
+	lyrics_missing: number;
 	spotify: SpotifyStatus;
 	services: ServiceHealth[];
 	version: string;
@@ -366,6 +368,10 @@ export type TrackRow = {
 	plays: number;
 	last_played: string | null;
 	enrichment_status: EnrichmentStatus;
+	/** "pending" when the track was never looked up. */
+	lyrics_status: LyricsStatus;
+	/** True when the lyrics have a time-synced version. */
+	lyrics_synced: boolean;
 	created_at: string;
 };
 
@@ -389,6 +395,18 @@ export type TrackAdminDetail = TrackView & {
 
 /** "pending" means not looked up yet (no stored row). */
 export type LyricsStatus = 'found' | 'instrumental' | 'not_found' | 'error' | 'pending';
+
+/**
+ * The `lyrics` filter of GET /admin/api/tracks: missing = no lyrics to show
+ * (never looked up, not found or failed), unsynced = plain lyrics only.
+ */
+export type LyricsFilter = 'missing' | 'unsynced' | 'found' | 'instrumental';
+export const LYRICS_FILTERS: readonly LyricsFilter[] = [
+	'missing',
+	'unsynced',
+	'found',
+	'instrumental'
+];
 
 /** GET /admin/api/tracks/{id}/lyrics. Admin and MCP only. */
 export type TrackLyrics = {

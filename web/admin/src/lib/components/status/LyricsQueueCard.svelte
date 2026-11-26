@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
 	import RelTime from '../RelTime.svelte';
 	import Skeleton from '../Skeleton.svelte';
@@ -59,6 +60,12 @@
 			{#if !s.enabled}
 				<p class="text-xs text-muted">The lyrics fetcher is off (LYRICS_ENABLED=false).</p>
 			{/if}
+			<a
+				href={resolve('data/tracks?lyrics=missing')}
+				class="mt-2 inline-block text-sm font-medium text-primary hover:underline"
+			>
+				Find songs without lyrics
+			</a>
 		</div>
 	{:else if query.isError}
 		<p class="text-sm text-muted">The lyrics queue is unavailable.</p>

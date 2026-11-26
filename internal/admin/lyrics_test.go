@@ -344,3 +344,19 @@ func TestTrackLyricsQueueNeedsFetcher(t *testing.T) {
 		}
 	}
 }
+
+// An unknown lyrics filter on the tracks list is rejected before the store
+// is called (the API has no store here).
+func TestTracksLyricsFilterInvalid(t *testing.T) {
+	h := ReadOnlyHandler(lyricsAPI(&fakeLyrics{}))
+	for _, v := range []string{"none", "pending", "MISSING", "found%3B"} {
+		rec := getLyrics(h, "/tracks?lyrics="+v)
+		if rec.Code != http.StatusBadRequest || lyricsErrCode(rec) != "invalid_lyrics" {
+			t.Errorf("lyrics=%s = %d %s", v, rec.Code, lyricsErrCode(rec))
+		}
+	}
+	// The status check still runs first.
+	if rec := getLyrics(h, "/tracks?status=x&lyrics=missing"); lyricsErrCode(rec) != "invalid_status" {
+		t.Errorf("status=x = %s", lyricsErrCode(rec))
+	}
+}

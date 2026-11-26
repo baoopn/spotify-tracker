@@ -254,7 +254,7 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   last search is the one dropped when a two-artist decorated title used all
   four Gets. The chosen entry's id is stored as `lrclib_id`. Songs stored
   with plain lyrics, or not found, before this matching are not looked up
-  again on their own: they change only when re-queued (admin "Look up again", MCP
+  again on their own: they change only when re-queued (admin "Look up lyrics again", MCP
   `admin_requeue_lyrics`) or on a normal not-found retry. Synced lyrics
   change the lyrics hash, so an existing translation is re-queued.
   Without an album or duration only search is used. NUL bytes are removed,
@@ -320,7 +320,7 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   again). Stored lyrics stay served until the new lookup, and the error
   backoff restarts. Manual lyrics answer `409 manual_lyrics` unless the
   request sets `replace_manual: true` (see Manual lyrics below). While `LYRICS_ENABLED` is false the re-queue answers
-  `409 lyrics_disabled`, and the admin hides "Look up again" and shows
+  `409 lyrics_disabled`, and the admin hides "Look up lyrics again" and shows
   nothing as queued (`lookup_enabled` in `TrackLyrics`). `GET /admin/api/lyrics/queue` (MCP `admin_lyrics_queue`)
   counts the queue (queued, re-queued, never looked up (no row or a pending
   row), in progress, found,

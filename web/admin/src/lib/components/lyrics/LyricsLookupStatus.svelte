@@ -56,11 +56,11 @@
 
 <div class={['flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft', className]}>
 	<!-- One live region that stays mounted, so state changes are announced;
-	     hidden while empty so it adds no gap. -->
+	     out of the flow while empty (still in the accessibility tree), so it adds no gap. -->
 	<span
 		role="status"
 		aria-live="polite"
-		class="inline-flex flex-wrap items-center gap-x-2 empty:hidden"
+		class="inline-flex flex-wrap items-center gap-x-2 empty:absolute"
 	>
 		{#if lyrics.looking_up}
 			<span class="chip">Looking up…</span>

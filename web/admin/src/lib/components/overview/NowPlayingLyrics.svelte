@@ -166,7 +166,7 @@
 		<p class="text-sm text-ink-soft">No lyrics yet.</p>
 	{/if}
 
-	{#if l}
+	{#if l && (l.status !== 'pending' || l.lookup_enabled || l.looking_up || l.queued)}
 		<!-- One footer: the source on the left, status and actions on the right. -->
 		<div
 			class="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule pt-3 text-xs text-ink-soft"

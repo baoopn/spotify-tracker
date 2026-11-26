@@ -140,6 +140,53 @@ type SpotifyStatus = {
 | GET | `/admin/api/spotify/callback` | (Spotify redirect) | 302 → `/admin/settings/spotify?result=success` or `?result=error&message=…` |
 | POST | `/admin/api/spotify/test` | – | `{ "ok": true, "status": 200 \| 204, "now_playing": NowPlaying \| null }` or `{ "ok": false, "error": "…" }` |
 
+## Player
+
+Controls the owner's Spotify player (Premium; the token needs
+`user-modify-playback-state`). Not served on the MCP read-only handler.
+
+```ts
+type PlayerTrack = { id: string; uri: string; name: string; duration_ms: number; explicit: boolean;
+  artists: { id: string; name: string }[]; album_name: string; cover_image_url: string; external_url: string };
+type Device = { id: string; name: string; type: string; volume_percent: number | null;
+  supports_volume: boolean; is_active: boolean; is_private_session: boolean; is_restricted: boolean };
+type PlaybackState = { is_playing: boolean; progress_ms: number; shuffle_state: boolean;
+  repeat_state: "off" | "track" | "context"; device: Device | null;
+  context: { type: string; uri: string } | null;
+  currently_playing_type: string;   // "track", "episode", "ad", "unknown"
+  item: PlayerTrack | null;         // null unless a track is loaded
+  disallows: Record<string, true> };  // e.g. { pausing: true }
+type Player = { connected: boolean; can_control: boolean;
+  state: PlaybackState | null;      // null: no active device
+  devices: Device[] | null;         // null when Spotify refused the list
+  queue: PlayerTrack[] | null };    // the next 20 tracks; null when Spotify refused it
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/player?parts=state,devices,queue` | – | `Player` with only the parts asked for (default all); the SPA polls `state` every 5 s and `devices,queue` every 25 s |
+| GET | `/admin/api/player/search?q=&limit=` | – | `{ data: PlayerTrack[] }` (limit 1–10, default 8) |
+| POST | `/admin/api/player/play` | `{ device_id?, uris?: string[], context_uri?, offset_position?, offset_uri?, position_ms? }` (empty resumes) | `{ ok: true }` |
+| POST | `/admin/api/player/pause` \| `next` \| `previous` | `{ device_id? }` or empty | `{ ok: true }` |
+| POST | `/admin/api/player/seek` | `{ position_ms, device_id? }` | `{ ok: true }` |
+| POST | `/admin/api/player/volume` | `{ volume_percent: 0–100, device_id? }` | `{ ok: true }` |
+| POST | `/admin/api/player/shuffle` | `{ state: boolean, device_id? }` | `{ ok: true }` |
+| POST | `/admin/api/player/repeat` | `{ state: "off" \| "track" \| "context", device_id? }` | `{ ok: true }` |
+| POST | `/admin/api/player/transfer` | `{ device_id, play?: boolean }` (false keeps the playing state) | `{ ok: true }` |
+| POST | `/admin/api/player/queue` | `{ uri, device_id? }` (track id or URI) | `{ ok: true }` |
+
+Every command Spotify was asked to run is audited as `player.<command>`,
+with `"error": <code>` when it failed (invalid requests are not). Errors: 409
+`missing_scope` (re-authorize Spotify; also when Spotify answers 403
+"Insufficient client scope"), 409 `spotify_not_connected` (also when Spotify
+rejects the token after a refresh), 409
+`no_active_device` ("Open Spotify on a device first"), 403 `premium_required`,
+403 `player_restricted` (the device or context disallows it), 404 `not_found`,
+422 `validation_failed`, 429 `rate_limited` (with `Retry-After`), 502
+`spotify_error`. On `GET /player`, a rate limit on any part fails the
+request so the SPA backs off for `Retry-After`. The SPA does not treat the player 403 codes as a sign-out.
+Spotify's API cannot remove or reorder queue items.
+
 ## Email / SMTP settings
 
 ```ts

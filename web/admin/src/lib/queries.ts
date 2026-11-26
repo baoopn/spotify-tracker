@@ -3,7 +3,7 @@
 // (e.g. `qk.tracks.all` hits every tracks list page and every track detail).
 
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from '@tanstack/svelte-query';
-import { api } from './api';
+import { ApiError, api } from './api';
 import { backupBusy } from './backups';
 import type {
 	AnalyticsRange,
@@ -58,6 +58,12 @@ export type TopPlaylistsParams = { period: TopPlaylistPeriod | ''; page: number;
 
 export const qk = {
 	overview: ['overview'] as const,
+	player: {
+		state: ['player', 'state'] as const,
+		extras: ['player', 'extras'] as const
+	},
+	/** Its own root, so cancelling the player queries never hits a search. */
+	playerSearch: (q: string) => ['playerSearch', q] as const,
 	spotify: ['spotify', 'status'] as const,
 	emailSettings: ['settings', 'email'] as const,
 	backups: ['backups'] as const,
@@ -106,12 +112,56 @@ export const qk = {
 	audit: (limit: number) => ['audit', { limit }] as const
 };
 
+/** How long to wait after a 429 (Retry-After, else 30 s); null otherwise. */
+function rateLimitedFor(err: unknown): number | null {
+	if (!(err instanceof ApiError) || err.status !== 429) return null;
+	return Math.max(1_000, err.retryAfterMs ?? 30_000);
+}
+
+function noRetryOn429(failureCount: number, err: unknown): boolean {
+	if (err instanceof ApiError && (err.status === 429 || (err.status >= 400 && err.status < 500))) {
+		return false;
+	}
+	return failureCount < 2;
+}
+
 export const queries = {
 	overview: () =>
 		queryOptions({
 			queryKey: qk.overview,
 			queryFn: ({ signal }) => api.overview({ signal }),
 			refetchInterval: REFRESH.live
+		}),
+
+	/**
+	 * The owner's playback state: every 5 s while the tab is visible (not
+	 * when hidden). Each poll is a Spotify call on the client id the poller
+	 * uses, so a 429 waits for its Retry-After (30 s without one).
+	 */
+	playerState: () =>
+		queryOptions({
+			queryKey: qk.player.state,
+			queryFn: ({ signal }) => api.playerState({ signal }),
+			refetchInterval: (query) => rateLimitedFor(query.state.error) ?? 5_000,
+			retry: noRetryOn429
+		}),
+
+	/** Devices and queue: two Spotify calls, so every 25 s (and on demand). */
+	playerExtras: () =>
+		queryOptions({
+			queryKey: qk.player.extras,
+			queryFn: ({ signal }) => api.playerExtras({ signal }),
+			refetchInterval: (query) => rateLimitedFor(query.state.error) ?? 25_000,
+			retry: noRetryOn429
+		}),
+
+	playerSearch: (q: string) =>
+		queryOptions({
+			queryKey: qk.playerSearch(q),
+			queryFn: ({ signal }) => api.playerSearch(q, 8, { signal }),
+			enabled: q.length > 0,
+			staleTime: 60_000,
+			refetchOnWindowFocus: false
 		}),
 
 	spotify: () =>

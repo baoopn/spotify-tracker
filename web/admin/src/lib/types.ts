@@ -147,6 +147,76 @@ export type UpNextItem = {
 	cover_image_url: string;
 };
 
+// ---------- player (GET/POST /admin/api/player) ----------
+
+export type PlayerTrack = {
+	id: string;
+	uri: string;
+	name: string;
+	duration_ms: number;
+	explicit: boolean;
+	artists: { id: string; name: string }[];
+	album_name: string;
+	cover_image_url: string;
+	external_url: string;
+};
+
+export type PlayerDevice = {
+	id: string;
+	name: string;
+	/** "Computer", "Smartphone", "Speaker", "TV", "Tablet", "Automobile", "CastVideo", … */
+	type: string;
+	volume_percent: number | null;
+	supports_volume: boolean;
+	is_active: boolean;
+	is_private_session: boolean;
+	is_restricted: boolean;
+};
+
+export type RepeatState = 'off' | 'track' | 'context';
+
+export type PlaybackState = {
+	is_playing: boolean;
+	progress_ms: number;
+	shuffle_state: boolean;
+	repeat_state: RepeatState;
+	device: PlayerDevice | null;
+	context: { type: string; uri: string } | null;
+	/** "track", "episode", "ad" or "unknown"; `item` is null unless a track is loaded. */
+	currently_playing_type: string;
+	item: PlayerTrack | null;
+	/** Actions the current context does not allow, e.g. `{ pausing: true }`. */
+	disallows: Record<string, boolean>;
+};
+
+/** GET /admin/api/player?parts=state */
+export type PlayerStateView = {
+	connected: boolean;
+	/** The token has user-modify-playback-state. */
+	can_control: boolean;
+	/** null: no active device. */
+	state: PlaybackState | null;
+};
+
+/** GET /admin/api/player?parts=devices,queue */
+export type PlayerExtras = {
+	connected: boolean;
+	can_control: boolean;
+	/** null when Spotify refused the list (or Spotify is not connected). */
+	devices: PlayerDevice[] | null;
+	/** The next tracks; null when Spotify refused the queue. */
+	queue: PlayerTrack[] | null;
+};
+
+export type PlayBody = {
+	device_id?: string;
+	uris?: string[];
+	context_uri?: string;
+	offset_position?: number;
+	offset_uri?: string;
+	position_ms?: number;
+};
+
 // ---------- spotify ----------
 
 export type SpotifyStatus = {

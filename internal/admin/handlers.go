@@ -92,8 +92,12 @@ type API struct {
 	lyrics         lyricsStore
 	spotifyAuth    func(context.Context) (settings.Spotify, error)
 	auditor        auditor
+	player         playerControl
 	invalidate     func(context.Context)
 	now            func() time.Time
+
+	// live is the Spotify player built on first use (see playerClient).
+	live livePlayer
 }
 
 func (a *API) clock() time.Time {

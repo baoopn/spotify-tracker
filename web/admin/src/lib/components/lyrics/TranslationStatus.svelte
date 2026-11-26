@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { Languages } from '@lucide/svelte';
 	import RelTime from '../RelTime.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import { qk } from '#lib/queries.js';
@@ -10,12 +11,15 @@
 	let {
 		trackId,
 		translation,
-		details = false
+		details = false,
+		class: className = 'mt-2'
 	}: {
 		trackId: string;
 		translation: TrackTranslation | null;
 		/** Also show when and by which model it was translated, and the last error. */
 		details?: boolean;
+		/** Classes for the wrapper (spacing). */
+		class?: string;
 	} = $props();
 
 	const queryClient = useQueryClient();
@@ -35,7 +39,7 @@
 </script>
 
 {#if t}
-	<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
+	<div class={['flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft', className]}>
 		{#if waiting}
 			<span class="chip" role="status">Translating…</span>
 		{:else if note}
@@ -51,12 +55,13 @@
 		{/if}
 		<button
 			type="button"
-			class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink disabled:opacity-50"
+			class="btn btn-ghost btn-sm"
 			disabled={requeue.isPending}
 			onclick={() => requeue.mutate()}
 			title="Translate again, ahead of the queue (uses Claude credit)"
 		>
-			{requeue.isPending ? 'Queuing…' : 'Re-queue'}
+			<Languages class="size-3.5" aria-hidden="true" />
+			{requeue.isPending ? 'Queuing…' : 'Translate again'}
 		</button>
 	</div>
 {/if}

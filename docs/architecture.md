@@ -512,20 +512,32 @@ now-playing lyrics and in the admin.
   high), thinking left unset (adaptive; `disabled` is a 400 on this model), structured JSON
   output (`{ languages, source_language, en, vi, title, album }`), the fixed system prompt first with a
   cache breakpoint, the server-side refusal fallback (`fallbacks: "default"`).
-  Synced lyrics go as numbered non-empty lines and come back as one line per
-  input line; the worker puts empty lines back, so `en_lines` / `vi_lines`
+  Synced lyrics go as numbered non-empty lines (`1| ...`, 1-based) and each
+  target comes back as `[{ n, text }]` items for only the lines that need a
+  translation (a full list of `""` items made the model miscount long,
+  mostly-English songs). The worker expands them to one entry per line, `""`
+  for lines left out and for empty LRC lines, so `en_lines` / `vi_lines`
   line up with `internal/lrc.Parse`. Plain lyrics go as one text.
   Mixed-language songs (K-pop, J-pop, V-pop, rap) are the norm: the prompt
   translates into each target on its own, line by line and part by part, so
   English lines get Vietnamese and Vietnamese lines get English; only words
   already in the target, proper nouns, numbers, common loanwords ("VIP") and
-  pure vocalisations are copied. `languages` lists every language found,
+  pure vocalisations are kept as written inside a translated line. A line
+  that needs no translation (all in the target already, or only such words)
+  is never copied: it is left out of the synced items, or an empty line in
+  plain text. A copy of mostly-English lyrics is blocked by the API's output
+  filter. The worker also blanks any line whose text is empty or still a copy
+  of its original (case-insensitive), so the UI shows nothing under it; a
+  plain translation keeps the same line breaks, leading and trailing empty
+  lines included. A target with no translated line (no items, or all empty)
+  is stored as none, like null. `languages` lists every language found,
   main first (`source_language`, stored in `lyrics_translations.languages`).
   A language counts only when a full phrase or line is in it (loanwords,
   names and ad-libs do not). A target should be null only when `languages`
   is just that language; a null target in a mixed song is still stored as
   none (no retry, it costs credit) and logged as a warning with the track
-  id. Structurally bad answers (line count, codes) are `error`s, retried. Before the lyrics, the user
+  id. Structurally bad answers (a line number out of range or listed twice, bad
+  codes) are `error`s, retried. Before the lyrics, the user
   message holds a `<song>` block read by `TranslationContext` (a separate
   read, not part of the claim): title, all credited artists, album, album
   type, release year, artist genres, enrichment genres, explicit flag
@@ -539,7 +551,9 @@ now-playing lyrics and in the admin.
   mixed-language songs translated before the per-language prompt). Songs
   over 250 lines or 6 000 characters are `skipped` without a call (both
   translations must fit one answer).
-- **Outcomes.** `done`; `refused` (terminal); `skipped` (also an answer cut
+- **Outcomes.** `done`; `refused` (terminal: a model refusal, or a 400 whose
+  message says the output was blocked by content filtering, stored as
+  `... (content_filtered)`); `skipped` (also an answer cut
   off at `max_tokens`: "too long", not retried); `error` retried with
   backoff from 30 min (doubling, at most 7 days) and given up after
   `TRANSLATE_MAX_ATTEMPTS` (5) failures in a row (`next_attempt_at` null).

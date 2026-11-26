@@ -341,6 +341,8 @@ type TrackLyrics = {
 type ManualLyricsInput = { synced?: string; plain?: string; instrumental?: boolean };
 // 400 invalid_lrc: { error: { code, message, lines: LrcLineError[] } }
 type LrcLineError = { line: number; message: string }; // 1-based line; 0 = the text as a whole
+// refused: Claude declined, or the API's content filter blocked the answer
+// (last_error ends in "(content_filtered)"); final, not retried.
 type TranslationStatus = 'not_queued' | 'pending' | 'done' | 'skipped' | 'refused' | 'error';
 type TrackTranslation = {
   status: TranslationStatus; // not_queued = never queued (no backfill; queued when it plays or re-queued)
@@ -353,7 +355,9 @@ type TrackTranslation = {
   languages: string[] | null;     // every language in the lyrics, main first;
                                   // null when translated before it was stored
   // Synced: one line per line of the parsed LRC (internal/lrc, src/lib/lrc.ts),
-  // joined with "\n"; split it to line it up. Plain: the text.
+  // joined with "\n"; split it to line it up. Plain: the text, with the same
+  // line breaks as the trimmed lyrics. An empty line is a line already in that
+  // language (nothing to show under it).
   // null = the song is all in that language (a mixed song has both).
   en: string | null;
   vi: string | null;

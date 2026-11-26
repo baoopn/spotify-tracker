@@ -79,13 +79,15 @@ export function nameIn(
 
 /**
  * Plain lyrics with their translation, line by line when both have the same
- * number of lines (null otherwise: show the translation below instead).
+ * number of lines (null otherwise: show the translation below instead). The
+ * translation lines up with the trimmed text (what Claude saw); an empty
+ * translated line (already in that language) shows nothing.
  */
 export function interleave(
 	original: string,
 	translation: string
 ): { text: string; tr: string }[] | null {
-	const a = original.split('\n');
+	const a = original.trim().split('\n');
 	const b = translation.split('\n');
 	if (a.length !== b.length) return null;
 	return a.map((text, i) => ({ text, tr: b[i] }));

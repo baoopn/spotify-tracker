@@ -159,6 +159,15 @@ check('translation: plain interleave and notes', () => {
 		{ text: 'b', tr: 'y' }
 	]);
 	assert.equal(interleave('a\nb', 'x'), null);
+	assert.deepEqual(
+		interleave('\n  Hello\n내 맘\nBye \n', '\nMy heart\n'),
+		[
+			{ text: 'Hello', tr: '' },
+			{ text: '내 맘', tr: 'My heart' },
+			{ text: 'Bye', tr: '' }
+		],
+		'lines already in that language are empty; lined up with the trimmed text'
+	);
 	assert.equal(translationNote(tr({ status: 'pending', waiting: true })), null);
 	assert.match(translationNote(tr({ status: 'pending' })), /cap/);
 	assert.match(translationNote(tr({ status: 'refused' })), /declined/);

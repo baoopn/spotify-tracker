@@ -3,7 +3,9 @@ package translate
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
@@ -96,7 +98,8 @@ func (c *Claude) Translate(ctx context.Context, r Request) (Result, error) {
 }
 
 // apiError reduces an SDK error to an *APIError (status, type, error code,
-// Retry-After), dropping the request URL and response body. Other errors
+// Retry-After), dropping the request URL and response body. A 400 that
+// says the output was blocked by content filtering gets CodeContentFiltered. Other errors
 // (network, context) pass through.
 func apiError(err error) error {
 	var ae *anthropic.Error
@@ -104,6 +107,12 @@ func apiError(err error) error {
 		return err
 	}
 	out := &APIError{Status: ae.StatusCode, Type: string(ae.Type()), Code: ae.Details.ErrorCode}
+	// The output filter has no error code: only the message says so. Only
+	// this check reads the message; it is never kept.
+	if out.Code == "" && ae.StatusCode == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(ae.Message), "content filtering") {
+		out.Code = CodeContentFiltered
+	}
 	if ae.Response != nil {
 		if s, e := strconv.Atoi(ae.Response.Header.Get("retry-after")); e == nil && s > 0 {
 			out.RetryAfter = time.Duration(s) * time.Second

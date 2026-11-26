@@ -74,6 +74,14 @@ func (e *APIError) Error() string {
 	return msg
 }
 
+// CodeContentFiltered is the APIError Code set when the API blocked the
+// answer by its content filtering policy (a 400 with no error code of its
+// own). The same lyrics are blocked again, so it is final, like a refusal.
+const CodeContentFiltered = "content_filtered"
+
+// ContentFiltered reports an answer blocked by the API's content filter.
+func (e *APIError) ContentFiltered() bool { return e.Code == CodeContentFiltered }
+
 // SpendLimit reports that the account is out of credit or over its spend limit.
 func (e *APIError) SpendLimit() bool {
 	switch e.Code {

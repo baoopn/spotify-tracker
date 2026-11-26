@@ -100,6 +100,15 @@ assert.deepEqual(interleave('một\n\nhai', 'one\n\ntwo'), [
 	{ text: 'hai', tr: 'two' }
 ]);
 assert.equal(interleave('a\nb', 'one line'), null, 'different shapes: show below');
+assert.deepEqual(
+	interleave('Hello\n내 맘\nBye', '\nMy heart\n'),
+	[
+		{ text: 'Hello', tr: '' },
+		{ text: '내 맘', tr: 'My heart' },
+		{ text: 'Bye', tr: '' }
+	],
+	'lines already in that language are empty translated lines'
+);
 
 // lyricsState: one answer for the hero's layout toggle and the lyrics panel.
 const idle = { isPending: false, isFetching: false, isError: false };

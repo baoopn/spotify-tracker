@@ -94,7 +94,8 @@ func TestSchemasAndPrompt(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"title and album: the song title and the album name", "use the same wording for the title",
-		"Set both album languages to null when the <song> block has no album."} {
+		"Set both album languages to null when the <song> block has no album.",
+		"brands, the song title when used as a name, and the artist. Do not", "groups, the song title when used as a name, and the artist)"} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Errorf("system prompt missing %q", want)
 		}

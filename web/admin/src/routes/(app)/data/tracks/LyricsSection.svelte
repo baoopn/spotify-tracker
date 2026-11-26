@@ -106,7 +106,7 @@
 	{:else if editing}
 		<LyricsEditor lyrics={l} {durationMs} onclose={closeEditor} />
 	{:else if l.status === 'found' && l.plain}
-		<TranslatedNames translation={tr} {lang} />
+		<TranslatedNames translation={tr} lang={lyricsLang.value} />
 		<!-- A scrollable box must be focusable so keyboard users can scroll it. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div

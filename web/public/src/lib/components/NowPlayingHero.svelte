@@ -14,7 +14,7 @@
 	import { errorMessage } from '#lib/api.js';
 	import { live } from '#lib/live.svelte.js';
 	import { lyricsLayout } from '#lib/lyricsLayout.svelte.js';
-	import { availableLangs, lyricsState, nameIn, pickLang } from '#lib/lyrics.js';
+	import { lyricsState, nameIn } from '#lib/lyrics.js';
 	import { lyricsLang } from '#lib/lyricsLang.svelte.js';
 	import { loadLyricsFonts } from '#lib/lyricsFonts.js';
 	import { scriptLang } from '#lib/scriptLang.js';
@@ -72,16 +72,18 @@
 	// No lyrics: the standard card, without changing the saved choice.
 	const focus = $derived(canFocus && lyricsLayout.value === 'lyrics');
 
-	// The translated title and album, in the language the lyrics show (the
-	// same choice as NowLyrics); the original stays primary.
+	// The translated title and album in the viewer's chosen language: the raw
+	// preference, also when the lyrics have no translation into it (an English
+	// title over all-Vietnamese lyrics). 'orig' shows none; the original stays
+	// primary.
 	const lyricsTr = $derived(
 		lyrics.data?.track_id === track?.id && lyrics.data?.status === 'found'
 			? lyrics.data.translation
 			: null
 	);
-	const nameLang = $derived(pickLang(lyricsLang.value, availableLangs(lyricsTr)));
-	const trTitle = $derived(nameIn(lyricsTr?.title, nameLang));
-	const trAlbum = $derived(nameIn(lyricsTr?.album, nameLang));
+	const nameLang = $derived(lyricsLang.value);
+	const trTitle = $derived(nameIn(lyricsTr, 'title', nameLang));
+	const trAlbum = $derived(nameIn(lyricsTr, 'album', nameLang));
 
 	// Last played, for the idle state: the newest history entry, or the stale paused track.
 	const lastPlayed = $derived(

@@ -83,7 +83,7 @@
 		</div>
 	</div>
 
-	<TranslatedNames translation={tr} {lang} />
+	<TranslatedNames translation={tr} lang={lyricsLang.value} />
 
 	{#if lyrics.isError && !l}
 		<p class="text-sm text-ink-soft" role="alert">

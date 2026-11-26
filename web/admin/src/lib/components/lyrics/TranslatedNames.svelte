@@ -2,8 +2,9 @@
 	import { nameIn, type LyricsLang } from '#lib/translation.js';
 	import type { TrackTranslation } from '#lib/types.js';
 
-	// The song title and album name in the language the lyrics show, as small
-	// muted lines. Nothing when there is none (the original stays primary).
+	// The song title and album name in the viewer's chosen language (the raw
+	// preference, also when the lyrics have no translation into it), as small
+	// muted lines. Nothing for 'orig' or no name (the original stays primary).
 	let {
 		translation,
 		lang
@@ -11,8 +12,8 @@
 
 	const names = $derived(
 		[
-			{ label: 'Title', text: nameIn(translation?.title, lang) },
-			{ label: 'Album', text: nameIn(translation?.album, lang) }
+			{ label: 'Title', text: nameIn(translation, 'title', lang) },
+			{ label: 'Album', text: nameIn(translation, 'album', lang) }
 		].filter((n) => n.text)
 	);
 </script>

@@ -156,12 +156,22 @@ assert.equal(creditHref({ text: 'Lyrics added by Bao', url: null }), null, 'manu
 assert.equal(creditHref({ text: 'x', url: '' }), null, 'empty url');
 assert.equal(creditHref({ text: 'x', url: 'javascript:alert(1)' }), null, 'not https');
 
-// nameIn: the translated title or album in the language shown, else null.
-assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'en'), 'Wait for You');
-assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'vi'), null);
-assert.equal(nameIn({ en: 'Wait for You', vi: null }, 'orig'), null);
-assert.equal(nameIn({ en: '  ', vi: null }, 'en'), null);
-assert.equal(nameIn(null, 'en'), null);
-assert.equal(nameIn(undefined, 'vi'), null);
+// nameIn: the name in the raw preference, regardless of the lyrics; only a
+// done translation; 'orig' shows none.
+const named = {
+	status: 'done',
+	en: null,
+	vi: null,
+	title: { en: null, vi: 'Chờ em' },
+	album: null
+};
+assert.equal(nameIn(named, 'title', 'vi'), 'Chờ em', 'shown although vi lyrics are null');
+assert.equal(nameIn(named, 'title', 'en'), null);
+assert.equal(nameIn(named, 'title', 'orig'), null, 'orig hides names');
+assert.equal(nameIn(named, 'album', 'vi'), null);
+assert.equal(nameIn({ ...named, status: 'pending' }, 'title', 'vi'), null, 'pending');
+assert.equal(nameIn({ ...named, title: { en: null, vi: '  ' } }, 'title', 'vi'), null, 'blank');
+assert.equal(nameIn({ status: 'done' }, 'title', 'vi'), null, 'older body');
+assert.equal(nameIn(null, 'title', 'en'), null);
 
 console.log('lyrics checks passed');

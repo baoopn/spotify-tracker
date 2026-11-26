@@ -2,12 +2,14 @@
 	import { resolve } from '$app/paths';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import Skeleton from '../Skeleton.svelte';
+	import NowPlayingLyrics from '../overview/NowPlayingLyrics.svelte';
 	import PlayerDevices from './PlayerDevices.svelte';
 	import PlayerQueue from './PlayerQueue.svelte';
 	import PlayerTransport from './PlayerTransport.svelte';
 	import { api, errorMessage } from '#lib/api.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import { PlayerControl } from '#lib/player-control.svelte.js';
+	import type { Snapshot } from '#lib/now-playing.svelte.js';
 	import { qk, queries } from '#lib/queries.js';
 	import type { PlayerTrack } from '#lib/types.js';
 
@@ -35,6 +37,20 @@
 	});
 
 	const device = $derived(st?.device ?? null);
+
+	// The lyrics follow the player's own poll: its progress at the instant the
+	// state was fetched (or patched by a command).
+	const lyricsSnap = $derived<Snapshot>({
+		np: st
+			? {
+					is_playing: st.is_playing,
+					progress_ms: st.progress_ms,
+					fetched_at: new Date(ctl.query.dataUpdatedAt).toISOString(),
+					track: null
+				}
+			: null,
+		at: ctl.query.dataUpdatedAt
+	});
 
 	/** Search result: play just this track. */
 	function playTrack(t: PlayerTrack) {
@@ -146,6 +162,14 @@
 				</div>
 				{#if st}
 					<PlayerTransport {ctl} {st} />
+					{#if item}
+						<NowPlayingLyrics
+							trackId={item.id}
+							snap={lyricsSnap}
+							playing={st.is_playing}
+							durationMs={item.duration_ms}
+						/>
+					{/if}
 				{:else}
 					<p class="text-sm text-ink-soft">
 						No device is playing right now. Pick a device to start playback.

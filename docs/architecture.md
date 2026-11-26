@@ -327,7 +327,7 @@ types carry them (guard tests in `internal/httpapi` and `internal/mcpserver`).
   instrumental, not found, failed), the next retry and the last lookup. The
   admin track page and the overview's now-playing lyrics show the state
   (Queued, Looking up…, Not found / next try, Lookup failed) and a "Look up
-  again" button; the overview has a "Lyrics queue" card.
+  again" button; the Status page has a "Lyrics queue" card.
 - **Changed lyrics.** When a lookup stores lyrics that differ from what was
   stored (the source hash over synced and plain text) and from what was
   translated, and the track has a translation row, `SetLyrics` sets that

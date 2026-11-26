@@ -4,11 +4,11 @@ Served by the API at **`/admin`** (SvelteKit SPA embedded in the binary).
 
 Features:
 
-- **Overview:** live now-playing, listening KPIs, Spotify token status (days left), service health from heartbeats, enrichment progress.
-- **Data:** history, tracks and artists browsers with search, sorting and filters. Track details show audio features and genres; tracks can be re-enriched, and failed enrichments retried in bulk.
-- **Analytics:** public API traffic (requests, error rate, p50/p95/p99, unique clients, routes, status codes, origins) plus listening insights.
-- **Settings:** Spotify connect / re-authorize / test, SMTP and alert settings with a test email, appearance (pastel palettes, light/dark/system).
-- **Audit log** of admin actions.
+- **Listen:** the **Overview** shows now playing (with lyrics and previous / play-pause / next), listening totals, a health strip that links to the Status page, and recent playlists. The **Player** page controls Spotify: transport, volume, devices, the queue and search.
+- **Library:** history, tracks and artists browsers with search, sorting and filters, playlists and the Top 50 playlists. Track details show audio features and genres; tracks can be re-enriched, and failed enrichments retried in bulk.
+- **Insights:** analytics of public API traffic (requests, error rate, p50/p95/p99, unique clients, routes, status codes, origins) plus listening insights.
+- **System:** the **Status** page (Spotify token days left, service health from heartbeats, backups, the lyrics and translation queues, enrichment progress) and the **Audit log** of admin actions.
+- **Settings:** Spotify connect / re-authorize / test, SMTP and alert settings with a test email, backups, MCP, appearance (pastel palettes, light/dark/system).
 
 API contract: [admin-api.md](admin-api.md).
 

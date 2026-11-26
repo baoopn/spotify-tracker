@@ -1,4 +1,4 @@
-// Helpers for the Overview player card (the owner's Spotify player).
+// Helpers for the Player page (the owner's Spotify player).
 
 import {
 	Car,

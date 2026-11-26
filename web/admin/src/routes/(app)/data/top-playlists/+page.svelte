@@ -207,7 +207,7 @@
 
 <PageHeader
 	title="Top 50 playlists"
-	eyebrow="Data"
+	eyebrow="Library"
 	description="Auto-generated playlists of the 50 most-played tracks of each week, month and year."
 >
 	{#snippet actions()}

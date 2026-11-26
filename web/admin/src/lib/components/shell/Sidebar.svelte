@@ -3,6 +3,7 @@
 	import SiteCredit from './SiteCredit.svelte';
 	import ListeningIcon, { type ListeningIconName } from '../ListeningIcon.svelte';
 	import {
+		Activity,
 		Bot,
 		ChartLine,
 		CircleUser,
@@ -14,6 +15,7 @@
 		MicVocal,
 		Palette,
 		ScrollText,
+		SquarePlay,
 		X
 	} from '@lucide/svelte';
 	import { page } from '$app/state';
@@ -33,13 +35,16 @@
 		brand?: ListeningIconName;
 	};
 
-	const sections: { label: string | null; items: NavItem[] }[] = [
+	const sections: { label: string; items: NavItem[] }[] = [
 		{
-			label: null,
-			items: [{ href: resolve(''), label: 'Overview', brand: 'headphones', exact: true }]
+			label: 'Listen',
+			items: [
+				{ href: resolve(''), label: 'Overview', brand: 'headphones', exact: true },
+				{ href: resolve('player'), label: 'Player', icon: SquarePlay, exact: false }
+			]
 		},
 		{
-			label: 'Data',
+			label: 'Library',
 			items: [
 				{ href: resolve('data/history'), label: 'History', icon: History, exact: false },
 				{ href: resolve('data/tracks'), label: 'Tracks', brand: 'track', exact: false },
@@ -51,6 +56,13 @@
 		{
 			label: 'Insights',
 			items: [{ href: resolve('analytics'), label: 'Analytics', icon: ChartLine, exact: false }]
+		},
+		{
+			label: 'System',
+			items: [
+				{ href: resolve('status'), label: 'Status', icon: Activity, exact: false },
+				{ href: resolve('audit'), label: 'Audit log', icon: ScrollText, exact: false }
+			]
 		},
 		{
 			label: 'Settings',
@@ -65,8 +77,7 @@
 					exact: false
 				},
 				{ href: resolve('settings/mcp'), label: 'MCP', icon: Bot, exact: false },
-				{ href: resolve('settings/appearance'), label: 'Appearance', icon: Palette, exact: false },
-				{ href: resolve('audit'), label: 'Audit log', icon: ScrollText, exact: false }
+				{ href: resolve('settings/appearance'), label: 'Appearance', icon: Palette, exact: false }
 			]
 		}
 	];
@@ -114,11 +125,7 @@
 	<nav class="flex-1 overflow-y-auto px-3 pb-6">
 		{#each sections as section, si (si)}
 			<div class="mt-4 first:mt-1">
-				{#if section.label}
-					<p class="eyebrow px-3 pb-1.5">
-						{section.label}
-					</p>
-				{/if}
+				<p class="eyebrow px-3 pb-1.5">{section.label}</p>
 				<ul class="flex flex-col gap-0.5">
 					{#each section.items as item (item.href)}
 						{@const active = isActive(item.href, item.exact)}

@@ -69,8 +69,8 @@
 	</li>
 {/snippet}
 
-<div class="flex flex-col gap-2">
-	<h3 id="{uid}-add" class="eyebrow">Add to queue</h3>
+<div class="flex flex-col gap-2 border-t border-ink pt-4">
+	<h2 id="{uid}-add" class="eyebrow">Add to queue</h2>
 	<SearchInput
 		label="Search Spotify for a track"
 		placeholder="Search for a song…"
@@ -96,8 +96,8 @@
 	{/if}
 </div>
 
-<div class="flex flex-col gap-2">
-	<h3 id="{uid}-next" class="eyebrow">Up next</h3>
+<div class="flex flex-col gap-2 border-t border-ink pt-4">
+	<h2 id="{uid}-next" class="eyebrow">Up next</h2>
 	{#if queue === undefined}
 		<div class="flex flex-col gap-2"><Skeleton class="h-10" /><Skeleton class="h-10" /></div>
 	{:else if queue === null}

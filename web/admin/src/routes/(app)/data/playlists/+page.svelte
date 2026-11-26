@@ -57,7 +57,7 @@
 
 <PageHeader
 	title="Playlists"
-	eyebrow="Data"
+	eyebrow="Library"
 	description="Every playlist played from, newest first, private and Spotify mixes included."
 />
 

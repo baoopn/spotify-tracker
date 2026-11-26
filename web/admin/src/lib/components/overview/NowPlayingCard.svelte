@@ -11,8 +11,16 @@
 	import { NowPlayingStream, snapshot } from '#lib/now-playing.svelte.js';
 	import { scriptLang } from '#lib/scriptLang.js';
 	import type { NowPlaying } from '#lib/types.js';
+	import type { Snippet } from 'svelte';
 
-	let { initial }: { initial: NowPlaying | null } = $props();
+	let {
+		initial,
+		controls
+	}: {
+		initial: NowPlaying | null;
+		/** Rendered at the bottom of the card, e.g. transport buttons. */
+		controls?: Snippet;
+	} = $props();
 
 	// Seeded from the overview response; live SSE events take over once they arrive.
 	const stream = new NowPlayingStream();
@@ -127,6 +135,9 @@
 				<p class="text-sm text-ink-soft">This updates by itself when Bao presses play.</p>
 			</div>
 		</div>
+	{/if}
+	{#if controls}
+		<div class="mt-4 border-t border-rule pt-1">{@render controls()}</div>
 	{/if}
 </section>
 

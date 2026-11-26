@@ -28,7 +28,7 @@
 
 <PageHeader
 	title="History"
-	eyebrow="Data"
+	eyebrow="Library"
 	description="Every play, newest first. Back-to-back repeats are folded into one row."
 >
 	{#snippet actions()}

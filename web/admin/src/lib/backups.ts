@@ -1,4 +1,4 @@
-// Shared helpers for the backup status (settings page and overview card).
+// Shared helpers for the backup status (settings page, Status page and Overview health strip).
 // The backup container reports through the database; the API only reads it.
 
 import { CircleAlert, CircleCheck, CirclePause, TriangleAlert } from '@lucide/svelte';

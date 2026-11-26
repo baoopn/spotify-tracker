@@ -25,9 +25,9 @@
 	const uid = $props.id();
 </script>
 
-<div class="flex flex-col gap-2">
+<div class="flex flex-col gap-2 border-t border-ink pt-4">
 	<div class="flex items-center justify-between gap-2">
-		<h3 id="{uid}-devices" class="eyebrow">Devices</h3>
+		<h2 id="{uid}-devices" class="eyebrow">Devices</h2>
 		<button
 			type="button"
 			class="btn btn-ghost btn-sm btn-icon"

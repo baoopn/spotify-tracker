@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { RefreshCw } from '@lucide/svelte';
 	import ConfirmDialog from '../ConfirmDialog.svelte';
 	import RelTime from '../RelTime.svelte';
 	import { api, errorMessage } from '#lib/api.js';
@@ -9,11 +10,14 @@
 
 	let {
 		lyrics,
-		details = false
+		details = false,
+		class: className = 'mt-2'
 	}: {
 		lyrics: TrackLyrics;
 		/** Also show when the lyrics were last checked, and the last lookup's error. */
 		details?: boolean;
+		/** Classes for the wrapper (spacing). */
+		class?: string;
 	} = $props();
 
 	const queryClient = useQueryClient();
@@ -50,9 +54,14 @@
 	);
 </script>
 
-<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
-	<!-- One live region that stays mounted, so state changes are announced. -->
-	<span role="status" aria-live="polite" class="inline-flex flex-wrap items-center gap-x-2">
+<div class={['flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft', className]}>
+	<!-- One live region that stays mounted, so state changes are announced;
+	     out of the flow while empty (still in the accessibility tree), so it adds no gap. -->
+	<span
+		role="status"
+		aria-live="polite"
+		class="inline-flex flex-wrap items-center gap-x-2 empty:absolute"
+	>
 		{#if lyrics.looking_up}
 			<span class="chip">Looking up…</span>
 		{:else if lyrics.queued}
@@ -80,7 +89,7 @@
 	{#if lyrics.lookup_enabled}
 		<button
 			type="button"
-			class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink disabled:opacity-50"
+			class="btn btn-ghost btn-sm"
 			disabled={requeue.isPending}
 			onclick={() => (manual ? (confirmOpen = true) : requeue.mutate(false))}
 			aria-haspopup={manual ? 'dialog' : undefined}
@@ -88,7 +97,8 @@
 				? 'Look the lyrics up on LRCLIB; what it finds replaces your lyrics.'
 				: 'Fetch the lyrics from LRCLIB again, ahead of the queue. Changed lyrics are translated again.'}
 		>
-			{requeue.isPending ? 'Queuing…' : 'Look up again'}
+			<RefreshCw class="size-3.5" aria-hidden="true" />
+			{requeue.isPending ? 'Queuing…' : 'Look up lyrics again'}
 		</button>
 	{/if}
 </div>

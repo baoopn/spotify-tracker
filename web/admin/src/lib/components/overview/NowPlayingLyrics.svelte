@@ -166,22 +166,29 @@
 		<p class="text-sm text-ink-soft">No lyrics yet.</p>
 	{/if}
 
-	{#if l}
-		<LyricsLookupStatus lyrics={l} />
-	{/if}
-
-	{#if l?.status === 'found'}
-		<TranslationStatus {trackId} translation={tr} />
-	{/if}
-
-	{#if l && (l.status === 'found' || l.status === 'instrumental')}
-		<p class="mt-2 text-xs text-ink-soft">
-			Lyrics from <OutLink
-				href="https://lrclib.net"
-				class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
-				>LRCLIB</OutLink
-			>{#if trText}{CREDIT_SEP}Translated by Claude{/if}
-		</p>
+	{#if l && (l.status !== 'pending' || l.lookup_enabled || l.looking_up || l.queued)}
+		<!-- One footer: the source on the left, status and actions on the right. -->
+		<div
+			class="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule pt-3 text-xs text-ink-soft"
+		>
+			{#if l.status === 'found' || l.status === 'instrumental'}
+				<p>
+					Lyrics from <OutLink
+						href="https://lrclib.net"
+						class="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
+						>LRCLIB</OutLink
+					>{#if trText}{CREDIT_SEP}Translated by Claude{/if}
+				</p>
+			{/if}
+			<div
+				class="-ml-3 flex basis-full flex-wrap items-center gap-x-1 sm:ml-auto sm:basis-auto sm:justify-end"
+			>
+				<LyricsLookupStatus lyrics={l} class="" />
+				{#if l.status === 'found'}
+					<TranslationStatus {trackId} translation={tr} class="" />
+				{/if}
+			</div>
+		</div>
 	{/if}
 </section>
 

@@ -18,6 +18,7 @@ import type {
 	EmailSettings,
 	EmailSettingsUpdate,
 	EnrichmentStatus,
+	LyricsFilter,
 	GenreStat,
 	HistoryEntry,
 	MeResponse,
@@ -316,6 +317,7 @@ export const api = {
 		q: {
 			q?: string;
 			status?: EnrichmentStatus | '';
+			lyrics?: LyricsFilter | '';
 			sort?: TrackSort;
 			order?: SortOrder;
 			limit?: number;

@@ -237,6 +237,11 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	lyricsMissing, err := a.Store.LyricsMissingCount(ctx)
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
 	sp, err := a.spotifyStatus(ctx)
 	if err != nil {
 		a.internal(w, r, err)
@@ -256,14 +261,15 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"now_playing": nowPlaying,
-		"summary_all": all,
-		"summary_7d":  week,
-		"enrichment":  counts,
-		"spotify":     sp,
-		"services":    services,
-		"version":     a.Version,
-		"up_next":     a.upNext(ctx),
+		"now_playing":    nowPlaying,
+		"summary_all":    all,
+		"summary_7d":     week,
+		"enrichment":     counts,
+		"lyrics_missing": lyricsMissing,
+		"spotify":        sp,
+		"services":       services,
+		"version":        a.Version,
+		"up_next":        a.upNext(ctx),
 	})
 }
 
@@ -640,7 +646,12 @@ func (a *API) tracks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_status", "unknown enrichment status")
 		return
 	}
-	rows, total, err := a.Store.AdminTracks(r.Context(), q.Get("q"), status, q.Get("sort"), q.Get("order"), limit, offset)
+	lyrics := q.Get("lyrics")
+	if !store.ValidLyricsFilter(lyrics) {
+		writeError(w, http.StatusBadRequest, "invalid_lyrics", "unknown lyrics filter")
+		return
+	}
+	rows, total, err := a.Store.AdminTracks(r.Context(), q.Get("q"), status, lyrics, q.Get("sort"), q.Get("order"), limit, offset)
 	if err != nil {
 		a.internal(w, r, err)
 		return

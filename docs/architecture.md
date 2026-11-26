@@ -775,7 +775,7 @@ it works behind Cloudflare and on several replicas. Only `POST /mcp` is used
   `audio_profile` (range), `recent_playlists` (limit), `top_playlists` (limit).
   None returns lyrics; the public now-playing lyrics are not reachable from MCP.
 - **Admin tools** (read-only unless noted): `admin_overview`, `admin_spotify_status`,
-  `admin_history` (limit, cursor, q), `admin_tracks` (q, status, sort, order,
+  `admin_history` (limit, cursor, q), `admin_tracks` (q, status, lyrics, sort, order,
   limit, offset), `admin_track` (id), `admin_track_lyrics` (id, synced),
   `admin_search_lyrics` (q, limit), `admin_translation_queue`,
   `admin_requeue_translation` (id), `admin_lyrics_queue`, `admin_requeue_lyrics`

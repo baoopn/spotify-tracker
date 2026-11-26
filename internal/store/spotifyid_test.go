@@ -84,11 +84,11 @@ func TestAdminSearchSpotifyID(t *testing.T) {
 			return err
 		}, 3, []string{"t.album_id = $4"}, []string{"t.id = $4", trackArtist}},
 		{"tracks bare", func(q *Queries) error {
-			_, _, err := q.AdminTracks(ctx, testID, "", "", "", 50, 0)
+			_, _, err := q.AdminTracks(ctx, testID, "", "", "", "", 50, 0)
 			return err
 		}, 1, []string{"t.id = $2", trackArtist + "$2)", "t.album_id = $2", "t.isrc ILIKE $1"}, nil},
 		{"tracks artist uri + status", func(q *Queries) error {
-			_, _, err := q.AdminTracks(ctx, "spotify:artist:"+testID, "failed", "", "", 50, 0)
+			_, _, err := q.AdminTracks(ctx, "spotify:artist:"+testID, "failed", "", "", "", 50, 0)
 			return err
 		}, 1, []string{trackArtist + "$2)", "COALESCE(tf.status, 'pending') = $3"}, []string{"t.id = $2", "t.album_id = $2"}},
 		{"artists bare", func(q *Queries) error {
@@ -138,7 +138,7 @@ func TestAdminSearchNoIDCondition(t *testing.T) {
 		nargs int
 	}{
 		{"history", func(q *Queries) { _, _ = q.AdminHistory(ctx, 50, time.Time{}, "Sơn Tùng") }, 3},
-		{"tracks", func(q *Queries) { _, _, _ = q.AdminTracks(ctx, "spotify:track:short", "", "", "", 50, 0) }, 1},
+		{"tracks", func(q *Queries) { _, _, _ = q.AdminTracks(ctx, "spotify:track:short", "", "", "", "", 50, 0) }, 1},
 		{"artists", func(q *Queries) { _, _, _ = q.AdminArtists(ctx, testID[:21], "", "", 50, 0) }, 1},
 	}
 	for _, tc := range runs {

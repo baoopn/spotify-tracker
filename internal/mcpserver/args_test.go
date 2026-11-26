@@ -60,6 +60,7 @@ func TestArgumentValidation(t *testing.T) {
 		{"id too long", "track_details", map[string]any{"id": long(65)}},
 		{"admin q too long", "admin_history", map[string]any{"q": long(201)}},
 		{"admin status unknown", "admin_tracks", map[string]any{"status": "deleted"}},
+		{"admin lyrics unknown", "admin_tracks", map[string]any{"lyrics": "none"}},
 		{"admin sort unknown", "admin_tracks", map[string]any{"sort": "plays; DROP TABLE"}},
 		{"admin order unknown", "admin_artists", map[string]any{"order": "up"}},
 		{"admin offset negative", "admin_playlists", map[string]any{"offset": -1}},

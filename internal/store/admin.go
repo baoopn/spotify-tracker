@@ -19,7 +19,37 @@ type TrackRow struct {
 	Plays            int64            `json:"plays"`
 	LastPlayed       *time.Time       `json:"last_played"`
 	EnrichmentStatus string           `json:"enrichment_status"`
-	CreatedAt        time.Time        `json:"created_at"`
+	// LyricsStatus is the lyrics row status (found, instrumental, not_found,
+	// error), or pending when the track was never looked up.
+	LyricsStatus string `json:"lyrics_status"`
+	// LyricsSynced is true when the stored lyrics have a time-synced version.
+	LyricsSynced bool      `json:"lyrics_synced"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Lyrics filters of AdminTracks.
+const (
+	LyricsFilterMissing      = "missing"      // never looked up, not found or failed
+	LyricsFilterUnsynced     = "unsynced"     // found with plain lyrics only
+	LyricsFilterFound        = "found"        // found (synced or plain)
+	LyricsFilterInstrumental = "instrumental" // instrumental
+)
+
+// lyricsFilters maps each lyrics filter to a fixed SQL condition on the
+// LEFT JOINed lyrics row l (no user input is spliced in). has_synced is
+// derived as in TrackLyrics: a non-empty synced_lyrics.
+var lyricsFilters = map[string]string{
+	LyricsFilterMissing:      "COALESCE(l.status, 'pending') IN ('pending', 'not_found', 'error')",
+	LyricsFilterUnsynced:     "l.status = 'found' AND COALESCE(l.plain_lyrics, '') <> '' AND COALESCE(l.synced_lyrics, '') = ''",
+	LyricsFilterFound:        "l.status = 'found'",
+	LyricsFilterInstrumental: "l.status = 'instrumental'",
+}
+
+// ValidLyricsFilter reports whether f is "" (no filter) or a known lyrics
+// filter of AdminTracks.
+func ValidLyricsFilter(f string) bool {
+	_, ok := lyricsFilters[f]
+	return f == "" || ok
 }
 
 // ArtistRow is an artist in the admin artists table.
@@ -138,8 +168,10 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 	return out, q.hydrate(ctx, views...)
 }
 
-// AdminTracks lists tracks with play counters and enrichment status.
-func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order string, limit, offset int) ([]TrackRow, int64, error) {
+// AdminTracks lists tracks with play counters, enrichment and lyrics status.
+// lyrics is "" or one of the LyricsFilter constants (an unknown value adds no
+// filter; callers validate it with ValidLyricsFilter).
+func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort, order string, limit, offset int) ([]TrackRow, int64, error) {
 	sortCol := map[string]string{
 		"plays": "plays", "last_played": "last_played", "name": "t.name", "created": "t.created_at",
 	}[sort]
@@ -169,10 +201,14 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order s
 		args = append(args, status)
 		where = append(where, fmt.Sprintf("COALESCE(tf.status, 'pending') = $%d", len(args)))
 	}
+	if cond := lyricsFilters[lyrics]; cond != "" {
+		where = append(where, "("+cond+")")
+	}
 	base := `
 		FROM tracks t
 		LEFT JOIN albums al ON al.id = t.album_id
 		LEFT JOIN track_features tf ON tf.track_id = t.id
+		LEFT JOIN lyrics l ON l.track_id = t.id
 		LEFT JOIN (
 			SELECT track_id, SUM(replay_count)::bigint AS plays, MAX(played_at) AS last_played
 			FROM listening_history GROUP BY track_id
@@ -186,7 +222,8 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order s
 	args = append(args, limit, offset)
 	rows, err := q.db.Query(ctx, `
 		SELECT COALESCE(p.plays, 0) AS plays, p.last_played AS last_played,
-			COALESCE(tf.status, 'pending'), t.created_at, `+trackColumns+base+
+			COALESCE(tf.status, 'pending'), COALESCE(l.status, 'pending'), COALESCE(l.synced_lyrics, '') <> '',
+			t.created_at, `+trackColumns+base+
 		fmt.Sprintf(` ORDER BY %s %s NULLS LAST, t.id LIMIT $%d OFFSET $%d`, sortCol, dir, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("admin tracks: %w", err)
@@ -196,7 +233,8 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, sort, order s
 	for rows.Next() {
 		var tr TrackRow
 		var al albumScan
-		if err := rows.Scan(append(append([]any{&tr.Plays, &tr.LastPlayed, &tr.EnrichmentStatus, &tr.CreatedAt},
+		if err := rows.Scan(append(append([]any{&tr.Plays, &tr.LastPlayed, &tr.EnrichmentStatus,
+			&tr.LyricsStatus, &tr.LyricsSynced, &tr.CreatedAt},
 			scanTrack(&tr.Track)...), al.targets()...)...); err != nil {
 			return nil, 0, err
 		}
@@ -363,6 +401,20 @@ func (q *Queries) EnrichmentCounts(ctx context.Context) (EnrichmentCounts, error
 		return c, fmt.Errorf("enrichment counts: %w", err)
 	}
 	return c, nil
+}
+
+// LyricsMissingCount counts the tracks with no lyrics to show, with the same
+// condition as the "missing" lyrics filter of AdminTracks.
+func (q *Queries) LyricsMissingCount(ctx context.Context) (int64, error) {
+	var n int64
+	err := q.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tracks t
+		LEFT JOIN lyrics l ON l.track_id = t.id
+		WHERE `+lyricsFilters[LyricsFilterMissing]).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("lyrics missing count: %w", err)
+	}
+	return n, nil
 }
 
 // Audit appends an audit log entry.

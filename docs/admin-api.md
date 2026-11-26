@@ -88,6 +88,7 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
   "now_playing": NowPlaying | null,
   "summary_all": Summary, "summary_7d": Summary,
   "enrichment": { "pending": 0, "enriched": 0, "unavailable": 0, "failed": 0 },
+  "lyrics_missing": 0,
   "spotify": SpotifyStatus,
   "services": [
     { "name": "api",      "status": "ok" | "degraded" | "down", "last_seen_at": "…", "detail": "…" },
@@ -100,6 +101,10 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
 }
 ```
 `Summary = { total_plays, unique_tracks, unique_artists, listening_ms, first_played_at, last_played_at, enriched_tracks }`.
+
+`lyrics_missing` counts the tracks with no lyrics to show: never looked up
+(no lyrics row, or a `pending` one), `not_found` or `error`. It uses the same
+condition as `GET /admin/api/tracks?lyrics=missing`, which lists them.
 
 `up_next` is the private list of the next tracks of the Spotify queue, written by
 queue prefetch (null when nothing is queued, prefetch is off, or Redis fails;
@@ -247,7 +252,7 @@ The token is never logged or audited.
 | Method | Path | Query | Response |
 |---|---|---|---|
 | GET | `/admin/api/history` | `limit` (1–100, default 50), `cursor`, `q` (track/artist/album name or Spotify ID/link search) | `{ data: HistoryEntry[], next_cursor }`, `HistoryEntry = { id, played_at, updated_at, replay_count, track: TrackView }` |
-| GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, created_at }` |
+| GET | `/admin/api/tracks` | `q`, `status` (EnrichmentStatus), `lyrics` (LyricsFilter), `sort` (`plays`\|`last_played`\|`name`\|`created`), `order` (`asc`\|`desc`), `limit`, `offset` | `{ data: TrackRow[], total }`, `TrackRow = { track: TrackView, plays, last_played: string\|null, enrichment_status: EnrichmentStatus, lyrics_status: LyricsStatus, lyrics_synced: boolean, created_at }`; `400 invalid_status`, `400 invalid_lyrics` for unknown values |
 | GET | `/admin/api/tracks/{id}` | – | `TrackAdminDetail = TrackView & { plays, last_played, created_at, enrichment: { status, source, attempts, last_error, next_attempt_at, enriched_at, features: AudioFeatures, genres: Genre[] } \| null }` |
 | GET | `/admin/api/tracks/{id}/lyrics` | `synced` (`true`\|`false`, default false) | `TrackLyrics` (see [Lyrics](#lyrics)) |
 | GET | `/admin/api/lyrics/translation-queue` | – | `TranslationQueue` (see [Lyrics](#lyrics)) |
@@ -266,6 +271,14 @@ Search (`q`) is case- and accent-insensitive on track, album and artist names:
 match. It folds Vietnamese and most Latin accents (é, ñ, ü, đ, ø …) with the
 `search_fold` SQL function (migration `00010_search_fold.sql`, no extension
 needed). On `/admin/api/tracks`, `q` also matches the ISRC (case-insensitive).
+
+`lyrics` on `/admin/api/tracks` filters by the lyrics state (`LyricsFilter`):
+`missing` = no lyrics to show (never looked up, `not_found` or `error`; the
+overview's `lyrics_missing` counts these), `unsynced` = found plain lyrics
+with no time-synced version, `found` = any found lyrics, `instrumental`.
+`lyrics_status` in `TrackRow` is `found`, `instrumental`, `not_found`, `error`,
+or `pending` when the track was never looked up; `lyrics_synced` is true when
+the lyrics have a time-synced version (as `has_synced` in `TrackLyrics`).
 `%` and `_` in `q` are literal. There is no index for this; the tables are small.
 A functional trigram index would need the `pg_trgm` extension.
 

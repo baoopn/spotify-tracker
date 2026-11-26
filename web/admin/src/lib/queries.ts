@@ -10,6 +10,7 @@ import type {
 	ArtistSort,
 	AudioProfile,
 	EnrichmentStatus,
+	LyricsFilter,
 	GenreStat,
 	RecentPlaylist,
 	SortOrder,
@@ -40,6 +41,7 @@ export const REFRESH = {
 export type TracksParams = {
 	q: string;
 	status: EnrichmentStatus | '';
+	lyrics: LyricsFilter | '';
 	sort: TrackSort;
 	order: SortOrder;
 	limit: number;

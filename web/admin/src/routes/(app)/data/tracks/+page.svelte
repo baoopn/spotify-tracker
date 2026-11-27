@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowDown, ArrowUp, Music, RotateCcw } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, FileAudio, Music, RotateCcw } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import SearchInput from '#lib/components/SearchInput.svelte';
@@ -20,6 +20,7 @@
 	import { qk, queries } from '#lib/queries.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import { toasts } from '#lib/toast.svelte.js';
+	import { AUDIO_FILTERS, AUDIO_FILTER_LABELS, type AudioFilter } from '#lib/listenAudio.js';
 	import {
 		ENRICHMENT_STATUSES,
 		LYRICS_FILTERS,
@@ -40,6 +41,11 @@
 	function initialLyrics(): LyricsFilter | '' {
 		const s = page.url.searchParams.get('lyrics');
 		return LYRICS_FILTERS.includes(s as LyricsFilter) ? (s as LyricsFilter) : '';
+	}
+
+	function initialAudio(): AudioFilter | '' {
+		const s = page.url.searchParams.get('audio');
+		return AUDIO_FILTERS.includes(s as AudioFilter) ? (s as AudioFilter) : '';
 	}
 
 	const LYRICS_OPTIONS: Record<LyricsFilter, string> = {
@@ -71,6 +77,7 @@
 	let lyricsQ = $state('');
 	let status = $state<EnrichmentStatus | ''>(initialStatus());
 	let lyrics = $state<LyricsFilter | ''>(initialLyrics());
+	let audio = $state<AudioFilter | ''>(initialAudio());
 	let sort = $state<TrackSort>('plays');
 	let order = $state<SortOrder>('desc');
 	let offset = $state(0);
@@ -80,7 +87,7 @@
 	const queryClient = useQueryClient();
 	// Only the names table polls; it is hidden in lyrics mode.
 	const list = createQuery(() => ({
-		...queries.tracks({ q, status, lyrics, sort, order, limit: LIMIT, offset }),
+		...queries.tracks({ q, status, lyrics, audio, sort, order, limit: LIMIT, offset }),
 		enabled: mode === 'names'
 	}));
 	// Dim/spin only for this (user-triggered) refetch, never for background polls.
@@ -91,7 +98,8 @@
 			return 'Every track has lyrics, or is marked instrumental.';
 		if (lyrics)
 			return `No tracks match the lyrics filter “${LYRICS_OPTIONS[lyrics]}”. Try another filter or search.`;
-		if (q || status) return 'Try a different search or filter.';
+		if (audio === 'missing' && !q && !status && !lyrics) return 'Every track has an audio file.';
+		if (q || status || audio) return 'Try a different search or filter.';
 		return 'No tracks have been recorded yet.';
 	});
 
@@ -207,6 +215,20 @@
 				{/each}
 			</select>
 		</label>
+		<label class="flex items-center gap-2 text-sm text-muted">
+			Audio
+			<select
+				class="input w-auto"
+				bind:value={audio}
+				onchange={() => (offset = 0)}
+				aria-label="Filter by audio file"
+			>
+				<option value="">All</option>
+				{#each AUDIO_FILTERS as f (f)}
+					<option value={f}>{AUDIO_FILTER_LABELS[f]}</option>
+				{/each}
+			</select>
+		</label>
 	{/if}
 </div>
 
@@ -286,7 +308,17 @@
 											selected = row.track.id;
 										}}
 									>
-										<TrackCell track={row.track} />
+										<span class="flex min-w-0 items-center gap-2">
+											<span class="min-w-0 flex-1"><TrackCell track={row.track} /></span>
+											{#if row.has_audio}
+												<span
+													class="inline-flex shrink-0 items-center gap-1 rounded-full bg-spot-sky px-2 py-0.5 font-mono text-[0.6875rem] tracking-[0.06em] text-on-spot uppercase"
+													title="A listen-along audio file is uploaded"
+												>
+													<FileAudio class="size-3.5" aria-hidden="true" /> Audio
+												</span>
+											{/if}
+										</span>
 									</button>
 								</td>
 								<td class="text-right font-medium tabular-nums">{num(row.plays)}</td>

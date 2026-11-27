@@ -8,6 +8,7 @@
 		ChartLine,
 		CircleUser,
 		DatabaseBackup,
+		FileAudio,
 		History,
 		KeyRound,
 		ListOrdered,
@@ -42,7 +43,8 @@
 			items: [
 				{ href: resolve(''), label: 'Overview', brand: 'headphones', exact: true },
 				{ href: resolve('player'), label: 'Player', icon: SquarePlay, exact: false },
-				{ href: resolve('listeners'), label: 'Listeners', icon: UsersRound, exact: false }
+				{ href: resolve('listeners'), label: 'Listeners', icon: UsersRound, exact: false },
+				{ href: resolve('listen-audio'), label: 'Audio files', icon: FileAudio, exact: false }
 			]
 		},
 		{

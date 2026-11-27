@@ -372,6 +372,8 @@ export type TrackRow = {
 	lyrics_status: LyricsStatus;
 	/** True when the lyrics have a time-synced version. */
 	lyrics_synced: boolean;
+	/** A listen-along audio file exists for the track. */
+	has_audio?: boolean;
 	created_at: string;
 };
 

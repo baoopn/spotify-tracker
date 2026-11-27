@@ -2,6 +2,7 @@
 // Keys are hierarchical so a mutation can invalidate a whole family
 // (e.g. `qk.tracks.all` hits every tracks list page and every track detail).
 
+import type { AudioFilter } from './listenAudio';
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from '@tanstack/svelte-query';
 import { ApiError, api } from './api';
 import { backupBusy } from './backups';
@@ -42,6 +43,7 @@ export type TracksParams = {
 	q: string;
 	status: EnrichmentStatus | '';
 	lyrics: LyricsFilter | '';
+	audio?: AudioFilter | '';
 	sort: TrackSort;
 	order: SortOrder;
 	limit: number;

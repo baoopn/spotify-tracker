@@ -32,6 +32,10 @@ type ListenOptions struct {
 	Plays ListenPlayStore
 	// Presence records who is on /listen right now; nil stores nothing.
 	Presence PresenceWriter
+	// Requests stores public "Request an invite" submissions (nil: 503);
+	// ClientHash hashes the client IP (salted, one-way) for their rate limit.
+	Requests   RequestSubmitter
+	ClientHash func(ip string) string
 }
 
 // ListenerIdentity is the invited listener making a request.
@@ -80,6 +84,14 @@ func (h *Handler) mountListen(r chi.Router) {
 			})
 		})
 		r.Get("/config", h.listenConfig)
+		// Public: no sign-in (the visitor is not invited yet).
+		r.Post("/requests", func(w http.ResponseWriter, r *http.Request) {
+			if !o.Enabled {
+				writeError(w, http.StatusNotFound, "listen_disabled", "listen along is not enabled")
+				return
+			}
+			h.listenRequest(w, r)
+		})
 		r.Group(func(r chi.Router) {
 			switch {
 			case !o.Enabled:

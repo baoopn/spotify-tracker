@@ -49,6 +49,9 @@ const (
 	KeyListenAudioSyncLock     = prefix + "listen:audio-sync:lock"
 	KeyListenAudioSyncStatus   = prefix + "listen:audio-sync:status"
 	KeyListenAudioSyncCooldown = prefix + "listen:audio-sync:cooldown"
+	// KeyListenRequestRatePrefix counts "Request an invite" submissions per
+	// salted client IP hash and hour (fixed window).
+	KeyListenRequestRatePrefix = prefix + "listen:requests:rate:"
 	// KeyListenPresencePrefix prefixes who is on /listen right now, one key
 	// per listener ID (JSON, 90 s TTL).
 	KeyListenPresencePrefix = prefix + "listen:presence:"

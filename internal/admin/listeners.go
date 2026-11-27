@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/mail"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/baoopn/spotify-tracker/internal/domain"
+	"github.com/baoopn/spotify-tracker/internal/listen"
 	"github.com/baoopn/spotify-tracker/internal/logging"
 	"github.com/baoopn/spotify-tracker/internal/store"
 )
@@ -42,6 +41,7 @@ type listenerAdminStore interface {
 func (a *API) mountListeners(r chi.Router) {
 	r.Get("/listeners", a.listListeners)
 	r.Get("/listeners/live", a.listenersLive)
+	a.mountListenRequests(r)
 	r.Post("/listeners", a.inviteListener)
 	r.Post("/listeners/{id}/resend", a.resendListener)
 	r.Post("/listeners/{id}/revoke", a.revokeListener)
@@ -125,20 +125,18 @@ func (a *API) listListeners(w http.ResponseWriter, r *http.Request) {
 	for i, l := range rows {
 		out[i] = toListenerView(l)
 	}
+	pending, err := a.requestDB().PendingListenRequests(r.Context())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": out, "listen_enabled": a.Listen.Enabled,
-		"audio_configured": a.Listen.AudioConfigured, "listen_url": a.Listen.URL})
+		"audio_configured": a.Listen.AudioConfigured, "listen_url": a.Listen.URL, "pending_requests": pending})
 }
 
 // validEmail normalizes an email address (trimmed, lower case) and reports
-// whether it is a bare address.
-func validEmail(raw string) (string, bool) {
-	email := strings.ToLower(strings.TrimSpace(raw))
-	if len(email) < 3 || len(email) > 254 {
-		return email, false
-	}
-	addr, err := mail.ParseAddress(email)
-	return email, err == nil && addr.Name == "" && addr.Address == email
-}
+// whether it is a bare address (the rule "Request an invite" uses too).
+func validEmail(raw string) (string, bool) { return listen.NormalizeEmail(raw) }
 
 // clerkFailed writes the response for a failed Clerk call.
 func (a *API) clerkFailed(w http.ResponseWriter, r *http.Request, err error) {
@@ -164,19 +162,31 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 		writeValidation(w, map[string]string{"email": "must be a valid email address"})
 		return
 	}
+	l, found, ok := a.invite(w, r, email)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"data": toListenerView(l), "invitation_sent": !found})
+}
+
+// invite invites a validated email: an existing Clerk account gets the
+// listener role, anyone else a Clerk invitation; then the row is created
+// and audited. found reports an existing account. On failure it writes the
+// error response and returns ok false. "Request an invite" uses it too.
+func (a *API) invite(w http.ResponseWriter, r *http.Request, email string) (l store.Listener, found, ok bool) {
 	ctx := r.Context()
 	db, cl := a.listenerDB(), a.listenerClerkAPI()
 	if _, err := db.ListenerForUser(ctx, "", email); err == nil {
 		writeError(w, http.StatusConflict, "listener_exists", "this email is already invited")
-		return
+		return l, false, false
 	} else if !errors.Is(err, domain.ErrNotFound) {
 		a.internal(w, r, err)
-		return
+		return l, false, false
 	}
 	userID, role, found, err := cl.FindUser(ctx, email)
 	if err != nil {
 		a.clerkFailed(w, r, err)
-		return
+		return l, false, false
 	}
 	n := store.NewListener{Email: email}
 	if u, ok := UserFrom(ctx); ok {
@@ -190,7 +200,7 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 			lr := ListenerRole
 			if err := cl.SetRole(ctx, userID, &lr); err != nil {
 				a.clerkFailed(w, r, err)
-				return
+				return l, false, false
 			}
 			roleSet = true
 		}
@@ -199,11 +209,11 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 		invID, err := cl.Invite(ctx, email, a.Listen.URL)
 		if err != nil {
 			a.clerkFailed(w, r, err)
-			return
+			return l, false, false
 		}
 		n.ClerkInvitationID = &invID
 	}
-	l, err := db.CreateListener(ctx, n)
+	l, err = db.CreateListener(ctx, n)
 	if err != nil {
 		if n.ClerkInvitationID != nil {
 			if rerr := cl.RevokeInvitation(ctx, *n.ClerkInvitationID); rerr != nil {
@@ -218,13 +228,13 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, store.ErrListenerExists) {
 			writeError(w, http.StatusConflict, "listener_exists", "this email is already invited")
-			return
+			return l, false, false
 		}
 		a.internal(w, r, err)
-		return
+		return l, false, false
 	}
 	a.audit(r, "listener.invited", map[string]any{"id": l.ID, "email": l.Email, "existing_account": found})
-	writeJSON(w, http.StatusCreated, map[string]any{"data": toListenerView(l), "invitation_sent": !found})
+	return l, found, true
 }
 
 // listenerID parses {id} (a positive int64); false answers 404.

@@ -283,6 +283,29 @@ type Listener = {
 `listen_enabled` mirrors `LISTEN_ENABLED`, `audio_configured` reports whether
 the S3 settings are complete, and `listen_url` is `PUBLIC_URL + "/listen"`.
 
+Invite requests from `/listen` (see
+[architecture.md](architecture.md#listen-along)):
+
+```ts
+type JoinRequest = {
+  id: number; name: string; email: string; message: string | null
+  status: "pending" | "invited" | "dismissed"
+  country: string | null              // from Cloudflare; no IP is stored
+  created_at: string; updated_at: string
+  decided_at: string | null; decided_by: string | null
+  already_listener: boolean           // a live listener has this email
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listeners/requests?status=pending\|dismissed\|all` | – | `{ data: JoinRequest[], pending: number }`, newest first (at most 200); default `pending`; `400 invalid_status` otherwise |
+| POST | `/admin/api/listeners/requests/{id}/invite` | – | `201 { data: Listener, invitation_sent, request: JoinRequest }`: the same steps and errors as `POST /admin/api/listeners`, then the request is `invited`; `409 not_pending`, `404 not_found` |
+| POST | `/admin/api/listeners/requests/{id}/dismiss` | – | `{ request: JoinRequest }`; `409 not_pending`, `404 not_found` |
+
+`GET /admin/api/listeners` also returns `pending_requests` (a count for the
+badge).
+
 ```ts
 type ListenPlay = {
   id: number
@@ -335,7 +358,10 @@ Errors:
 An existing account gets the Clerk role `listener` only when it has no role.
 Inviting a revoked email again creates a new row.
 
-Audit actions: `listener.invited` (`id`, `email`, `existing_account`),
+Audit actions: `listener.requested` (`id`; the actor is the requester's
+email; only for a new request), `listener.request_invited` (`id`, `email`,
+plus the usual `listener.invited`), `listener.request_dismissed` (`id`,
+`email`), `listener.invited` (`id`, `email`, `existing_account`),
 `listener.resent` (`id`, `email`), `listener.revoked` (`id`, `email`,
 `clerk_cleanup`), `listener.accepted` (`id`, `email`, `clerk_user_id`; the
 actor is the listener's email). Refused listeners are logged, not audited.
@@ -671,7 +697,8 @@ time-zone handling as the API analytics):
 `top_playlists.shown`, `backups.run_requested`, `backups.refresh_requested`,
 `backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change),
 `listener.invited`, `listener.resent`, `listener.revoked`, `listener.accepted` (see [Listeners](#listeners)),
-`listen.audio_synced` (see [Audio files](#audio-files)).
+`listen.audio_synced` (see [Audio files](#audio-files)), `listener.requested`, `listener.request_invited`,
+`listener.request_dismissed`.
 
 ## Playlists
 

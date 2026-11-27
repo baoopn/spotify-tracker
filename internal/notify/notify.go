@@ -91,6 +91,13 @@ func (n *Notifier) Send(ctx context.Context, to []string, e Email) error {
 	return n.sendTo(cfg, to, e)
 }
 
+// Configured reports whether alert emails can be sent (SMTP host, sender
+// and at least one recipient).
+func (n *Notifier) Configured(ctx context.Context) bool {
+	cfg, err := n.config(ctx)
+	return err == nil && cfg.Enabled()
+}
+
 // SendTest sends the admin dashboard's test email (see TestEmail).
 func (n *Notifier) SendTest(ctx context.Context, to []string, sentBy string) error {
 	cfg, err := n.config(ctx)

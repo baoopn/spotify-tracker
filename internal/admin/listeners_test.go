@@ -20,15 +20,16 @@ type listenersHarness struct {
 	db     *fakeListeners
 	clerk  *fakeClerk
 	audit  *fakeAuditor
+	reqs   *fakeRequests
 	router chi.Router
 }
 
 func newListenersHarness() *listenersHarness {
 	h := &listenersHarness{db: &fakeListeners{}, clerk: &fakeClerk{users: map[string]string{}, roles: map[string]string{}},
-		audit: &fakeAuditor{}}
+		audit: &fakeAuditor{}, reqs: &fakeRequests{}}
 	api := &API{Deps: Deps{Log: slog.New(slog.DiscardHandler),
 		Listen: ListenInfo{Enabled: true, AudioConfigured: true, URL: "https://listening.example.com/listen"}},
-		listeners: h.db, clerkInv: h.clerk, auditor: h.audit}
+		listeners: h.db, clerkInv: h.clerk, auditor: h.audit, requests: h.reqs}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

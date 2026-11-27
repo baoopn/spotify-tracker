@@ -102,7 +102,7 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return ops.RunHTTP(gctx, c.http, log) })
 	g.Go(func() error { return c.alerts.Run(gctx, time.Hour) })
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
-	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
+	g.Go(func() error { return pruneDaily(gctx, c.analytics, c.prune, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
 	g.Go(func() error { return c.albums.Run(gctx) })
 	if c.lyrics != nil {
@@ -140,7 +140,8 @@ type components struct {
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
 	topPlaylists *topplaylists.Runner
-	listenSync   *listen.Syncer // nil when listen along or S3 is off
+	listenSync   *listen.Syncer        // nil when listen along or S3 is off
+	prune        func(context.Context) // more daily pruning (listen requests)
 }
 
 // wire builds every service and server from config and connections.
@@ -224,6 +225,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		translator:   translator,
 		topPlaylists: topRunner,
 		listenSync:   listenSync,
+		prune:        pruneListenRequests(st, log),
 		brand:        brandCache,
 	}, nil
 }
@@ -374,7 +376,7 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
 			LyricsLookup:          cfg.Lyrics.Enabled,
 			LyricsWarmer:          warmer,
-			Listen:                listenOptions(cfg, st, rdb, auth, log),
+			Listen:                listenOptions(cfg, st, rdb, auth, recorder, adminAPI.Notifier, log),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -412,22 +414,6 @@ func mcpInfo(cfg config.API) admin.MCPInfo {
 		EndpointURL:        strings.TrimRight(cfg.PublicURL, "/") + "/mcp",
 		EnvTokenConfigured: cfg.MCP.AdminToken != "",
 		RateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
-	}
-}
-
-// pruneAnalytics deletes analytics older than 90 days, once a day.
-func pruneAnalytics(ctx context.Context, recorder *analytics.Recorder, log *slog.Logger) error {
-	t := time.NewTicker(24 * time.Hour)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if err := recorder.Prune(ctx, 90*24*time.Hour); err != nil {
-				log.Warn("prune analytics failed", logging.Err(err))
-			}
-		}
 	}
 }
 

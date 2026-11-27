@@ -45,12 +45,12 @@ func TestListenPageCSP(t *testing.T) {
 func TestListenOptions(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	cfg := listenCfg()
-	o := listenOptions(cfg, nil, nil, nil, log)
+	o := listenOptions(cfg, nil, nil, nil, nil, nil, log)
 	if !o.Enabled || o.Auth != nil || o.Audio == nil {
 		t.Errorf("options = %+v", o)
 	}
 	cfg.Listen.S3 = config.S3{}
-	if o := listenOptions(cfg, nil, nil, nil, log); o.Audio != nil {
+	if o := listenOptions(cfg, nil, nil, nil, nil, nil, log); o.Audio != nil {
 		t.Error("typed nil locator")
 	}
 	if info := listenInfo(cfg); info.URL != "https://listening.example.com/listen" || !info.Enabled || info.AudioConfigured {

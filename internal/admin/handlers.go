@@ -104,6 +104,7 @@ type API struct {
 	clerkInv       listenerClerk
 	liveLookup     liveStore
 	audioStore     audioAdminStore
+	requests       requestAdminStore
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).

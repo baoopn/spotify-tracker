@@ -4,13 +4,18 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/baoopn/spotify-tracker/internal/admin"
+	"github.com/baoopn/spotify-tracker/internal/alerts"
+	"github.com/baoopn/spotify-tracker/internal/analytics"
 	"github.com/baoopn/spotify-tracker/internal/config"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
 	"github.com/baoopn/spotify-tracker/internal/listen"
+	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/notify"
 	"github.com/baoopn/spotify-tracker/internal/staticsite"
 	"github.com/baoopn/spotify-tracker/internal/store"
 )
@@ -46,11 +51,18 @@ func publicSiteOptions(cfg config.API) staticsite.Options {
 
 // listenOptions configures /api/v1/listen/*. auth is nil when Clerk is not
 // configured (the endpoints then answer 503).
-func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *admin.Authenticator, log *slog.Logger) *httpapi.ListenOptions {
+func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *admin.Authenticator,
+	recorder *analytics.Recorder, mail *notify.Notifier, log *slog.Logger) *httpapi.ListenOptions {
 	o := &httpapi.ListenOptions{Enabled: cfg.Listen.Enabled, ClerkPublishableKey: cfg.Admin.ClerkPublishableKey}
 	if !cfg.Listen.Enabled {
 		log.Info("listen along disabled (LISTEN_ENABLED=false)")
 		return o
+	}
+	if st != nil && rdb != nil {
+		o.Requests = listenRequests(cfg, st, rdb, mail, log)
+	}
+	if recorder != nil {
+		o.ClientHash = func(ip string) string { return recorder.HashIP("listen-request", ip) }
 	}
 	if auth != nil {
 		o.Auth, o.Me = auth.ListenerMiddleware(st), admin.ListenerMe
@@ -114,6 +126,42 @@ func attachListen(a *admin.API, cfg config.API, st *store.Store, rdb *redis.Clie
 		log.Info("audio bucket sync", slog.Duration("interval", cfg.Listen.AudioSyncInterval))
 	}
 	return s
+}
+
+// listenRequests handles "Request an invite": a new request emails the
+// alert recipients (when SMTP is set up).
+func listenRequests(cfg config.API, st *store.Store, rdb *redis.Client, mail *notify.Notifier, log *slog.Logger) *listen.Requests {
+	url := strings.TrimRight(cfg.PublicURL, "/") + "/admin/listeners"
+	email := func(r store.ListenRequest) notify.Email {
+		return alerts.ListenRequestEmail(r.Name, r.Email, strOr(r.Message), strOr(r.Country), r.CreatedAt, url)
+	}
+	rlog := log.With(slog.String("component", "listen_requests"))
+	if mail == nil {
+		return listen.NewRequests(st, rdb, nil, email, rlog) // an untyped nil: no alerts
+	}
+	return listen.NewRequests(st, rdb, mail, email, rlog)
+}
+
+func strOr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// pruneListenRequests deletes invite requests decided more than 90 days ago
+// (run daily with the analytics prune).
+func pruneListenRequests(st *store.Store, log *slog.Logger) func(context.Context) {
+	return func(ctx context.Context) {
+		if st == nil {
+			return
+		}
+		if n, err := st.PruneListenRequests(ctx, 90*24*time.Hour); err != nil {
+			log.Warn("prune listen requests failed", logging.Err(err))
+		} else if n > 0 {
+			log.Info("pruned listen requests", slog.Int64("deleted", n))
+		}
+	}
 }
 
 // listenInfo describes listen along for the admin Listeners page.

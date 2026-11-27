@@ -853,6 +853,32 @@ Listeners see their own history on `/listen`. The admin sees each listener's
 history, read-only, on the Listeners page. Deleting a listener row deletes
 their plays; a revoke keeps them.
 
+**Request an invite.** A visitor who is not invited can ask for an invite
+on `/listen` with `POST /api/v1/listen/requests` (public, no sign-in):
+a name (1 to 80 characters), an email and an optional message (up to 500
+characters). An invite is still the admin's choice; there is no sign-up.
+
+- Valid input always answers 202 `{"ok": true}`: for a new email, for an
+  email with a pending request (its name and message are updated, no second
+  alert), for a listener's email and for an email dismissed before (a new
+  pending request). So the endpoint tells nobody who is invited.
+- `website` is a hidden honeypot field: when a bot fills it, the API answers
+  202 and stores nothing.
+- Text is trimmed and control characters are dropped. Errors are 422
+  `validation_failed`.
+- At most 3 requests per client per hour (a Redis fixed window keyed by a
+  salted hash of the client IP, never the IP), then 429 with `Retry-After`.
+  With 100 requests pending, new ones are dropped with a log line (still
+  202). The `/api/v1` limiter applies too.
+- A new request emails the alert recipients (Settings → Email) in the
+  background, with the name, email, message, country and time and a link to
+  the Listeners page. The email template escapes every value, and the
+  subject stays on one header line. Without SMTP settings nothing is sent.
+- The admin invites (the same steps as inviting by email) or dismisses a
+  request on the Listeners page. Requests store the Cloudflare country, not
+  an IP. Invited and dismissed requests are deleted 90 days after the
+  decision, by the daily prune.
+
 **Listening now.** The admin Listeners page shows who is on `/listen` right
 now. The page sends its state on load, on every change and every 30 s while
 visible: `listening` (joined, audio in sync), `following` (open and allowed,
@@ -1019,6 +1045,12 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   it expires: at most `LISTEN_AUDIO_URL_TTL` or the rest of the song plus a
   minute, never more than an hour. The page checks access every 60 s and stops
   the audio on 403. The `listener` role never grants admin access.
+- "Request an invite" is public, so it reveals nothing: valid input always
+  answers 202, whether the email is new, pending, invited or a listener. A
+  honeypot field drops simple bots, a fixed window of 3 requests per hour
+  per salted client IP hash (no raw IP is stored) and a cap of 100 pending
+  requests limit abuse, and the alert email escapes every value the visitor
+  typed (the subject cannot add header lines).
 - Listening now stores no IP address: only the country from Cloudflare, the
   device and browser family from the User-Agent, and the listener's email and
   state, in Redis for 90 s.

@@ -165,7 +165,7 @@ func TestListenAudioRemaining(t *testing.T) {
 func TestV1HandlerHasNoListenRoutes(t *testing.T) {
 	h := &Handler{log: slog.New(slog.DiscardHandler), opts: Options{Listen: &ListenOptions{Enabled: true, Auth: allowAll, Me: me}}}
 	for _, p := range []string{"/api/v1/listen/config", "/api/v1/listen/me", "/api/v1/listen/audio",
-		"/api/v1/listen/progress", "/api/v1/listen/history", "/api/v1/listen/presence"} {
+		"/api/v1/listen/progress", "/api/v1/listen/history", "/api/v1/listen/presence", "/api/v1/listen/requests"} {
 		for _, m := range []string{http.MethodGet, http.MethodPost} {
 			rec := httptest.NewRecorder()
 			h.V1Handler().ServeHTTP(rec, httptest.NewRequest(m, p, nil))

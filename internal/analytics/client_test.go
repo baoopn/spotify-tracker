@@ -24,3 +24,10 @@ func TestExportedClientHelpers(t *testing.T) {
 		t.Errorf("empty UA = %q %q", d, b)
 	}
 }
+
+func TestHashIP(t *testing.T) {
+	a, b := HashIP("salt", "x", "203.0.113.9"), HashIP("salt2", "x", "203.0.113.9")
+	if a == b || len(a) != 32 || a != HashIP("salt", "x", "203.0.113.9") || a == HashIP("salt", "y", "203.0.113.9") {
+		t.Errorf("hashes = %s %s", a, b)
+	}
+}

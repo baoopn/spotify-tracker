@@ -82,6 +82,15 @@ func TestPerPageCSP(t *testing.T) {
 	}
 }
 
+// A host with a port wildcard (Clerk's https://*.protect.clerk.com:*) is kept
+// as written.
+func TestBuildCSPPortWildcard(t *testing.T) {
+	d := directives(BuildCSP(nil, map[string]string{"connect-src": "https://*.protect.clerk.com:*"}))
+	if d["connect-src"] != "'self' https://*.protect.clerk.com:*" {
+		t.Errorf("connect-src = %q", d["connect-src"])
+	}
+}
+
 func TestMerge(t *testing.T) {
 	got := merge(map[string]string{"a": "x", "b": "y"}, map[string]string{"b": "z", "c": "w", "d": ""})
 	if len(got) != 3 || got["a"] != "x" || got["b"] != "y z" || got["c"] != "w" {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -38,10 +39,10 @@ func publicSiteOptions(cfg config.API) staticsite.Options {
 		clerk := admin.ClerkCSPSources(cfg.Admin.ClerkPublishableKey)
 		clerkPage := func() map[string]string {
 			return map[string]string{
-				"script-src":  clerk,
-				"connect-src": clerk,
-				"frame-src":   clerk,
-				"img-src":     "https://img.clerk.com",
+				"script-src":  clerk.Script,
+				"connect-src": clerk.Connect,
+				"frame-src":   clerk.Frame,
+				"img-src":     clerk.Img,
 			}
 		}
 		listenPage := clerkPage()
@@ -63,8 +64,14 @@ func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *adm
 		return o
 	}
 	if st != nil && rdb != nil {
-		o.Requests = listenRequests(cfg, st, rdb, mail, log)
+		reqs := listenRequests(cfg, st, rdb, mail, log)
+		if cfg.Turnstile.Enabled() {
+			reqs.WithTurnstile(listenTurnstile(cfg))
+			o.TurnstileSiteKey = strings.TrimSpace(cfg.Turnstile.SiteKey)
+		}
+		o.Requests = reqs
 	}
+	log.Info("invite request check", slog.Bool("turnstile", o.TurnstileSiteKey != ""))
 	if recorder != nil {
 		o.ClientHash = func(ip string) string { return recorder.HashIP("listen-request", ip) }
 	}
@@ -147,6 +154,16 @@ func listenRequests(cfg config.API, st *store.Store, rdb *redis.Client, mail *no
 		return listen.NewRequests(st, rdb, nil, email, rlog) // an untyped nil: no alerts
 	}
 	return listen.NewRequests(st, rdb, mail, email, rlog)
+}
+
+// listenTurnstile verifies Turnstile tokens. Outside development the reply's
+// hostname must be the PUBLIC_URL host.
+func listenTurnstile(cfg config.API) *listen.Turnstile {
+	host := ""
+	if u, err := url.Parse(cfg.PublicURL); err == nil && !cfg.IsDevelopment() {
+		host = u.Hostname()
+	}
+	return listen.NewTurnstile(strings.TrimSpace(cfg.Turnstile.SecretKey), host)
 }
 
 func strOr(s *string) string {

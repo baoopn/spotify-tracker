@@ -4,6 +4,8 @@
 export type ListenConfig = {
 	enabled: boolean;
 	clerk_publishable_key: string | null;
+	/** Cloudflare Turnstile on Request an invite; null (or absent on an older API) when off. */
+	turnstile_site_key?: string | null;
 };
 
 /** GET /api/v1/listen/me (Clerk session token). */
@@ -74,4 +76,6 @@ export type ListenRequestInput = {
 	email: string;
 	message?: string;
 	website?: string;
+	/** The Turnstile token, when the config has a site key. */
+	turnstile_token?: string;
 };

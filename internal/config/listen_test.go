@@ -107,3 +107,16 @@ func TestLoadAPIListenDefaults(t *testing.T) {
 		t.Errorf("defaults = %+v", l)
 	}
 }
+
+func TestTurnstileEnabled(t *testing.T) {
+	// Cloudflare's documented test keys.
+	on := Turnstile{SiteKey: "1x00000000000000000000AA", SecretKey: "1x0000000000000000000000000000000AA"}
+	if !on.Enabled() {
+		t.Error("both keys: off")
+	}
+	for _, off := range []Turnstile{{SiteKey: on.SiteKey}, {SecretKey: on.SecretKey}, {SiteKey: " ", SecretKey: on.SecretKey}, {}} {
+		if off.Enabled() {
+			t.Errorf("%+v: on", off)
+		}
+	}
+}

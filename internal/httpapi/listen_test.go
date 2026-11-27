@@ -64,9 +64,9 @@ func TestListenConfig(t *testing.T) {
 		o    *ListenOptions
 		want string
 	}{
-		{&ListenOptions{Enabled: true, ClerkPublishableKey: "pk_test_x"}, `{"enabled":true,"clerk_publishable_key":"pk_test_x"}`},
-		{&ListenOptions{Enabled: true}, `{"enabled":true,"clerk_publishable_key":null}`},
-		{&ListenOptions{Enabled: false, ClerkPublishableKey: "pk_test_x"}, `{"enabled":false,"clerk_publishable_key":null}`},
+		{&ListenOptions{Enabled: true, ClerkPublishableKey: "pk_test_x"}, `{"enabled":true,"clerk_publishable_key":"pk_test_x","turnstile_site_key":null}`},
+		{&ListenOptions{Enabled: true}, `{"enabled":true,"clerk_publishable_key":null,"turnstile_site_key":null}`},
+		{&ListenOptions{Enabled: false, ClerkPublishableKey: "pk_test_x"}, `{"enabled":false,"clerk_publishable_key":null,"turnstile_site_key":null}`},
 	} {
 		rec, out := get(t, listenRouter(c.o, nil), "/api/v1/listen/config")
 		if rec.Code != 200 || string(out["data"]) != c.want {

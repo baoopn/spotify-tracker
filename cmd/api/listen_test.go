@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +78,14 @@ func TestIndexPageCSP(t *testing.T) {
 		!strings.Contains(home["connect-src"], "https://baoopn.com") {
 		t.Errorf("/ = %v", home)
 	}
+	// Clerk's protection hosts, on / and /listen alike.
+	for _, page := range []string{"/", "/listen"} {
+		got := csp(on, page)
+		if !strings.Contains(got["script-src"], "https://*.protect.clerk.com") || !strings.Contains(got["frame-src"], "https://*.protect.clerk.com") ||
+			!strings.Contains(got["connect-src"], "https://*.protect.clerk.com:*") {
+			t.Errorf("%s protect hosts = %v", page, got)
+		}
+	}
 	listen := csp(on, "/listen")
 	if listen["media-src"] != "'self' https://s3.example.com" || !strings.Contains(listen["script-src"], "https://clerk.example.com") {
 		t.Errorf("/listen = %v", listen)
@@ -103,5 +112,21 @@ func TestListenOptions(t *testing.T) {
 	}
 	if info := listenInfo(cfg); info.URL != "https://listening.example.com/listen" || !info.Enabled || info.AudioConfigured {
 		t.Errorf("info = %+v", info)
+	}
+}
+
+// Turnstile checks the PUBLIC_URL host, except in development.
+func TestListenTurnstileHost(t *testing.T) {
+	cfg := listenCfg()
+	cfg.Turnstile = config.Turnstile{SiteKey: "1x00000000000000000000AA", SecretKey: "1x0000000000000000000000000000000AA"}
+	if !cfg.Turnstile.Enabled() || listenTurnstile(cfg) == nil {
+		t.Fatal("turnstile off")
+	}
+	if got := fmt.Sprintf("%+v", *listenTurnstile(cfg)); !strings.Contains(got, "hostname:listening.example.com") {
+		t.Errorf("verifier = %s", got)
+	}
+	cfg.Env = "development"
+	if got := fmt.Sprintf("%+v", *listenTurnstile(cfg)); !strings.Contains(got, "hostname: ") {
+		t.Errorf("development verifier = %s", got)
 	}
 }

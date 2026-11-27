@@ -9,6 +9,7 @@
 	import NowPlayingControls from '#lib/components/overview/NowPlayingControls.svelte';
 	import HealthStrip from '#lib/components/overview/HealthStrip.svelte';
 	import RecentPlaylistsCard from '#lib/components/overview/RecentPlaylistsCard.svelte';
+	import ListenStorageCard from '#lib/components/overview/ListenStorageCard.svelte';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { errorMessage } from '#lib/api.js';
 	import { compact, date, hours, num } from '#lib/format.js';
@@ -128,6 +129,12 @@
 			</span>
 			<ArrowRight class="size-4 shrink-0 text-ink-soft" aria-hidden="true" />
 		</a>
+	{/if}
+
+	{#if d?.listen_storage}
+		<div class="mt-10">
+			<ListenStorageCard storage={d.listen_storage} />
+		</div>
 	{/if}
 
 	<div class="mt-10">

@@ -92,3 +92,25 @@ export function missingAudioQuery(p: MissingParams) {
 		placeholderData: keepPreviousData
 	});
 }
+
+/** GET /admin/api/overview `listen_storage` (null when listen along or S3 is off). */
+export type ListenStorage = {
+	files: number;
+	total_bytes: number;
+	/** Distinct tracks in the owner's listening history. */
+	tracks_played: number;
+	/** Of those, the ones with an audio file. */
+	tracks_with_audio: number;
+	plays_30d: number;
+	plays_30d_with_audio: number;
+	last_sync_at: string | null;
+	last_error: string | null;
+	sync_interval_s: number;
+	/** Files first seen in the last 7 days. */
+	added_7d: number;
+};
+
+/** Whole percent of `part` in `total` (0 when there is no total). */
+export function percent(part: number, total: number): number {
+	return total > 0 ? Math.round((Math.min(part, total) / total) * 100) : 0;
+}

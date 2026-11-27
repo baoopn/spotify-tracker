@@ -15,6 +15,19 @@ const NOOP_ACTIONS: MediaSessionAction[] = [
 	'nexttrack'
 ];
 
+/**
+ * Set the stored volume and mute on the element. Returns false where the
+ * browser ignores audio.volume (iOS), so the slider can be hidden.
+ */
+export function applyVolume(el: HTMLAudioElement, volume: number, muted: boolean): boolean {
+	const before = el.volume;
+	el.volume = 0.5;
+	const supported = el.volume === 0.5;
+	el.volume = supported ? volume : before;
+	el.muted = muted;
+	return supported;
+}
+
 export function readStored(key: string): string | null {
 	try {
 		return localStorage.getItem(key);

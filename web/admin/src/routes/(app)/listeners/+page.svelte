@@ -9,6 +9,7 @@
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import InviteCard from './InviteCard.svelte';
 	import ListenersTable from './ListenersTable.svelte';
+	import ListeningNow from './ListeningNow.svelte';
 
 	const query = createQuery(() => listenersQuery());
 	const manual = new ManualRefetch(() => query.refetch());
@@ -41,6 +42,8 @@
 		{#each { length: 6 }, i (i)}<Skeleton class="h-6" />{/each}
 	</div>
 {:else}
+	<div class="mb-4"><ListeningNow /></div>
+
 	{#if !s.listen_enabled || !s.audio_configured}
 		<div class="mb-4 flex flex-col gap-2">
 			{#if !s.listen_enabled}

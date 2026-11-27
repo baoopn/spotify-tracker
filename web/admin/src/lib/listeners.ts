@@ -57,3 +57,65 @@ export function listenersQuery() {
 export function canResend(l: Listener): boolean {
 	return l.status === 'invited' && !l.has_account;
 }
+
+/** One counted play in a listener's history (GET /listeners/{id}/history). */
+export type ListenPlay = {
+	id: number;
+	/** When the play started. */
+	listened_at: string;
+	last_heard_at: string;
+	heard_ms: number;
+	track: {
+		id: string;
+		name: string;
+		duration_ms: number;
+		explicit: boolean;
+		external_url?: string;
+		artists: { id: string; name: string }[];
+		album_name: string;
+		cover_image_url: string;
+	};
+};
+
+export type ListenHistoryPage = { data: ListenPlay[]; next_cursor: string | null };
+
+export const HISTORY_LIMIT = 50;
+
+/** A listener's counted plays, newest first (read-only, also for revoked listeners). */
+export function listenerHistory(
+	id: number,
+	cursor: string | null,
+	{ signal }: { signal?: AbortSignal } = {}
+): Promise<ListenHistoryPage> {
+	return request<ListenHistoryPage>(`${BASE}/${id}/history`, {
+		query: { limit: HISTORY_LIMIT, cursor },
+		signal
+	});
+}
+
+export type PresenceState = 'listening' | 'following' | 'idle';
+
+/** Someone on /listen right now (GET /listeners/live); no IP is kept. */
+export type LivePresence = {
+	listener_id: number;
+	email: string;
+	state: PresenceState;
+	/** ISO 3166-1 alpha-2, null when unknown. */
+	country: string | null;
+	device: string;
+	browser: string;
+	since: string;
+	updated_at: string;
+	track: { id: string; name: string; artists: { id: string; name: string }[] } | null;
+};
+
+export const liveKey = ['listeners', 'live'] as const;
+
+export function liveListenersQuery() {
+	return queryOptions({
+		queryKey: liveKey,
+		queryFn: ({ signal }) =>
+			request<{ data: LivePresence[] }>(`${BASE}/live`, { signal }).then((r) => r.data ?? []),
+		refetchInterval: 15_000
+	});
+}

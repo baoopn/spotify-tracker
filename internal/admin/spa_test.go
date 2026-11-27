@@ -32,10 +32,10 @@ func TestClerkFrontendHost(t *testing.T) {
 
 func TestClerkSources(t *testing.T) {
 	pk := "pk_live_" + base64.StdEncoding.EncodeToString([]byte("clerk.example.com$"))
-	if got := clerkSources(pk); got != "https://clerk.example.com https://challenges.cloudflare.com" {
+	if got := ClerkCSPSources(pk); got != "https://clerk.example.com https://challenges.cloudflare.com" {
 		t.Errorf("with a host: %q", got)
 	}
-	if got := clerkSources(""); got != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com" {
+	if got := ClerkCSPSources(""); got != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com" {
 		t.Errorf("fallback: %q", got)
 	}
 }

@@ -1,0 +1,310 @@
+package admin
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/mail"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/baoopn/spotify-tracker/internal/domain"
+	"github.com/baoopn/spotify-tracker/internal/logging"
+	"github.com/baoopn/spotify-tracker/internal/store"
+)
+
+// ListenInfo describes listen along for the Listeners page.
+type ListenInfo struct {
+	// Enabled mirrors LISTEN_ENABLED.
+	Enabled bool
+	// AudioConfigured reports whether the S3 bucket is configured.
+	AudioConfigured bool
+	// URL is PUBLIC_URL + "/listen", where invitations land.
+	URL string
+}
+
+// listenerAdminStore manages listener rows (implemented by *store.Store).
+type listenerAdminStore interface {
+	ListListeners(ctx context.Context) ([]store.Listener, error)
+	GetListener(ctx context.Context, id int64) (store.Listener, error)
+	CreateListener(ctx context.Context, n store.NewListener) (store.Listener, error)
+	SetListenerInvitation(ctx context.Context, id int64, invitationID string) (store.Listener, error)
+	RevokeListener(ctx context.Context, id int64) (store.Listener, error)
+	ListenerForUser(ctx context.Context, clerkUserID, email string) (store.Listener, error)
+}
+
+// mountListeners registers the listener routes. They are writes or reveal
+// email addresses, so they are never part of ReadOnlyHandler.
+func (a *API) mountListeners(r chi.Router) {
+	r.Get("/listeners", a.listListeners)
+	r.Post("/listeners", a.inviteListener)
+	r.Post("/listeners/{id}/resend", a.resendListener)
+	r.Post("/listeners/{id}/revoke", a.revokeListener)
+}
+
+func (a *API) listenerDB() listenerAdminStore {
+	if a.listeners != nil {
+		return a.listeners
+	}
+	return a.Store
+}
+
+func (a *API) listenerClerkAPI() listenerClerk {
+	if a.clerkInv != nil {
+		return a.clerkInv
+	}
+	return sdkListenerClerk{}
+}
+
+type listenerView struct {
+	ID          int64      `json:"id"`
+	Email       string     `json:"email"`
+	Status      string     `json:"status"`
+	ClerkUserID *string    `json:"clerk_user_id"`
+	HasAccount  bool       `json:"has_account"`
+	InvitedBy   string     `json:"invited_by"`
+	InvitedAt   time.Time  `json:"invited_at"`
+	AcceptedAt  *time.Time `json:"accepted_at"`
+	RevokedAt   *time.Time `json:"revoked_at"`
+	LastSeenAt  *time.Time `json:"last_seen_at"`
+}
+
+func toListenerView(l store.Listener) listenerView {
+	return listenerView{ID: l.ID, Email: l.Email, Status: l.Status, ClerkUserID: l.ClerkUserID,
+		HasAccount: l.ClerkUserID != nil, InvitedBy: l.InvitedBy, InvitedAt: l.InvitedAt.UTC(),
+		AcceptedAt: optUTC(l.AcceptedAt), RevokedAt: optUTC(l.RevokedAt), LastSeenAt: optUTC(l.LastSeenAt)}
+}
+
+func (a *API) listListeners(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.listenerDB().ListListeners(r.Context())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	out := make([]listenerView, len(rows))
+	for i, l := range rows {
+		out[i] = toListenerView(l)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": out, "listen_enabled": a.Listen.Enabled,
+		"audio_configured": a.Listen.AudioConfigured, "listen_url": a.Listen.URL})
+}
+
+// validEmail normalizes an email address (trimmed, lower case) and reports
+// whether it is a bare address.
+func validEmail(raw string) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(raw))
+	if len(email) < 3 || len(email) > 254 {
+		return email, false
+	}
+	addr, err := mail.ParseAddress(email)
+	return email, err == nil && addr.Name == "" && addr.Address == email
+}
+
+// clerkFailed writes the response for a failed Clerk call.
+func (a *API) clerkFailed(w http.ResponseWriter, r *http.Request, err error) {
+	if msg, ok := clerkRejected(err); ok {
+		a.Log.WarnContext(r.Context(), "clerk refused a listener request", logging.Err(err))
+		writeError(w, http.StatusConflict, "clerk_rejected", msg)
+		return
+	}
+	a.Log.ErrorContext(r.Context(), "clerk listener request failed", logging.Err(err))
+	writeError(w, http.StatusServiceUnavailable, "clerk_unavailable", "could not reach Clerk; try again")
+}
+
+func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body: "+err.Error())
+		return
+	}
+	email, ok := validEmail(in.Email)
+	if !ok {
+		writeValidation(w, map[string]string{"email": "must be a valid email address"})
+		return
+	}
+	ctx := r.Context()
+	db, cl := a.listenerDB(), a.listenerClerkAPI()
+	if _, err := db.ListenerForUser(ctx, "", email); err == nil {
+		writeError(w, http.StatusConflict, "listener_exists", "this email is already invited")
+		return
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		a.internal(w, r, err)
+		return
+	}
+	userID, role, found, err := cl.FindUser(ctx, email)
+	if err != nil {
+		a.clerkFailed(w, r, err)
+		return
+	}
+	n := store.NewListener{Email: email}
+	if u, ok := UserFrom(ctx); ok {
+		n.InvitedBy = u.Email
+	}
+	if found {
+		// An existing account signs in at /listen; no invitation email.
+		// Its role is set only when it has none (an admin keeps theirs).
+		if role == "" {
+			lr := ListenerRole
+			if err := cl.SetRole(ctx, userID, &lr); err != nil {
+				a.clerkFailed(w, r, err)
+				return
+			}
+		}
+		n.ClerkUserID = &userID
+	} else {
+		invID, err := cl.Invite(ctx, email, a.Listen.URL)
+		if err != nil {
+			a.clerkFailed(w, r, err)
+			return
+		}
+		n.ClerkInvitationID = &invID
+	}
+	l, err := db.CreateListener(ctx, n)
+	if err != nil {
+		if n.ClerkInvitationID != nil {
+			if rerr := cl.RevokeInvitation(ctx, *n.ClerkInvitationID); rerr != nil {
+				a.Log.WarnContext(ctx, "revoking an unused listener invitation failed", logging.Err(rerr))
+			}
+		}
+		if errors.Is(err, store.ErrListenerExists) {
+			writeError(w, http.StatusConflict, "listener_exists", "this email is already invited")
+			return
+		}
+		a.internal(w, r, err)
+		return
+	}
+	a.audit(r, "listener.invited", map[string]any{"id": l.ID, "email": l.Email, "existing_account": found})
+	writeJSON(w, http.StatusCreated, map[string]any{"data": toListenerView(l), "invitation_sent": !found})
+}
+
+// listenerID parses {id} (a positive int64); false answers 404.
+func listenerID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusNotFound, "not_found", "listener not found")
+		return 0, false
+	}
+	return id, true
+}
+
+func (a *API) resendListener(w http.ResponseWriter, r *http.Request) {
+	id, ok := listenerID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	db, cl := a.listenerDB(), a.listenerClerkAPI()
+	l, err := db.GetListener(ctx, id)
+	if errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "listener not found")
+		return
+	} else if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	if l.Status != store.ListenerInvited {
+		writeError(w, http.StatusConflict, "not_pending", "this invitation is no longer pending")
+		return
+	}
+	if l.ClerkUserID != nil {
+		writeError(w, http.StatusConflict, "no_invitation",
+			"This person already has an account. Ask them to sign in at /listen.")
+		return
+	}
+	// Clerk has no resend: revoke the old invitation, then send a new one.
+	if l.ClerkInvitationID != nil {
+		if err := cl.RevokeInvitation(ctx, *l.ClerkInvitationID); err != nil {
+			a.Log.WarnContext(ctx, "revoking the old listener invitation failed", logging.Err(err))
+		}
+	}
+	invID, err := cl.Invite(ctx, l.Email, a.Listen.URL)
+	if err != nil {
+		a.clerkFailed(w, r, err)
+		return
+	}
+	l, err = db.SetListenerInvitation(ctx, id, invID)
+	if err != nil {
+		if rerr := cl.RevokeInvitation(ctx, invID); rerr != nil {
+			a.Log.WarnContext(ctx, "revoking an unused listener invitation failed", logging.Err(rerr))
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			writeError(w, http.StatusConflict, "not_pending", "this invitation is no longer pending")
+			return
+		}
+		a.internal(w, r, err)
+		return
+	}
+	a.audit(r, "listener.resent", map[string]any{"id": l.ID, "email": l.Email})
+	writeJSON(w, http.StatusOK, map[string]any{"data": toListenerView(l)})
+}
+
+// Clerk cleanup results of a revoke.
+const (
+	cleanupOK      = "ok"
+	cleanupFailed  = "failed"
+	cleanupSkipped = "skipped"
+)
+
+func (a *API) revokeListener(w http.ResponseWriter, r *http.Request) {
+	id, ok := listenerID(w, r)
+	if !ok {
+		return
+	}
+	// The row first: access ends here, whatever Clerk does next.
+	l, err := a.listenerDB().RevokeListener(r.Context(), id)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "listener not found")
+		return
+	case errors.Is(err, store.ErrListenerRevoked):
+		writeError(w, http.StatusConflict, "already_revoked", "this listener is already revoked")
+		return
+	case err != nil:
+		a.internal(w, r, err)
+		return
+	}
+	cleanup := a.cleanupListener(r.Context(), l)
+	a.audit(r, "listener.revoked", map[string]any{"id": l.ID, "email": l.Email, "clerk_cleanup": cleanup})
+	writeJSON(w, http.StatusOK, map[string]any{"data": toListenerView(l), "clerk_cleanup": cleanup})
+}
+
+// cleanupListener revokes a pending invitation and removes the listener
+// role from the Clerk user (never another role). Failures are logged; the
+// row is revoked either way.
+func (a *API) cleanupListener(ctx context.Context, l store.Listener) string {
+	cl := a.listenerClerkAPI()
+	result := cleanupSkipped
+	fail := func(msg string, err error) {
+		a.Log.WarnContext(ctx, msg, logging.Err(err))
+		result = cleanupFailed
+	}
+	if l.ClerkInvitationID != nil && l.AcceptedAt == nil {
+		result = cleanupOK
+		if err := cl.RevokeInvitation(ctx, *l.ClerkInvitationID); err != nil {
+			fail("revoking the listener invitation failed", err)
+		}
+	}
+	if l.ClerkUserID != nil {
+		if result == cleanupSkipped {
+			result = cleanupOK
+		}
+		role, found, err := cl.UserRole(ctx, *l.ClerkUserID)
+		switch {
+		case err != nil:
+			fail("reading the listener's Clerk role failed", err)
+		case found && role == ListenerRole:
+			if err := cl.SetRole(ctx, *l.ClerkUserID, nil); err != nil {
+				fail("removing the listener role failed", err)
+			}
+		}
+		if a.Redis != nil {
+			_ = a.Redis.Del(ctx, ProfileCacheKey(*l.ClerkUserID)).Err()
+		}
+	}
+	return result
+}

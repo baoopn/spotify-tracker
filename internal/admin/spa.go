@@ -16,7 +16,7 @@ import (
 // from the publishable key; Clerk's wildcard hosts only without one) and
 // Cloudflare Turnstile.
 func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
-	clerk := clerkSources(clerkPublishableKey)
+	clerk := ClerkCSPSources(clerkPublishableKey)
 	site := staticsite.New(dist, staticsite.Options{
 		Prefix: "/admin",
 		SPA:    true,
@@ -37,10 +37,10 @@ func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
 	r.Head("/admin/*", site.ServeHTTP)
 }
 
-// clerkSources is the CSP source list for Clerk and Turnstile: the Frontend
-// API host from the publishable key, or Clerk's wildcard hosts only when the
-// key carries no usable host.
-func clerkSources(pk string) string {
+// ClerkCSPSources is the CSP source list for Clerk and Turnstile (the admin
+// SPA and the /listen page): the Frontend API host from the publishable key,
+// or Clerk's wildcard hosts only when the key carries no usable host.
+func ClerkCSPSources(pk string) string {
 	const turnstile = "https://challenges.cloudflare.com"
 	if host := ClerkFrontendHost(pk); host != "" {
 		return "https://" + host + " " + turnstile

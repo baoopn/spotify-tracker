@@ -69,6 +69,8 @@ type Deps struct {
 	LyricsLookup bool
 	// LyricsNudge starts the lyrics fetcher after a re-queue (nil when off).
 	LyricsNudge func()
+	// Listen describes listen along for the Listeners page.
+	Listen ListenInfo
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.
@@ -94,6 +96,8 @@ type API struct {
 	auditor        auditor
 	player         playerControl
 	invalidate     func(context.Context)
+	listeners      listenerAdminStore
+	clerkInv       listenerClerk
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).

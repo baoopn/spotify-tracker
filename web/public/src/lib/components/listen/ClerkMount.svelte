@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Clerk } from '@clerk/clerk-js';
-	import { LISTEN_PATH } from '#lib/listen/auth.svelte.js';
+	import { signInTarget } from '#lib/account/redirect.js';
 
 	let { clerk }: { clerk: Clerk } = $props();
 
@@ -11,7 +11,11 @@
 	function mount(c: Clerk) {
 		return (node: HTMLDivElement) => {
 			const params = new URLSearchParams(window.location.search);
-			const redirect = new URL(LISTEN_PATH, window.location.origin).href;
+			// /listen, or a safe ?redirect_url= / ?return_to= path (never another site).
+			const redirect = new URL(
+				signInTarget(window.location.pathname, window.location.search),
+				window.location.origin
+			).href;
 			const opts = {
 				routing: 'hash' as const,
 				forceRedirectUrl: redirect,

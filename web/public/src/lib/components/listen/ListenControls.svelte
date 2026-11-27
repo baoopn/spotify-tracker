@@ -1,6 +1,5 @@
 <script lang="ts">
 	import BrandIcon from '../BrandIcon.svelte';
-	import { listenAuth } from '#lib/listen/auth.svelte.js';
 	import { listenPlayer, type ListenStatus } from '#lib/listen/player.svelte.js';
 
 	const p = listenPlayer;
@@ -153,17 +152,6 @@
 	{#if hint}
 		<p class="mt-3 text-sm text-ink-soft" role="status">{hint}</p>
 	{/if}
-
-	<p
-		class="mt-3 flex flex-wrap items-center gap-x-3 border-t border-rule pt-3 text-sm text-ink-soft"
-	>
-		{#if listenAuth.email}
-			<span class="min-w-0 truncate">Signed in as {listenAuth.email}</span>
-		{/if}
-		<button type="button" class="link font-medium text-ink" onclick={() => listenAuth.signOut()}>
-			Sign out
-		</button>
-	</p>
 </section>
 
 <style>

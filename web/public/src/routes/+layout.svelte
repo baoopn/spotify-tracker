@@ -10,6 +10,7 @@
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
 	import ThemeSwitcher from '#lib/components/ThemeSwitcher.svelte';
+	import AccountMenu from '#lib/components/account/AccountMenu.svelte';
 	import { CONTACT_URL } from '#lib/links.js';
 	import { theme } from '#lib/theme.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
@@ -86,6 +87,7 @@
 					</svg>
 					<span class="max-[22.5rem]:sr-only">Contact</span>
 				</a>
+				<AccountMenu />
 				<ThemeSwitcher />
 			</div>
 		</header>

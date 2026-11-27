@@ -131,6 +131,9 @@ func attachListen(a *admin.API, cfg config.API, st *store.Store, rdb *redis.Clie
 	if !cfg.Listen.Enabled || st == nil {
 		return nil
 	}
+	if loc := listen.NewLocator(cfg.Listen, rdb, st, log.With(slog.String("component", "listen"))); loc != nil {
+		a.AudioCheck = loc // left nil (not a typed nil) without storage
+	}
 	s := listen.NewSyncer(cfg.Listen, st, rdb, log.With(slog.String("component", "listen_sync")))
 	if s != nil {
 		a.AudioSync = s

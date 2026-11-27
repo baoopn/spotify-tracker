@@ -97,6 +97,27 @@ func scanTrackAudio(row pgx.Row) (TrackAudio, error) {
 	return a, err
 }
 
+// TrackAudioByIDs returns the audio files of the tracks in ids that have
+// one, in one query.
+func (q *Queries) TrackAudioByIDs(ctx context.Context, ids []string) (map[string]TrackAudio, error) {
+	out := make(map[string]TrackAudio, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := q.db.Query(ctx, `SELECT `+trackAudioColumns+` FROM track_audio WHERE track_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("track audio by ids: %w", err)
+	}
+	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (TrackAudio, error) { return scanTrackAudio(r) })
+	if err != nil {
+		return nil, fmt.Errorf("track audio by ids: %w", err)
+	}
+	for _, a := range got {
+		out[a.TrackID] = a
+	}
+	return out, nil
+}
+
 // TrackAudioFor returns the audio file of a track, or domain.ErrNotFound.
 func (q *Queries) TrackAudioFor(ctx context.Context, trackID string) (TrackAudio, error) {
 	a, err := scanTrackAudio(q.db.QueryRow(ctx, `SELECT `+trackAudioColumns+` FROM track_audio WHERE track_id = $1`, trackID))

@@ -6,6 +6,9 @@
 	import PlayerDevices from './PlayerDevices.svelte';
 	import PlayerQueue from './PlayerQueue.svelte';
 	import PlayerTransport from './PlayerTransport.svelte';
+	import AudioStatusBadge from '../AudioStatusBadge.svelte';
+	import { statusIds } from '#lib/audioStatus.js';
+	import { audioStatusQuery } from '#lib/listenAudio.js';
 	import { api, errorMessage } from '#lib/api.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
 	import { PlayerControl } from '#lib/player-control.svelte.js';
@@ -23,6 +26,10 @@
 	const st = $derived(ctl.state);
 	const item = $derived(st?.item ?? null);
 	const canControl = $derived(ctl.canControl);
+	// Listen-along audio for the song and the queue: one batched call, refetched
+	// when either changes (the key holds the ids) and every 60 s.
+	const audioIds = $derived(statusIds([item?.id, ...(extras.data?.queue ?? []).map((t) => t.id)]));
+	const audio = createQuery(() => audioStatusQuery(audioIds));
 	// The refresh button spins for its own refetch only, not for the polls.
 	const manual = new ManualRefetch(() => Promise.all([ctl.query.refetch(), extras.refetch()]));
 
@@ -162,6 +169,9 @@
 				</div>
 				{#if st}
 					<PlayerTransport {ctl} {st} />
+					{#if item && audio.data?.listen_enabled}
+						<div><AudioStatusBadge status={audio.data.data[item.id]} enabled /></div>
+					{/if}
 					{#if item}
 						<NowPlayingLyrics
 							trackId={item.id}
@@ -195,6 +205,7 @@
 					onplay={playTrack}
 					onplayfrom={playFromQueue}
 					onqueue={queueTrack}
+					audio={audio.data}
 				/>
 			{:else}
 				<p class="text-sm text-ink-soft">The queue and search appear once a device plays.</p>

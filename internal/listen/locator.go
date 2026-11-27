@@ -78,20 +78,38 @@ func (l *Locator) Locate(ctx context.Context, trackID string, remaining time.Dur
 			l.log.WarnContext(ctx, "audio lookup: reading track_audio failed; asking the bucket", logging.Err(err))
 		}
 	}
+	c, err := l.find(ctx, trackID)
+	if err != nil || c.Ext == "" {
+		return nil, err
+	}
+	return l.sign(trackID, c, remaining), nil
+}
+
+// Find reports whether the bucket has an audio file for trackID and its
+// extension, from the Redis lookup cache or HEAD requests (a found file is
+// recorded in track_audio). It skips track_audio itself and never signs a
+// URL. An error means the bucket could not answer.
+func (l *Locator) Find(ctx context.Context, trackID string) (ext string, found bool, err error) {
+	if !spotifyID.MatchString(trackID) {
+		return "", false, nil
+	}
+	c, err := l.find(ctx, trackID)
+	return c.Ext, c.Ext != "", err
+}
+
+// find reads the lookup cache, else asks the bucket once for all callers.
+func (l *Locator) find(ctx context.Context, trackID string) (cached, error) {
 	key := redisx.KeyListenAudioPrefix + trackID
 	var c cached
 	raw, err := l.cache.get(ctx, key)
-	if err != nil || json.Unmarshal(raw, &c) != nil {
-		v, err, _ := l.sf.Do(trackID, func() (any, error) { return l.lookup(ctx, trackID, key) })
-		if err != nil {
-			return nil, err
-		}
-		c = v.(cached)
+	if err == nil && json.Unmarshal(raw, &c) == nil {
+		return c, nil
 	}
-	if c.Ext == "" {
-		return nil, nil
+	v, err, _ := l.sf.Do(trackID, func() (any, error) { return l.lookup(ctx, trackID, key) })
+	if err != nil {
+		return cached{}, err
 	}
-	return l.sign(trackID, c, remaining), nil
+	return v.(cached), nil
 }
 
 // sign presigns the GET URL of a found file.

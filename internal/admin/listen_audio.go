@@ -34,6 +34,7 @@ func (a *API) mountListenAudio(r chi.Router) {
 	r.Get("/listen/audio", a.audioFiles)
 	r.Get("/listen/audio/missing", a.missingAudio)
 	r.Post("/listen/audio/sync", a.syncAudio)
+	r.Get("/listen/audio/status", a.audioStatusRoute)
 }
 
 func (a *API) audioDB() audioAdminStore {

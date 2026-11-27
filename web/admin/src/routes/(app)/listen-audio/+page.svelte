@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { FileAudio, ListX, RefreshCw } from '@lucide/svelte';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { page } from '$app/state';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import Segmented from '#lib/components/Segmented.svelte';
 	import { audioFilesQuery, missingAudioQuery } from '#lib/listenAudio.js';
@@ -11,7 +12,10 @@
 
 	const LIMIT = 25;
 
-	let tab = $state<'uploaded' | 'missing'>('uploaded');
+	// ?tab=missing opens the Missing tab (linked from the "No audio file" badge).
+	let tab = $state<'uploaded' | 'missing'>(
+		page.url.searchParams.get('tab') === 'missing' ? 'missing' : 'uploaded'
+	);
 	let q = $state('');
 	let offset = $state(0);
 	let missingQ = $state('');

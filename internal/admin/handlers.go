@@ -75,6 +75,9 @@ type Deps struct {
 	Presence ListenPresence
 	// AudioSync lists the audio bucket (nil when storage is not set up).
 	AudioSync AudioSyncer
+	// AudioCheck asks the bucket about one track (nil when storage is not
+	// set up).
+	AudioCheck AudioChecker
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.
@@ -91,23 +94,24 @@ type API struct {
 	Deps
 
 	// Test seams; nil uses Deps.
-	tops           topPlaylistStore
-	backups        backupStore
-	backupSettings backupSettingsStore
-	mcpSettings    mcpSettingsStore
-	lyrics         lyricsStore
-	spotifyAuth    func(context.Context) (settings.Spotify, error)
-	auditor        auditor
-	player         playerControl
-	invalidate     func(context.Context)
-	listeners      listenerAdminStore
-	clerkInv       listenerClerk
-	liveLookup     liveStore
-	audioStore     audioAdminStore
-	requests       requestAdminStore
-	storage        storageStore
-	storageMemo    storageMemo
-	now            func() time.Time
+	tops             topPlaylistStore
+	backups          backupStore
+	backupSettings   backupSettingsStore
+	mcpSettings      mcpSettingsStore
+	lyrics           lyricsStore
+	spotifyAuth      func(context.Context) (settings.Spotify, error)
+	auditor          auditor
+	player           playerControl
+	invalidate       func(context.Context)
+	listeners        listenerAdminStore
+	clerkInv         listenerClerk
+	liveLookup       liveStore
+	audioStore       audioAdminStore
+	audioStatusStore audioStatusStore
+	requests         requestAdminStore
+	storage          storageStore
+	storageMemo      storageMemo
+	now              func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).
 	live livePlayer
@@ -284,6 +288,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		"version":        a.Version,
 		"up_next":        a.upNext(ctx),
 		"listen_storage": a.listenStorage(ctx),
+		"listen_audio":   a.overviewAudio(ctx, nowPlaying),
 	})
 }
 

@@ -3,6 +3,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+	hasClerkSession,
+	initials,
+	safeRedirect,
+	signInTarget
+} from '../src/lib/account/redirect.ts';
+import {
 	DEFAULT_VOLUME,
 	DRIFT_MS,
 	IDLE_MAX_AGE_MS,
@@ -260,6 +266,51 @@ for (const [input, want] of presenceCases) {
 assert.equal(presenceTrackId('4uLU6hMCjMI75M1A2tKUQC'), '4uLU6hMCjMI75M1A2tKUQC');
 assert.equal(presenceTrackId('spotify:local:abc'), null);
 assert.equal(presenceTrackId(null), null);
+
+// safeRedirect: only same-origin relative paths (no open redirects).
+assert.equal(safeRedirect('/listen', null), '/listen');
+assert.equal(safeRedirect('/listen?x=1#a', null), '/listen?x=1#a');
+assert.equal(safeRedirect('/', null), '/');
+assert.equal(safeRedirect('//evil.example', null), null, 'protocol-relative');
+assert.equal(safeRedirect('https://evil.example', null), null, 'absolute URL');
+assert.equal(safeRedirect(String.raw`/\evil.example`, null), null, 'backslash');
+assert.equal(safeRedirect(String.raw`/ok\x`, null), null, 'any backslash');
+assert.equal(safeRedirect('', null), null, 'empty');
+assert.equal(safeRedirect(null, '/'), '/');
+assert.equal(safeRedirect(undefined, '/'), '/');
+assert.equal(safeRedirect('listen', null), null, 'relative without slash');
+assert.equal(safeRedirect('javascript:alert(1)', null), null);
+assert.equal(safeRedirect('/a\nb', null), null, 'control characters');
+assert.equal(safeRedirect('\t/listen', null), null);
+
+// signInTarget: /listen honours a safe redirect_url / return_to; else stays.
+assert.equal(signInTarget('/listen', ''), '/listen');
+assert.equal(signInTarget('/listen', '?redirect_url=%2Flisten%23history'), '/listen#history');
+assert.equal(signInTarget('/listen', '?return_to=/'), '/');
+assert.equal(signInTarget('/listen', '?redirect_url=https://evil.example'), '/listen');
+assert.equal(signInTarget('/listen', '?redirect_url=//evil.example'), '/listen');
+assert.equal(
+	signInTarget('/listen', '?__clerk_ticket=t&__clerk_status=sign_up'),
+	'/listen',
+	'invitation link'
+);
+assert.equal(signInTarget('/', ''), '/');
+assert.equal(signInTarget('/', '?tab=1'), '/?tab=1');
+
+// hasClerkSession: the readable __client_uat cookie, set and not "0".
+assert.equal(hasClerkSession(''), false);
+assert.equal(hasClerkSession('__client_uat=0'), false);
+assert.equal(hasClerkSession('__client_uat='), false);
+assert.equal(hasClerkSession('a=1; __client_uat=1764200000; b=2'), true);
+assert.equal(hasClerkSession('__client_uat_AbC12=1764200000'), true, 'suffixed name');
+assert.equal(hasClerkSession('__client_uat_AbC12=0; x=1'), false);
+assert.equal(hasClerkSession('x__client_uat=1'), false);
+
+// initials for the avatar without a photo.
+assert.equal(initials('Ada Lovelace', 'ada@example.com'), 'AL');
+assert.equal(initials('Ada', null), 'AD');
+assert.equal(initials('', 'ada@example.com'), 'A');
+assert.equal(initials(null, null), '?');
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

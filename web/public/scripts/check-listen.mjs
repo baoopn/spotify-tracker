@@ -8,6 +8,7 @@ import {
 	HARD_SEEK_MS,
 	JITTER_MS,
 	RATE_MIN_INTERVAL_MS,
+	SETTLE_MS,
 	SOFT_START_MS,
 	SOFT_STOP_MS,
 	estimateAt,
@@ -295,6 +296,21 @@ assert.equal(safeRedirect('listen', null), null, 'relative without slash');
 assert.equal(safeRedirect('javascript:alert(1)', null), null);
 assert.equal(safeRedirect('/a\nb', null), null, 'control characters');
 assert.equal(safeRedirect('\t/listen', null), null);
+// Dot segments that normalize into a protocol-relative "//evil.example".
+assert.equal(safeRedirect('/..//evil.example', null), null, 'dot segment');
+assert.equal(safeRedirect('/%2e%2e//evil.example', null), null, 'encoded dot segment');
+assert.equal(safeRedirect('/a/../..//evil.example', null), null, 'nested dot segments');
+assert.equal(safeRedirect('/%2E%2E//evil.example?x=1', null), null, 'upper-case encoding');
+// The admin has its own sign-in.
+assert.equal(safeRedirect('/admin', null), null, '/admin');
+assert.equal(safeRedirect('/admin/listeners', null), null, '/admin/...');
+assert.equal(safeRedirect('/ADMIN', null), null, 'any case');
+assert.equal(safeRedirect('/listen/../admin', null), null, 'dot segment into /admin');
+assert.equal(safeRedirect('/administrator', null), '/administrator', 'only the /admin tree');
+// Normalized output.
+assert.equal(safeRedirect('/a/./b/../listen?x=1#h', null), '/a/listen?x=1#h');
+assert.equal(signInTarget('/listen', '?redirect_url=%2F..%2F%2Fevil.example'), '/listen');
+assert.equal(signInTarget('/listen', '?redirect_url=/admin'), '/listen');
 
 // signInTarget: /listen honours a safe redirect_url / return_to; else stays.
 assert.equal(signInTarget('/listen', ''), '/listen');
@@ -384,6 +400,16 @@ near(rateFor(-30), 1.01, 'rounded to 0.005 (1.0075)');
 	const first = r.step(-400, false, 1000).rate;
 	r.step(-1000, false, 1100);
 	assert.equal(r.rate, first, 'no change within 500 ms');
+
+	// Right after a seek: nothing counted (the seek lead must not be corrected).
+	const s = new DriftState();
+	assert.deepEqual(s.step(300, false, 0, SETTLE_MS - 1), { seek: false, rate: 1 });
+	assert.equal(s.ema, null, 'not counted inside the settle window');
+	// A big gap waits for the seek cooldown, then seeks.
+	const cd = new DriftState();
+	assert.equal(cd.step(5000, false, 0, SEEK_COOLDOWN_MS - 1).seek, false, 'in cooldown');
+	cd.reset();
+	assert.equal(cd.step(5000, false, 0, SEEK_COOLDOWN_MS).seek, true, 'cooldown over');
 }
 
 // smoothTarget: keep the running estimate for jitter under 250 ms.
@@ -450,6 +476,13 @@ near(rateFor(-30), 1.01, 'rounded to 0.005 (1.0075)');
 	n.target(np(10_000, 0, null), T, 200_000);
 	assert.equal(n.target(np(11_100, 1000, null), T + 1000, 200_000), 11_000);
 	assert.equal(n.seekPending, false);
+
+	// Only one place seeks: any seek (the player's too) clears the pending one.
+	const C = '2026-11-27T12:00:05.000Z';
+	assert.equal(c.target(np(20_000, 3000, C), T + 3000, 200_000), 20_000);
+	assert.equal(c.seekPending, true);
+	c.noteSeek();
+	assert.equal(c.seekPending, false, 'cleared by the player seek');
 }
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears

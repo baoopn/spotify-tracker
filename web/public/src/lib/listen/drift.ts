@@ -14,7 +14,7 @@
 //   resumed) skips the jitter filter, resets the EMA and seeks at once.
 
 import { estimatePositionMs } from '../playback.ts';
-import { IDLE_MAX_AGE_MS, seekTarget, type SyncSnapshot } from './sync.ts';
+import { IDLE_MAX_AGE_MS, SEEK_COOLDOWN_MS, seekTarget, type SyncSnapshot } from './sync.ts';
 
 export const MEASURE_MS = 250;
 export const HARD_SEEK_MS = 1500;
@@ -26,6 +26,13 @@ const RATE_DIVISOR_MS = 4000;
 const RATE_STEP = 0.005;
 export const RATE_MIN_INTERVAL_MS = 500;
 export const JITTER_MS = 250;
+/**
+ * Right after a seek the audio sits SEEK_LEAD_MS ahead while it starts: no
+ * drift is counted in this window, so the soft correction never fights the lead.
+ */
+export const SETTLE_MS = 2000;
+/** A "waiting" this soon after our own seek is the seek itself, not a stall. */
+const SEEK_WAIT_MS = 1000;
 const HAVE_FUTURE_DATA = 3;
 
 /** Behind (negative drift) speeds up, ahead slows down; ±5 %, in 0.005 steps. */
@@ -51,16 +58,22 @@ export class DriftState {
 
 	/**
 	 * One measure. `drift` null means nothing to follow (not joined, paused,
-	 * no target): back to rate 1 at once.
+	 * no target): back to rate 1 at once. Within SETTLE_MS of a seek nothing is
+	 * counted; a hard seek waits for SEEK_COOLDOWN_MS since the last one.
 	 */
-	step(driftMs: number | null, buffering: boolean, nowMs: number): DriftStep {
-		if (driftMs == null || buffering || !Number.isFinite(driftMs)) {
+	step(
+		driftMs: number | null,
+		buffering: boolean,
+		nowMs: number,
+		msSinceSeek = Infinity
+	): DriftStep {
+		if (driftMs == null || buffering || !Number.isFinite(driftMs) || msSinceSeek < SETTLE_MS) {
 			this.reset();
 			return this.#setRate(1, nowMs, true);
 		}
 		this.ema = this.ema == null ? driftMs : this.ema + EMA_ALPHA * (driftMs - this.ema);
 		const gap = Math.abs(this.ema);
-		if (gap > HARD_SEEK_MS) {
+		if (gap > HARD_SEEK_MS && msSinceSeek >= SEEK_COOLDOWN_MS) {
 			this.reset();
 			return { ...this.#setRate(1, nowMs, true), seek: true };
 		}
@@ -145,8 +158,21 @@ export class DriftController {
 	#est: TargetEstimate | null = null;
 	#stalled = false;
 	#reseek = false;
+	#seekAt = -Infinity;
 	/** Bao acted (a new changed_at): seek on the next measure. */
 	#ownerAction = false;
+
+	/**
+	 * Any seek happened (ours or the player's: join, resume, the 2 s backstop):
+	 * the one pending seek is done, and its "waiting" is not a stall.
+	 */
+	noteSeek(nowMs = Date.now()): void {
+		this.#seekAt = nowMs;
+		this.#ownerAction = false;
+		this.#reseek = false;
+		this.#stalled = false;
+		this.#state.reset();
+	}
 
 	/** Bao acted on this song: the next measure seeks (also for tests). */
 	get seekPending(): boolean {
@@ -181,8 +207,11 @@ export class DriftController {
 		const keepPitch = el as HTMLAudioElement & { webkitPreservesPitch?: boolean };
 		el.preservesPitch = true;
 		if ('webkitPreservesPitch' in keepPitch) keepPitch.webkitPreservesPitch = true;
-		const onReset = () => this.#state.reset();
-		const onWaiting = () => (this.#stalled = true);
+		const onSeeking = () => this.noteSeek();
+		const onWaiting = () => {
+			if (el.seeking || Date.now() - this.#seekAt < SEEK_WAIT_MS) return;
+			this.#stalled = true;
+		};
 		const onPlaying = () => {
 			if (this.#stalled) this.#reseek = true; // a stall that recovered
 			this.#stalled = false;
@@ -194,7 +223,7 @@ export class DriftController {
 			this.#state.reset();
 		};
 		const events: [string, () => void][] = [
-			['seeking', onReset],
+			['seeking', onSeeking],
 			['waiting', onWaiting],
 			['playing', onPlaying],
 			['emptied', onEmptied]
@@ -202,17 +231,20 @@ export class DriftController {
 		for (const [t, fn] of events) el.addEventListener(t, fn);
 		const timer = setInterval(() => {
 			const target = el.paused ? null : follow();
+			// Paused or not joined: a pending owner seek is moot (resume seeks itself).
+			if (target == null) this.#ownerAction = false;
 			const buffering = el.readyState < HAVE_FUTURE_DATA || el.seeking || this.#stalled;
-			if (target != null && (this.#ownerAction || (!buffering && this.#reseek))) {
-				this.#ownerAction = false;
-				this.#reseek = false;
+			const sinceSeek = Date.now() - this.#seekAt;
+			const reseekDue = this.#reseek && !buffering && sinceSeek >= SEEK_COOLDOWN_MS;
+			if (target != null && (this.#ownerAction || reseekDue)) {
 				this.#seek(el, target, onSeek);
 				return;
 			}
 			const r = this.#state.step(
 				target == null ? null : el.currentTime * 1000 - target,
 				buffering,
-				Date.now()
+				Date.now(),
+				sinceSeek
 			);
 			if (el.playbackRate !== r.rate) el.playbackRate = r.rate;
 			if (r.seek && target != null) this.#seek(el, target, onSeek);
@@ -226,6 +258,7 @@ export class DriftController {
 
 	#seek(el: HTMLAudioElement, target: number, onSeek: () => void): void {
 		el.currentTime = seekTarget(target, el.duration * 1000) / 1000;
+		this.noteSeek();
 		onSeek();
 	}
 }

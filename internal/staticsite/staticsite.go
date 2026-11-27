@@ -26,6 +26,9 @@ type Options struct {
 	SPA bool
 	// Extra CSP sources per directive, e.g. {"script-src": "https://x"}.
 	ExtraCSP map[string]string
+	// PageCSP adds CSP sources for one prerendered page, keyed by its file
+	// name in the build (e.g. "listen.html"), on top of ExtraCSP.
+	PageCSP map[string]map[string]string
 	// Placeholder is served as index.html when the build is missing.
 	Placeholder string
 }
@@ -37,6 +40,9 @@ type Site struct {
 	index []byte
 	nf    []byte
 	csp   string
+	// pages is the CSP of each prerendered page other than index.html and
+	// 404.html, from that page's own inline scripts.
+	pages map[string]string
 	files http.Handler
 }
 
@@ -52,14 +58,42 @@ func New(dist fs.FS, opts Options) *Site {
 		s.nf = nf
 	}
 	s.csp = BuildCSP(append(append([]byte{}, idx...), s.nf...), opts.ExtraCSP)
+	s.pages = map[string]string{}
+	_ = fs.WalkDir(dist, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path.Ext(name) != ".html" || name == "index.html" || name == "404.html" {
+			return nil
+		}
+		if body, err := fs.ReadFile(dist, name); err == nil {
+			s.pages[name] = BuildCSP(body, merge(opts.ExtraCSP, opts.PageCSP[name]))
+		}
+		return nil
+	})
 	return s
 }
 
-func (s *Site) html(w http.ResponseWriter, status int, body []byte) {
+// merge joins the sources of a and b per directive.
+func merge(a, b map[string]string) map[string]string {
+	out := make(map[string]string, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		if v == "" {
+			continue
+		}
+		if out[k] != "" {
+			v = out[k] + " " + v
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func (s *Site) html(w http.ResponseWriter, status int, body []byte, csp string) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
-	h.Set("Content-Security-Policy", s.csp)
+	h.Set("Content-Security-Policy", csp)
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -78,7 +112,7 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, s.opts.Prefix)
 	p = strings.TrimPrefix(p, "/")
 	if p == "" || p == "index.html" {
-		s.html(w, http.StatusOK, s.index)
+		s.html(w, http.StatusOK, s.index, s.csp)
 		return
 	}
 	clean := path.Clean(p)
@@ -95,7 +129,11 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(cand, ".html") {
 			body, err := fs.ReadFile(s.dist, cand)
 			if err == nil {
-				s.html(w, http.StatusOK, body)
+				csp, ok := s.pages[cand]
+				if !ok {
+					csp = s.csp
+				}
+				s.html(w, http.StatusOK, body, csp)
 				return
 			}
 		}
@@ -111,7 +149,7 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.opts.SPA && path.Ext(clean) == "" {
-		s.html(w, http.StatusOK, s.index)
+		s.html(w, http.StatusOK, s.index, s.csp)
 		return
 	}
 	s.notFound(w, r)
@@ -119,7 +157,7 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Site) notFound(w http.ResponseWriter, r *http.Request) {
 	if s.nf != nil {
-		s.html(w, http.StatusNotFound, s.nf)
+		s.html(w, http.StatusNotFound, s.nf, s.csp)
 		return
 	}
 	http.NotFound(w, r)
@@ -147,6 +185,7 @@ func BuildCSP(html []byte, extra map[string]string) string {
 		{"script-src", strings.Join(script, " ")},
 		{"style-src", "'self' 'unsafe-inline'"},
 		{"img-src", "'self' data: blob: https://i.scdn.co https://*.scdn.co https://*.spotifycdn.com"},
+		{"media-src", "'self'"},
 		{"font-src", "'self' data:"},
 		{"connect-src", "'self'"},
 		{"frame-src", "'none'"},

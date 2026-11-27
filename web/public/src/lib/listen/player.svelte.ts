@@ -9,6 +9,7 @@ import type { NowPlaying } from '../types';
 import { listenAuth } from './auth.svelte';
 import { fetchListenAudio, postListenProgress } from './api';
 import { ProgressTracker } from './progress';
+import { presenceTrackId } from './presence';
 import {
 	ACCESS_CHECK_MS,
 	CHECK_MS,
@@ -79,8 +80,8 @@ class ListenPlayer {
 	#timers = new Set<ReturnType<typeof setTimeout>>();
 	#loop: ReturnType<typeof setInterval> | null = null;
 	#accessLoop: ReturnType<typeof setInterval> | null = null;
-	#progress = new ProgressTracker(async (track_id, heard_ms, keepalive) =>
-		postListenProgress(await listenAuth.getToken(), { track_id, heard_ms }, keepalive)
+	#progress = new ProgressTracker((track_id, heard_ms, keepalive) =>
+		listenAuth.withToken(keepalive, (t) => postListenProgress(t, { track_id, heard_ms }, keepalive))
 	);
 
 	/**
@@ -110,7 +111,7 @@ class ListenPlayer {
 			on('error', () => this.#onError()),
 			// History: only time heard while joined and in sync counts.
 			this.#progress.attach(el, () =>
-				this.joined && this.status === 'in-sync' ? (this.#trackId ?? null) : null
+				this.joined && this.status === 'in-sync' ? presenceTrackId(this.#trackId) : null
 			)
 		];
 		this.#loop = setInterval(() => this.#tick(), CHECK_MS);

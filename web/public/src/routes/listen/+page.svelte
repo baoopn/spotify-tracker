@@ -34,8 +34,8 @@
 	});
 
 	// "Listening now" in the admin: on load, on every change and every 30 s.
-	const presence = new PresencePinger(async (body, keepalive) =>
-		postListenPresence(await listenAuth.getToken(), body, keepalive)
+	const presence = new PresencePinger((body, keepalive) =>
+		listenAuth.withToken(keepalive, (t) => postListenPresence(t, body, keepalive))
 	);
 	onMount(() => presence.start());
 	const trackId = $derived(now.data?.track?.id ?? null);

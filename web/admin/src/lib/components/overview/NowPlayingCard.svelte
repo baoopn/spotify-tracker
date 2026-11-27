@@ -6,6 +6,10 @@
 	import AlbumArt from '../AlbumArt.svelte';
 	import RelTime from '../RelTime.svelte';
 	import NowPlayingLyrics from './NowPlayingLyrics.svelte';
+	import AudioStatusBadge from '../AudioStatusBadge.svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { statusIds } from '#lib/audioStatus.js';
+	import { audioStatusQuery } from '#lib/listenAudio.js';
 	import { secondClock } from '#lib/clock.svelte.js';
 	import { artistNames, duration, releaseYear } from '#lib/format.js';
 	import { NowPlayingStream, snapshot } from '#lib/now-playing.svelte.js';
@@ -36,6 +40,8 @@
 	const frozen = $derived(paused && track && paused.trackId === track.id ? paused : null);
 	const playing = $derived(!!snap.np?.is_playing && !!track && !frozen);
 	const durationMs = $derived(track?.duration_ms ?? 0);
+	// Listen-along audio for this song: refetched on a new track and every 60 s.
+	const audio = createQuery(() => audioStatusQuery(statusIds([track?.id])));
 	const progress = $derived.by(() => {
 		if (frozen) return Math.min(durationMs || Infinity, frozen.progressMs);
 		const base = snap.np?.progress_ms ?? 0;
@@ -91,6 +97,11 @@
 						{track.album.name}{#if track.album.release_date}
 							· {releaseYear(track.album.release_date)}{/if}
 					</p>
+				{/if}
+				{#if audio.data?.listen_enabled}
+					<div class="mt-2">
+						<AudioStatusBadge status={audio.data.data[track.id]} enabled />
+					</div>
 				{/if}
 
 				<!-- Thin ink progress line with a dot -->

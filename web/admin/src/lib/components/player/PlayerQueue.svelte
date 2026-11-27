@@ -8,6 +8,8 @@
 	import { artistNames, duration } from '#lib/format.js';
 	import { queries } from '#lib/queries.js';
 	import type { PlayerTrack } from '#lib/types.js';
+	import type { AudioStatusList } from '#lib/listenAudio.js';
+	import AudioStatusBadge from '../AudioStatusBadge.svelte';
 
 	// The next tracks of the Spotify queue and a search to add more. The Web
 	// API cannot remove or reorder queue items, so neither is offered.
@@ -16,7 +18,8 @@
 		disabled,
 		onplay,
 		onplayfrom,
-		onqueue
+		onqueue,
+		audio
 	}: {
 		/** undefined while loading; null when Spotify refused the queue. */
 		queue: PlayerTrack[] | null | undefined;
@@ -26,6 +29,8 @@
 		/** Play the queue from position i on. */
 		onplayfrom: (i: number) => void;
 		onqueue: (t: PlayerTrack) => void;
+		/** Listen-along audio per track (queue rows get a small marker). */
+		audio?: AudioStatusList;
 	} = $props();
 
 	const uid = $props.id();
@@ -37,7 +42,16 @@
 	<li class="flex min-w-0 items-center gap-3 py-2">
 		<AlbumArt src={t.cover_image_url} size={40} />
 		<div class="min-w-0 flex-1">
-			<p class="truncate text-sm font-medium text-ink" dir="auto" title={t.name}>{t.name}</p>
+			<p class="flex min-w-0 items-center gap-1.5 text-sm font-medium text-ink">
+				<span class="truncate" dir="auto" title={t.name}>{t.name}</span>
+				{#if index !== null}
+					<AudioStatusBadge
+						status={audio?.data[t.id]}
+						enabled={audio?.listen_enabled ?? false}
+						compact
+					/>
+				{/if}
+			</p>
 			<p class="truncate text-xs text-ink-soft" dir="auto">
 				{artistNames(t.artists)}<span class="font-mono">{` · ${duration(t.duration_ms)}`}</span>
 			</p>

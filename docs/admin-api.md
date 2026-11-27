@@ -247,6 +247,66 @@ Audit actions: `mcp.settings_updated` (`admin_tools_enabled`),
 `mcp.token_generated` (`prefix`, `rotated`), `mcp.token_revoked` (`prefix`).
 The token is never logged or audited.
 
+## Listeners
+
+The Listeners page manages who may listen along at `/listen` (see
+[architecture.md](architecture.md#listen-along)). Inviting someone without a
+Clerk account sends a Clerk invitation email; its link lands on `listen_url`.
+Someone who already has an account gets no email: they sign in at `/listen`.
+The `listeners` table decides access, so a revoke takes effect on the
+listener's next request. None of these routes are reachable through MCP.
+
+```ts
+type Listener = {
+  id: number
+  email: string                       // lower case
+  status: "invited" | "active" | "revoked"
+  clerk_user_id: string | null
+  has_account: boolean                // clerk_user_id is set
+  invited_by: string                  // the admin's email
+  invited_at: string
+  accepted_at: string | null          // first signed-in request
+  revoked_at: string | null
+  last_seen_at: string | null         // updated at most every 5 minutes
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listeners` | – | `{ data: Listener[], listen_enabled: boolean, audio_configured: boolean, listen_url: string }`: active, then invited, then revoked, newest invitation first (at most 500) |
+| POST | `/admin/api/listeners` | `{ "email": string }` | `201 { data: Listener, invitation_sent: boolean }` (`false` for an existing account) |
+| POST | `/admin/api/listeners/{id}/resend` | – | `{ data: Listener }`: revokes the old Clerk invitation and sends a new one |
+| POST | `/admin/api/listeners/{id}/revoke` | – | `{ data: Listener, clerk_cleanup: "ok" \| "failed" \| "skipped" }` |
+
+`listen_enabled` mirrors `LISTEN_ENABLED`, `audio_configured` reports whether
+the S3 settings are complete, and `listen_url` is `PUBLIC_URL + "/listen"`.
+
+Errors:
+
+- Invite: `422 validation_failed` with `fields.email` "must be a valid email
+  address" (a bare address, at most 254 characters); `409 listener_exists`
+  when a live row has this email (checked before Clerk is called);
+  `409 clerk_rejected` when Clerk refuses the request (its first message);
+  `503 clerk_unavailable` on a network error, 5xx or 429 from Clerk.
+- Resend: `404 not_found`; `409 not_pending` when the row is not `invited`;
+  `409 no_invitation` ("This person already has an account. Ask them to sign
+  in at /listen.") for an existing account; `409 clerk_rejected` /
+  `503 clerk_unavailable` as above.
+- Revoke: `404 not_found`; `409 already_revoked`. The row is revoked first;
+  then a pending invitation is revoked in Clerk and the `listener` role is
+  removed from the Clerk user (an admin's role is never touched).
+  `clerk_cleanup` is `failed` when one of those Clerk calls failed (the
+  revoke still holds), `skipped` when there was nothing to clean up.
+- `{id}` must be a positive integer, else `404 not_found`.
+
+An existing account gets the Clerk role `listener` only when it has no role.
+Inviting a revoked email again creates a new row.
+
+Audit actions: `listener.invited` (`id`, `email`, `existing_account`),
+`listener.resent` (`id`, `email`), `listener.revoked` (`id`, `email`,
+`clerk_cleanup`), `listener.accepted` (`id`, `email`, `clerk_user_id`; the
+actor is the listener's email). Refused listeners are logged, not audited.
+
 ## Data
 
 | Method | Path | Query | Response |
@@ -539,7 +599,8 @@ time-zone handling as the API analytics):
 `enrichment.requeued`, `playlist.refreshed`, `top_playlists.run`,
 `top_playlists.generated`, `top_playlists.regenerated`, `top_playlists.hidden`,
 `top_playlists.shown`, `backups.run_requested`, `backups.refresh_requested`,
-`backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change).
+`backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change),
+`listener.invited`, `listener.resent`, `listener.revoked`, `listener.accepted` (see [Listeners](#listeners)).
 
 ## Playlists
 

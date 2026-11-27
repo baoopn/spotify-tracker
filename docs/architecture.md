@@ -727,6 +727,81 @@ token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
 is written to `admin_audit`.
 
+## Listen along
+
+Invited people can hear the song Bao is playing, in sync, at `/listen`. The
+feature is off unless `LISTEN_ENABLED=true`. It needs the Clerk settings of the
+admin dashboard, and audio files in an S3-compatible bucket (AWS S3,
+Cloudflare R2, MinIO). The page has no link from `/`.
+
+**Access.** The admin invites people by email on the Listeners page
+(`docs/admin-api.md`). A person without a Clerk account gets a Clerk
+invitation email whose link lands on `/listen`; a person who already has an
+account just signs in there. The `listeners` table decides access, not Clerk:
+a row is `invited`, then `active` after the first signed-in request, or
+`revoked`. Every request to `/api/v1/listen/me` and `/api/v1/listen/audio`
+reads the row again, so a revoke takes effect on the next request. Admins can
+always listen along. The Clerk role `listener` (`public_metadata.role`) is set
+on invited accounts as a hint only: it never grants admin access, and
+`ADMIN_ROLE=listener` is rejected at startup.
+
+**Audio files.** The file of a track is
+`{S3_PREFIX}{spotify_track_id}.{ext}`, with `ext` tried in the order of
+`LISTEN_AUDIO_EXTENSIONS` (default `mp3,m4a,flac,ogg,opus`). The API sends a
+presigned `HEAD` request per extension (2 s each, 6 s in all, one lookup for
+all callers) and caches the answer in Redis: the found extension for an hour,
+"no file" for five minutes. Errors are not cached. The API signs requests
+itself (AWS Signature Version 4, query parameters), so the browser fetches the
+file straight from the bucket. A URL is for the current track only and lives
+for `LISTEN_AUDIO_URL_TTL` (default 10 minutes) or until the song ends plus a
+minute, whichever is longer, at most an hour. Upload the files yourself; the
+API only reads them.
+
+**Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
+so the MCP server cannot reach them):
+
+- `GET /api/v1/listen/config`: `{ enabled, clerk_publishable_key }`, no sign-in.
+- `GET /api/v1/listen/me`: the signed-in listener `{ email, name, image_url, admin }`.
+- `GET /api/v1/listen/audio`: `{ track_id, url, expires_at, content_type, reason }`.
+  `reason` is `null` when there is a URL, else `idle` (nothing playing, same
+  rules as the public lyrics), `not_found` (no file), `storage_unconfigured`
+  or `unavailable` (the bucket did not answer; ask again in 30 s). A paused
+  track still gets a URL.
+
+With listen along off, `/me` and `/audio` answer 404 `listen_disabled`;
+without Clerk they answer 503 `listen_unavailable`. A person who is not
+invited gets 403 `forbidden`. These refusals are logged, not audited.
+
+**The page.** `/listen` signs people in with Clerk (an invitation link opens
+the sign-up form). Then it shows a Join button and a small player bar above
+the usual now-playing card and lyrics. Join starts one `<audio>` element and
+keeps it in step with the snapshot from the public SSE stream:
+
+- It plays when Bao plays and pauses when Bao pauses. When a song ends it
+  waits for the next one.
+- It checks the drift every second. When the audio is more than 2 s off, it
+  seeks to the estimated position plus 0.3 s, at most once every 3 s.
+- On a track change it stops the old file and asks for the new URL. If the
+  answer names a different track (the snapshot moved first), it asks again
+  after 1.5 s, up to three times.
+- It asks for a fresh URL before playing again when the old one ends within
+  a minute. On an audio error it asks again, up to three times per track.
+- There are no seek, skip or pause controls. The listener sets the volume
+  and mute (kept in the browser). Pausing from the system media controls
+  while Bao plays leaves the session; the page shows Join again.
+- Audio keeps playing in a background tab.
+- Every 60 s the page checks `/api/v1/listen/me`. On 403 it stops the audio
+  and shows "Your access to listen along has ended".
+
+When there is no audio (no file, storage not set up, bucket down) or access
+fails, the now-playing card and lyrics still follow over the public SSE
+stream, and the player bar shows a short note.
+
+**CSP.** The public site's CSP adds `media-src 'self'`. `/listen` has its own
+CSP: the hashes of its own inline scripts, Clerk's hosts for scripts, frames
+and requests, `https://img.clerk.com` for images and the bucket origin for
+`media-src`.
+
 ## MCP server
 
 `cmd/api` also serves a remote [MCP](https://modelcontextprotocol.io) server at
@@ -869,6 +944,17 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   only prefetched is not found on the public `GET /api/v1/tracks/{id}`
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
+- Listen along (`/listen`): the `listeners` table, not the Clerk role,
+  decides access, and it is read on every request, so a revoke cuts access on
+  the next request. An audio URL that was already issued keeps working until
+  it expires: at most `LISTEN_AUDIO_URL_TTL` or the rest of the song plus a
+  minute, never more than an hour. The page checks access every 60 s and stops
+  the audio on 403. The `listener` role never grants admin access.
+- Audio URLs are presigned for the current track only, so listeners cannot
+  ask for other songs. Presigned URLs carry a credential: they are never
+  logged, and lookup errors drop the URL. The S3 keys are read once
+  (`unset`) and stay in the API. Give them read access to the audio prefix
+  only (plus list access, so a missing file answers 404 instead of 403).
 - Lyrics translation sends the lyrics of played and upcoming songs (title, artist and
   text) to the Anthropic API. The key is read once from `ANTHROPIC_API_KEY`
   (removed from the environment), lives only in the SDK client, and is never

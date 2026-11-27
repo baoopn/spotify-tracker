@@ -79,6 +79,9 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/playlists/recent?limit=` | Public playlists recently played from (name, cover, owner, plays). |
 | `GET /api/v1/playlists/top?limit=` | Auto-generated "Top 50" playlists per `week` / `month` / `year`, newest first; `limit` (1–24, default 6) older entries per kind; only the newest carries its `tracks`. Each entry has `live` (the playlist of a period still running, still updating) and `refreshed_at` (UTC or `null`). |
 | `POST /api/v1/events` | Cookieless page-view beacon from the public page (see `docs/admin-api.md`). |
+| `GET /api/v1/listen/config` | Listen along: `{ enabled, clerk_publishable_key }` for the `/listen` page. |
+| `GET /api/v1/listen/me` | Listen along, signed-in invited listeners only (Clerk Bearer token): `{ email, name, image_url, admin }`. Not in MCP. |
+| `GET /api/v1/listen/audio` | Listen along, signed-in invited listeners only: a short-lived presigned URL for the audio of the track playing now, `{ track_id, url, expires_at, content_type, reason }`. Not in MCP (see `docs/architecture.md`). |
 
 **Top 50 playlists.** When a week (ISO, Monday–Sunday), month or year ends, the
 API creates a public Spotify playlist of the 50 most-played tracks of that

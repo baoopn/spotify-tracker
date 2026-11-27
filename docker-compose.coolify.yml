@@ -22,6 +22,9 @@
 #     read-only admin tools of /mcp; normally generate one in Settings -> MCP)
 #   ANTHROPIC_API_KEY + TRANSLATE_ENABLED=true (optional: Claude lyrics
 #     translation; uses Anthropic API credit, see docs/deployment.md)
+#   LISTEN_ENABLED=true + S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID,
+#     S3_SECRET_ACCESS_KEY (optional: listen along at /listen, see
+#     docs/architecture.md)
 # Register <api domain>/admin/api/spotify/callback as a Redirect URI in the
 # Spotify Developer Dashboard.
 # Set the API domain on the "api" service (e.g. https://spotify-api.example.com);
@@ -170,6 +173,19 @@ services:
       - ADMIN_ALLOWED_EMAILS=${ADMIN_ALLOWED_EMAILS:-}
       - ADMIN_ALLOWED_USER_IDS=${ADMIN_ALLOWED_USER_IDS:-}
       - ADMIN_ROLE=${ADMIN_ROLE:-admin}
+      # Listen along at /listen: invited people hear the song playing now, from
+      # {S3_PREFIX}{spotify_track_id}.{ext} in an S3-compatible bucket. Needs the
+      # Clerk admin settings; invite people in the admin (Listeners).
+      - LISTEN_ENABLED=${LISTEN_ENABLED:-false}
+      - LISTEN_AUDIO_URL_TTL=${LISTEN_AUDIO_URL_TTL:-10m}
+      - LISTEN_AUDIO_EXTENSIONS=${LISTEN_AUDIO_EXTENSIONS:-mp3,m4a,flac,ogg,opus}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_PREFIX=${S3_PREFIX:-}
+      - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
       # One-off legacy import (enriched features only): set these, run
       # `/usr/local/bin/importer -dry-run` then `/usr/local/bin/importer` in the
       # api container terminal, then remove them again.

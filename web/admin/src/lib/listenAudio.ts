@@ -115,3 +115,30 @@ export type ListenStorage = {
 export function percent(part: number, total: number): number {
 	return total > 0 ? Math.round((Math.min(part, total) / total) * 100) : 0;
 }
+
+/** One track's listen-along audio file (GET /listen/audio/status). */
+export type AudioStatusEntry = {
+	available: boolean;
+	ext: string | null;
+	size_bytes: number | null;
+};
+
+export type AudioStatusList = {
+	data: Record<string, AudioStatusEntry>;
+	listen_enabled: boolean;
+	audio_configured: boolean;
+};
+
+/**
+ * One batched status call for `ids` (see audioStatus.ts statusIds): refetched
+ * when the ids change (a new song or queue) and every 60 s. Idle without ids.
+ */
+export function audioStatusQuery(ids: string[]) {
+	return queryOptions({
+		queryKey: [...audioKeys.all, 'status', ids.join(',')] as const,
+		queryFn: ({ signal }) =>
+			request<AudioStatusList>(`${BASE}/status`, { query: { ids: ids.join(',') }, signal }),
+		enabled: ids.length > 0,
+		refetchInterval: 60_000
+	});
+}

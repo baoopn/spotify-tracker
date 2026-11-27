@@ -126,3 +126,53 @@ export function parseVolume(raw: string | null | undefined): number {
 	if (!Number.isFinite(v)) return DEFAULT_VOLUME;
 	return Math.min(1, Math.max(0, v));
 }
+
+export type ListenStatus =
+	| 'waiting'
+	| 'loading'
+	| 'in-sync'
+	| 'paused-by-owner'
+	| 'no-audio'
+	| 'cant-play'
+	| 'ended'
+	| 'access-ended'
+	/** Listen along was switched off on the server. */
+	| 'off';
+
+/** HTMLMediaElement.readyState values. */
+const HAVE_METADATA = 1;
+const HAVE_FUTURE_DATA = 3;
+
+export type StatusInput = {
+	current: ListenStatus;
+	hasTrack: boolean;
+	targetMs: number | null;
+	ownerPlaying: boolean;
+	joined: boolean;
+	hasSource: boolean;
+	paused: boolean;
+	readyState: number;
+	driftMs: number;
+};
+
+/** The status after a sync tick. Not joined, "in-sync" means ready to join. */
+export function nextStatus(s: StatusInput): ListenStatus {
+	if (s.current === 'no-audio' || s.current === 'cant-play') return s.current;
+	if (!s.hasTrack || s.targetMs == null) return 'waiting';
+	if (s.current === 'ended' && s.paused) return 'ended';
+	if (!s.ownerPlaying) return 'paused-by-owner';
+	if (!s.hasSource || !s.joined) {
+		return s.hasSource && s.readyState >= HAVE_METADATA ? 'in-sync' : 'loading';
+	}
+	return !s.paused && s.readyState >= HAVE_FUTURE_DATA && s.driftMs < DRIFT_MS
+		? 'in-sync'
+		: 'loading';
+}
+
+/**
+ * Where Join starts: always Bao's live position, never where the listener
+ * stopped (stopping is not a pause). Null when there is nothing to follow.
+ */
+export function joinSeekMs(target: number | null, audioDurationMs: number): number | null {
+	return target == null ? null : seekTarget(target, audioDurationMs);
+}

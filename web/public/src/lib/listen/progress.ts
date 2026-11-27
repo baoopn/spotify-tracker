@@ -65,6 +65,8 @@ export class ProgressTracker {
 			}
 			this.#pending += playedDelta(this.#last, t);
 			this.#last = t;
+			// Timers in hidden, muted tabs can run once a minute: flush from here too.
+			if (this.#pending >= FLUSH_MS) this.flush();
 		};
 		const onBreak = () => {
 			this.#last = null;

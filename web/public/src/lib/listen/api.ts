@@ -8,7 +8,8 @@ import type {
 	ListenHistoryPage,
 	ListenMe,
 	ListenPresence,
-	ListenProgress
+	ListenProgress,
+	ListenRequestInput
 } from './types';
 
 export const LISTEN_API = {
@@ -17,14 +18,33 @@ export const LISTEN_API = {
 	audio: '/api/v1/listen/audio',
 	progress: '/api/v1/listen/progress',
 	presence: '/api/v1/listen/presence',
-	history: '/api/v1/listen/history'
+	history: '/api/v1/listen/history',
+	requests: '/api/v1/listen/requests'
 } as const;
 
 export const HISTORY_LIMIT = 50;
 
-type ErrorBody = { error?: { code?: string; message?: string } };
+type ErrorBody = { error?: { code?: string; message?: string; fields?: Record<string, string> } };
 
-type SendOptions = { method?: 'GET' | 'POST'; body?: unknown; keepalive?: boolean };
+/** An ApiError that also carries per-field validation messages (422). */
+export class ListenApiError extends ApiError {
+	constructor(
+		status: number,
+		code: string,
+		message: string,
+		readonly fields: Record<string, string> = {}
+	) {
+		super(status, code, message);
+	}
+}
+
+type SendOptions = {
+	method?: 'GET' | 'POST';
+	body?: unknown;
+	keepalive?: boolean;
+	/** The success body has no `data` (202 `{ ok: true }`). */
+	noData?: boolean;
+};
 
 async function call(
 	path: string,
@@ -58,11 +78,11 @@ async function call(
 	if (!res.ok) {
 		const e = (body as ErrorBody | null)?.error;
 		if (e && typeof e.message === 'string') {
-			throw new ApiError(res.status, e.code ?? 'http_error', e.message);
+			throw new ListenApiError(res.status, e.code ?? 'http_error', e.message, e.fields ?? {});
 		}
-		throw new ApiError(res.status, 'http_error', `Request failed (${res.status}).`);
+		throw new ListenApiError(res.status, 'http_error', `Request failed (${res.status}).`);
 	}
-	if (res.status === 204) return null;
+	if (res.status === 204 || opts.noData) return body;
 	if (body === null || typeof body !== 'object' || !('data' in body)) {
 		throw new ApiError(res.status, 'bad_response', 'Unexpected response from the server.');
 	}
@@ -112,4 +132,9 @@ export async function fetchListenHistory(
 	if (cursor) q.set('cursor', cursor);
 	const page = (await call(`${LISTEN_API.history}?${q}`, token, signal)) as ListenHistoryPage;
 	return { data: page.data ?? [], next_cursor: page.next_cursor ?? null };
+}
+
+/** Ask Bao for an invite. Valid input always gets 202, whoever sends it. */
+export async function postListenRequest(body: ListenRequestInput): Promise<void> {
+	await call(LISTEN_API.requests, null, undefined, { method: 'POST', body, noData: true });
 }

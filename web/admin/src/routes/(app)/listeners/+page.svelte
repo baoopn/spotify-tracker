@@ -10,6 +10,7 @@
 	import InviteCard from './InviteCard.svelte';
 	import ListenersTable from './ListenersTable.svelte';
 	import ListeningNow from './ListeningNow.svelte';
+	import RequestsCard from './RequestsCard.svelte';
 
 	const query = createQuery(() => listenersQuery());
 	const manual = new ManualRefetch(() => query.refetch());
@@ -43,6 +44,7 @@
 	</div>
 {:else}
 	<div class="mb-4"><ListeningNow /></div>
+	<div class="mb-4"><RequestsCard pending={s.pending_requests ?? 0} /></div>
 
 	{#if !s.listen_enabled || !s.audio_configured}
 		<div class="mb-4 flex flex-col gap-2">

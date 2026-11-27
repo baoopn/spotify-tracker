@@ -79,6 +79,8 @@ class ListenAuth {
 	clerk = $state.raw<Clerk | null>(null);
 
 	#initPromise: Promise<void> | null = null;
+	/** The last token Clerk gave us, for sends that cannot wait (page hide). */
+	#lastToken: string | null = null;
 	#clerkUserId: string | null = null;
 
 	/** The signed-in email (also when the API said no). */
@@ -204,6 +206,7 @@ class ListenAuth {
 	/** The API refused the session even with a fresh token: sign in again. */
 	async #dropSession(): Promise<void> {
 		this.me = null;
+		this.#lastToken = null;
 		try {
 			await this.clerk?.signOut();
 		} catch {
@@ -217,14 +220,26 @@ class ListenAuth {
 		const session = this.clerk?.session;
 		if (!session) return null;
 		try {
-			return await session.getToken(fresh ? { skipCache: true } : undefined);
+			const token = await session.getToken(fresh ? { skipCache: true } : undefined);
+			this.#lastToken = token;
+			return token;
 		} catch {
 			return null;
 		}
 	}
 
+	/**
+	 * Run `fn` with a token. `now` (a keepalive send on page hide) uses the
+	 * last token at once: awaiting Clerk could outlive the page.
+	 */
+	withToken<T>(now: boolean, fn: (token: string | null) => Promise<T>): Promise<T> {
+		if (now) return fn(this.#lastToken);
+		return this.getToken().then(fn);
+	}
+
 	async signOut(): Promise<void> {
 		this.me = null;
+		this.#lastToken = null;
 		if (this.clerk) await this.clerk.signOut({ redirectUrl: LISTEN_PATH });
 		this.status = 'signed-out';
 	}

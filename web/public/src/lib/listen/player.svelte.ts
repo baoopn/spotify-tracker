@@ -9,6 +9,7 @@ import type { NowPlaying } from '../types';
 import { listenAuth } from './auth.svelte';
 import { fetchListenAudio, postListenProgress } from './api';
 import { ProgressTracker } from './progress';
+import { presenceTrackId } from './presence';
 import {
 	ACCESS_CHECK_MS,
 	CHECK_MS,
@@ -17,6 +18,9 @@ import {
 	TRACK_MISMATCH_RETRY_MS,
 	UNAVAILABLE_RETRY_MS,
 	audioNote,
+	joinSeekMs,
+	nextStatus,
+	type ListenStatus,
 	parseVolume,
 	seekTarget,
 	shouldRefreshUrl,
@@ -33,17 +37,7 @@ import {
 	store
 } from './media';
 
-export type ListenStatus =
-	| 'waiting'
-	| 'loading'
-	| 'in-sync'
-	| 'paused-by-owner'
-	| 'no-audio'
-	| 'cant-play'
-	| 'ended'
-	| 'access-ended'
-	/** Listen along was switched off on the server. */
-	| 'off';
+export type { ListenStatus } from './sync.ts';
 
 const ERROR_RETRIES = 3;
 const ERROR_BACKOFF_MS = 5000;
@@ -60,6 +54,7 @@ class ListenPlayer {
 	volumeSupported = $state(true);
 	/** A source with metadata is loaded: Join can play inside the click (iOS). */
 	ready = $state(false);
+	stopped = $state(false); // after Stop streaming: Join starts live again
 
 	#audio: HTMLAudioElement | null = null;
 	#np: NowPlaying | null = null;
@@ -79,8 +74,8 @@ class ListenPlayer {
 	#timers = new Set<ReturnType<typeof setTimeout>>();
 	#loop: ReturnType<typeof setInterval> | null = null;
 	#accessLoop: ReturnType<typeof setInterval> | null = null;
-	#progress = new ProgressTracker(async (track_id, heard_ms, keepalive) =>
-		postListenProgress(await listenAuth.getToken(), { track_id, heard_ms }, keepalive)
+	#progress = new ProgressTracker((track_id, heard_ms, keepalive) =>
+		listenAuth.withToken(keepalive, (t) => postListenProgress(t, { track_id, heard_ms }, keepalive))
 	);
 
 	/**
@@ -110,7 +105,7 @@ class ListenPlayer {
 			on('error', () => this.#onError()),
 			// History: only time heard while joined and in sync counts.
 			this.#progress.attach(el, () =>
-				this.joined && this.status === 'in-sync' ? (this.#trackId ?? null) : null
+				this.joined && this.status === 'in-sync' ? presenceTrackId(this.#trackId) : null
 			)
 		];
 		this.#loop = setInterval(() => this.#tick(), CHECK_MS);
@@ -120,7 +115,8 @@ class ListenPlayer {
 				this.joined = false;
 				this.#stopAccessChecks();
 				this.#pauseQuietly(el);
-			}
+			},
+			() => this.stop()
 		);
 
 		return () => {
@@ -151,10 +147,12 @@ class ListenPlayer {
 		// Only with a loaded source, so play() runs inside the click (iOS).
 		if (!el || this.#accessEnded || !this.ready || !el.src) return;
 		this.joined = true;
+		this.stopped = false;
+		el.preload = 'auto';
 		this.#startAccessChecks();
-		const target = this.#target();
-		if (target != null && el.readyState >= HTMLMediaElement.HAVE_METADATA) {
-			el.currentTime = seekTarget(target, el.duration * 1000) / 1000;
+		const at = joinSeekMs(this.#target(), el.duration * 1000);
+		if (at != null && el.readyState >= HTMLMediaElement.HAVE_METADATA) {
+			el.currentTime = at / 1000;
 			this.#lastSeek = Date.now();
 		}
 		// Always play in the gesture (unlocks the element on iOS); the next tick
@@ -163,6 +161,17 @@ class ListenPlayer {
 			() => this.#tick(),
 			(err) => this.#onPlayRejected(err)
 		);
+	}
+
+	/** Stop streaming (not a pause): drop the audio, reload only its metadata for Join. */
+	stop(): void {
+		const el = this.#audio;
+		if (!el || !this.joined) return;
+		this.joined = false;
+		this.stopped = true;
+		this.#stopAccessChecks();
+		el.preload = 'metadata';
+		this.#changeTrack(this.#trackId ?? null);
 	}
 
 	setVolume(v: number): void {
@@ -334,28 +343,19 @@ class ListenPlayer {
 	}
 
 	#updateStatus(el: HTMLAudioElement, ownerPlaying: boolean, target: number | null): void {
-		if (this.status === 'no-audio' || this.status === 'cant-play') return;
-		if (!this.#trackId || target == null) {
-			this.status = 'waiting';
-			this.note = this.#trackId ? null : audioNote('idle');
-			return;
-		}
-		if (this.status === 'ended' && el.paused) return;
-		if (!ownerPlaying) {
-			this.status = 'paused-by-owner';
-			return;
-		}
-		if (!el.src || !this.joined) {
-			// Not joined: "in-sync" here means ready to join.
-			this.status =
-				el.src && el.readyState >= HTMLMediaElement.HAVE_METADATA ? 'in-sync' : 'loading';
-			return;
-		}
-		const drift = Math.abs(el.currentTime * 1000 - target);
-		this.status =
-			!el.paused && el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && drift < DRIFT_MS
-				? 'in-sync'
-				: 'loading';
+		const next = nextStatus({
+			current: this.status,
+			hasTrack: !!this.#trackId,
+			targetMs: target,
+			ownerPlaying,
+			joined: this.joined,
+			hasSource: !!el.src,
+			paused: el.paused,
+			readyState: el.readyState,
+			driftMs: target == null ? 0 : Math.abs(el.currentTime * 1000 - target)
+		});
+		if (next === 'waiting') this.note = this.#trackId ? null : audioNote('idle');
+		this.status = next;
 	}
 
 	#play(el: HTMLAudioElement): void {
@@ -476,6 +476,7 @@ class ListenPlayer {
 	/** Signed out or left the page: back to the start. */
 	#reset(): void {
 		this.joined = false;
+		this.stopped = false;
 		this.#gen++;
 		this.#trackId = undefined;
 		this.#accessEnded = false;

@@ -44,10 +44,7 @@
 	{:else if history.isError && plays.length === 0}
 		<ErrorState message={errorMessage(history.error)} onretry={() => history.refetch()} />
 	{:else if plays.length === 0}
-		<EmptyState
-			title="No plays yet"
-			message="Songs they hear for 30 seconds or more show up here."
-		/>
+		<EmptyState title="No plays yet" message="Songs they listen to show up here." />
 	{:else}
 		<ol class="flex flex-col">
 			{#each plays as play (play.id)}

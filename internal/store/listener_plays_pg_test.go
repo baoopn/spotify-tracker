@@ -94,6 +94,35 @@ func TestPGListenerPlays(t *testing.T) {
 		t.Fatalf("ignored reports wrote rows: %+v", got)
 	}
 
+	// A late flush for a song no longer playing: it extends a play heard in
+	// the last 30 s (same clamp, count rule from the catalog length) and
+	// never creates one.
+	late, _ := st.CreateListener(ctx, store.NewListener{Email: "cy@example.com", InvitedBy: "a"})
+	if err := st.ExtendListenerProgress(ctx, late.ID, "short", 15000); err != nil {
+		t.Fatal(err)
+	}
+	if got := plays(t, pool, late.ID); len(got) != 0 {
+		t.Fatalf("late flush created a play: %+v", got)
+	}
+	if err := st.RecordListenerProgress(ctx, late.ID, "short", 15000, 40000); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, pool, `UPDATE listener_plays SET last_heard_at = now() - interval '10 seconds' WHERE listener_id = $1`, late.ID)
+	if err := st.ExtendListenerProgress(ctx, late.ID, "short", 15000); err != nil {
+		t.Fatal(err)
+	}
+	// 15 s + min(15 s, 10 s + 5 s) = 30 s, past half of the 40 s song.
+	if got := plays(t, pool, late.ID); len(got) != 1 || got[0].heard < 29900 || got[0].heard > 30100 || !got[0].counted {
+		t.Fatalf("late extend = %+v", got)
+	}
+	exec(t, pool, `UPDATE listener_plays SET last_heard_at = now() - interval '40 seconds' WHERE listener_id = $1`, late.ID)
+	if err := st.ExtendListenerProgress(ctx, late.ID, "short", 15000); err != nil {
+		t.Fatal(err)
+	}
+	if got := plays(t, pool, late.ID); len(got) != 1 || got[0].heard > 30100 {
+		t.Fatalf("stale late flush extended: %+v", got)
+	}
+
 	// Concurrent reports for a new play: one row, no double count.
 	var wg sync.WaitGroup
 	for range 5 {

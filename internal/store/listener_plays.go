@@ -17,9 +17,11 @@ import (
 // Listen-along history rules.
 const (
 	// ListenRejoinWindow: a report for the same song within this time of the
-	// last one extends that play instead of starting a new one (the SQL
-	// says interval '2 minutes').
+	// last one extends that play instead of starting a new one.
 	ListenRejoinWindow = 2 * time.Minute
+	// ListenLateWindow: a report for a song that is no longer playing still
+	// extends its play when heard within this time.
+	ListenLateWindow = 30 * time.Second
 	// ListenCountMS is how much of a song must be heard to count (or half
 	// the song when it is shorter than twice this).
 	ListenCountMS = 30_000
@@ -74,10 +76,25 @@ func listenThreshold(durationMS int64) int64 {
 // one listener are serialized (the listener row is locked), so concurrent
 // reports never double count. A track missing from the catalog is ignored.
 func (s *Store) RecordListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS, durationMS int64) error {
+	return s.recordProgress(ctx, listenerID, trackID, deltaMS, &durationMS, ListenRejoinWindow, true)
+}
+
+// ExtendListenerProgress adds a late report for a song that is no longer
+// playing (the last flush arrives just after the track changed): it extends
+// the listener's play of trackID heard within the last 30 s, with the same
+// clamp and count rule, and never starts a new play. The song's length
+// comes from the catalog.
+func (s *Store) ExtendListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS int64) error {
+	return s.recordProgress(ctx, listenerID, trackID, deltaMS, nil, ListenLateWindow, false)
+}
+
+// recordProgress extends the play heard within window, or (create) starts
+// one. A nil durationMS reads the length from the catalog.
+func (s *Store) recordProgress(ctx context.Context, listenerID int64, trackID string, deltaMS int64,
+	durationMS *int64, window time.Duration, create bool) error {
 	if deltaMS <= 0 {
 		return nil
 	}
-	threshold := listenThreshold(durationMS)
 	return s.InTx(ctx, func(q *Queries) error {
 		var one int
 		err := q.db.QueryRow(ctx, `SELECT 1 FROM listeners WHERE id = $1 FOR UPDATE`, listenerID).Scan(&one)
@@ -87,6 +104,18 @@ func (s *Store) RecordListenerProgress(ctx context.Context, listenerID int64, tr
 		if err != nil {
 			return fmt.Errorf("lock listener: %w", err)
 		}
+		if durationMS == nil {
+			var d int64
+			err := q.db.QueryRow(ctx, `SELECT duration_ms FROM tracks WHERE id = $1`, trackID).Scan(&d)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("track duration: %w", err)
+			}
+			durationMS = &d
+		}
+		threshold := listenThreshold(*durationMS)
 		tag, err := q.db.Exec(ctx, `
 			UPDATE listener_plays p SET
 				heard_ms = p.heard_ms + LEAST($3::bigint,
@@ -96,13 +125,13 @@ func (s *Store) RecordListenerProgress(ctx context.Context, listenerID int64, tr
 				last_heard_at = now()
 			WHERE p.id = (
 				SELECT id FROM listener_plays
-				WHERE listener_id = $1 AND track_id = $2 AND last_heard_at > now() - interval '2 minutes'
+				WHERE listener_id = $1 AND track_id = $2 AND last_heard_at > now() - $6::bigint * interval '1 second'
 				ORDER BY last_heard_at DESC LIMIT 1)`,
-			listenerID, trackID, deltaMS, threshold, int64(listenSlackMS))
+			listenerID, trackID, deltaMS, threshold, int64(listenSlackMS), int64(window/time.Second))
 		if err != nil {
 			return fmt.Errorf("extend listener play: %w", err)
 		}
-		if tag.RowsAffected() > 0 {
+		if tag.RowsAffected() > 0 || !create {
 			return nil
 		}
 		_, err = q.db.Exec(ctx, `

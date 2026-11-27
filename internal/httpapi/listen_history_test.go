@@ -19,12 +19,18 @@ type progressCall struct {
 
 type fakePlays struct {
 	calls   []progressCall
+	extends []progressCall
 	history map[int64][]store.ListenPlay
 	cursors []string
 }
 
 func (f *fakePlays) RecordListenerProgress(_ context.Context, id int64, track string, delta, dur int64) error {
 	f.calls = append(f.calls, progressCall{id, track, delta, dur})
+	return nil
+}
+
+func (f *fakePlays) ExtendListenerProgress(_ context.Context, id int64, track string, delta int64) error {
+	f.extends = append(f.extends, progressCall{listener: id, track: track, delta: delta})
 	return nil
 }
 
@@ -94,6 +100,11 @@ func TestListenProgress(t *testing.T) {
 	}
 	if len(plays.calls) != 1 {
 		t.Errorf("stored %d reports, want 1", len(plays.calls))
+	}
+	// A late flush for another track (or while idle) may only extend.
+	if len(plays.extends) != 2 || plays.extends[0] != (progressCall{listener: 7, track: "0000000000000000000000", delta: 1000}) ||
+		plays.extends[1].track != trackID {
+		t.Errorf("extends = %+v", plays.extends)
 	}
 }
 

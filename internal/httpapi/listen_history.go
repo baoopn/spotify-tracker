@@ -16,6 +16,7 @@ import (
 // *store.Store).
 type ListenPlayStore interface {
 	RecordListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS, durationMS int64) error
+	ExtendListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS int64) error
 	ListenerHistory(ctx context.Context, listenerID int64, limit int, cursor string) ([]store.ListenPlay, *string, error)
 }
 
@@ -63,8 +64,8 @@ func (h *Handler) listener(ctx context.Context) (ListenerIdentity, bool) {
 }
 
 // POST /api/v1/listen/progress — {track_id, heard_ms}: audio time heard
-// since the last report. Counted only for the track playing now; anything
-// else answers 204 and stores nothing.
+// since the last report, for the track playing now. A report for another
+// track only extends a play of it heard in the last 30 s. Always 204.
 func (h *Handler) listenProgress(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		TrackID string `json:"track_id"`
@@ -95,7 +96,14 @@ func (h *Handler) listenProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !playing || np.Track.ID != in.TrackID {
-		w.WriteHeader(http.StatusNoContent) // a race at a track change: not an error
+		// The last flush of a song often arrives just after the track changed:
+		// it may extend that song's play heard in the last 30 s, never start
+		// one. Anything else is a race, not an error.
+		if err := h.opts.Listen.Plays.ExtendListenerProgress(r.Context(), l.ID, in.TrackID, in.HeardMS); err != nil {
+			h.internalError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := h.opts.Listen.Plays.RecordListenerProgress(r.Context(), l.ID, in.TrackID, in.HeardMS, np.Track.DurationMS); err != nil {

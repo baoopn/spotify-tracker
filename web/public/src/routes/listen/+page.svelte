@@ -10,6 +10,8 @@
 	import { live } from '#lib/live.svelte.js';
 	import { listenAuth } from '#lib/listen/auth.svelte.js';
 	import { listenPlayer } from '#lib/listen/player.svelte.js';
+	import { postListenPresence } from '#lib/listen/api.js';
+	import { PresencePinger, presenceState, presenceTrackId } from '#lib/listen/presence.js';
 	import { NOW_POLL_MS, nowPlayingQuery } from '#lib/queries.js';
 
 	const queryClient = useQueryClient();
@@ -30,7 +32,32 @@
 		const allowed = listenAuth.status === 'allowed';
 		untrack(() => listenPlayer.update(np, allowed));
 	});
+
+	// "Listening now" in the admin: on load, on every change and every 30 s.
+	const presence = new PresencePinger(async (body, keepalive) =>
+		postListenPresence(await listenAuth.getToken(), body, keepalive)
+	);
+	onMount(() => presence.start());
 	const trackId = $derived(now.data?.track?.id ?? null);
+	const presenceActive = $derived(
+		listenAuth.status === 'allowed' &&
+			listenPlayer.status !== 'access-ended' &&
+			listenPlayer.status !== 'off'
+	);
+	const presenceBody = $derived({
+		state: presenceState({
+			joined: listenPlayer.joined,
+			status: listenPlayer.status,
+			hidden: false
+		}),
+		track_id: presenceTrackId(trackId)
+	});
+	// Sending is a side effect: only the network call happens here.
+	$effect(() => {
+		const body = presenceBody;
+		const active = presenceActive;
+		untrack(() => (active ? presence.update(body) : presence.stop()));
+	});
 </script>
 
 <svelte:head>

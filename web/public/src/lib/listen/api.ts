@@ -7,6 +7,7 @@ import type {
 	ListenConfig,
 	ListenHistoryPage,
 	ListenMe,
+	ListenPresence,
 	ListenProgress
 } from './types';
 
@@ -15,6 +16,7 @@ export const LISTEN_API = {
 	me: '/api/v1/listen/me',
 	audio: '/api/v1/listen/audio',
 	progress: '/api/v1/listen/progress',
+	presence: '/api/v1/listen/presence',
 	history: '/api/v1/listen/history'
 } as const;
 
@@ -90,6 +92,14 @@ export async function postListenProgress(
 	keepalive = false
 ): Promise<void> {
 	await call(LISTEN_API.progress, token, undefined, { method: 'POST', body, keepalive });
+}
+
+export async function postListenPresence(
+	token: string | null,
+	body: ListenPresence,
+	keepalive = false
+): Promise<void> {
+	await call(LISTEN_API.presence, token, undefined, { method: 'POST', body, keepalive });
 }
 
 /** The caller's own counted plays, newest first. */

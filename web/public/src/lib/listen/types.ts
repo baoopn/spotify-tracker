@@ -58,3 +58,12 @@ export type ListenHistoryPage = { data: ListenPlay[]; next_cursor: string | null
 
 /** POST /api/v1/listen/progress: audio time actually played since the last report. */
 export type ListenProgress = { track_id: string; heard_ms: number };
+
+/**
+ * POST /api/v1/listen/presence.
+ * listening  joined and hearing the audio in sync
+ * following  on the page and allowed, but not hearing audio
+ * idle       tab hidden, or the session ended
+ */
+export type PresenceState = 'listening' | 'following' | 'idle';
+export type ListenPresence = { state: PresenceState; track_id: string | null };

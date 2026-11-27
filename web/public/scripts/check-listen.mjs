@@ -22,6 +22,7 @@ import {
 	chunkReport,
 	playedDelta
 } from '../src/lib/listen/progress.ts';
+import { presenceState, presenceTrackId } from '../src/lib/listen/presence.ts';
 import { dayKey, dayLabel, groupByDay, previousDay } from '../src/lib/listen/history.ts';
 
 const T0 = Date.parse('2026-11-26T12:00:00Z');
@@ -195,6 +196,24 @@ assert.equal(dayLabel('2025-11-20', '2026-11-26'), 'Thu, Nov 20, 2025');
 	);
 	assert.deepEqual(groupByDay([], now, NY), []);
 }
+
+// presenceState: listening only when joined and in sync; hidden or ended is idle.
+/** @type {[Parameters<typeof presenceState>[0], string][]} */
+const presenceCases = [
+	[{ joined: true, status: 'in-sync', hidden: false }, 'listening'],
+	[{ joined: true, status: 'loading', hidden: false }, 'following'],
+	[{ joined: true, status: 'paused-by-owner', hidden: false }, 'following'],
+	[{ joined: false, status: 'in-sync', hidden: false }, 'following'],
+	[{ joined: false, status: 'no-audio', hidden: false }, 'following'],
+	[{ joined: true, status: 'in-sync', hidden: true }, 'idle'],
+	[{ joined: true, status: 'ended', hidden: false }, 'idle']
+];
+for (const [input, want] of presenceCases) {
+	assert.equal(presenceState(input), want, JSON.stringify(input));
+}
+assert.equal(presenceTrackId('4uLU6hMCjMI75M1A2tKUQC'), '4uLU6hMCjMI75M1A2tKUQC');
+assert.equal(presenceTrackId('spotify:local:abc'), null);
+assert.equal(presenceTrackId(null), null);
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

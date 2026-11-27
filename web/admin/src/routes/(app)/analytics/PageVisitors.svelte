@@ -15,6 +15,7 @@
 	import { zone } from '#lib/zone.svelte.js';
 	import type { AnalyticsRange, DimCount } from '#lib/types.js';
 	import { ManualRefetch } from '#lib/manual-refetch.svelte.js';
+	import { countryName } from '#lib/country.js';
 
 	let { range }: { range: AnalyticsRange } = $props();
 
@@ -47,21 +48,6 @@
 				: 'per UTC day'
 			: `per hour · shown in ${timeZone ?? 'UTC'}${zone.corrected ? ` (${zone.spec.label})` : ''}`
 	);
-
-	let regionNames: Intl.DisplayNames | null = null;
-	try {
-		regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
-	} catch {
-		regionNames = null;
-	}
-	function countryName(code: string): string {
-		if (!code) return 'Unknown';
-		try {
-			return regionNames?.of(code.toUpperCase()) ?? code;
-		} catch {
-			return code;
-		}
-	}
 
 	const bars = (rows: DimCount[], label: (name: string) => string): BarItem[] =>
 		rows.map((r) => ({ id: r.name || '∅', label: label(r.name), value: r.views }));

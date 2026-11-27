@@ -92,3 +92,30 @@ export function listenerHistory(
 		signal
 	});
 }
+
+export type PresenceState = 'listening' | 'following' | 'idle';
+
+/** Someone on /listen right now (GET /listeners/live); no IP is kept. */
+export type LivePresence = {
+	listener_id: number;
+	email: string;
+	state: PresenceState;
+	/** ISO 3166-1 alpha-2, null when unknown. */
+	country: string | null;
+	device: string;
+	browser: string;
+	since: string;
+	updated_at: string;
+	track: { id: string; name: string; artists: { id: string; name: string }[] } | null;
+};
+
+export const liveKey = ['listeners', 'live'] as const;
+
+export function liveListenersQuery() {
+	return queryOptions({
+		queryKey: liveKey,
+		queryFn: ({ signal }) =>
+			request<{ data: LivePresence[] }>(`${BASE}/live`, { signal }).then((r) => r.data ?? []),
+		refetchInterval: 15_000
+	});
+}

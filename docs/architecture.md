@@ -755,7 +755,10 @@ itself (AWS Signature Version 4, query parameters), so the browser fetches the
 file straight from the bucket. A URL is for the current track only and lives
 for `LISTEN_AUDIO_URL_TTL` (default 10 minutes) or until the song ends plus a
 minute, whichever is longer, at most an hour. Upload the files yourself; the
-API only reads them.
+API only reads them. `S3_FORCE_PATH_STYLE=true` (the default)
+puts the bucket in the path. With `false` the bucket becomes part of the host
+name, so a bucket name with dots fails the TLS check over https: keep path
+style for such buckets.
 
 **Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
 so the MCP server cannot reach them):

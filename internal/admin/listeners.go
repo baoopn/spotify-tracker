@@ -145,6 +145,7 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 	if u, ok := UserFrom(ctx); ok {
 		n.InvitedBy = u.Email
 	}
+	roleSet := false
 	if found {
 		// An existing account signs in at /listen; no invitation email.
 		// Its role is set only when it has none (an admin keeps theirs).
@@ -154,6 +155,7 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 				a.clerkFailed(w, r, err)
 				return
 			}
+			roleSet = true
 		}
 		n.ClerkUserID = &userID
 	} else {
@@ -169,6 +171,12 @@ func (a *API) inviteListener(w http.ResponseWriter, r *http.Request) {
 		if n.ClerkInvitationID != nil {
 			if rerr := cl.RevokeInvitation(ctx, *n.ClerkInvitationID); rerr != nil {
 				a.Log.WarnContext(ctx, "revoking an unused listener invitation failed", logging.Err(rerr))
+			}
+		}
+		if roleSet {
+			// Undo only the role this call set.
+			if rerr := cl.SetRole(ctx, userID, nil); rerr != nil {
+				a.Log.WarnContext(ctx, "removing an unused listener role failed", logging.Err(rerr))
 			}
 		}
 		if errors.Is(err, store.ErrListenerExists) {
@@ -289,22 +297,32 @@ func (a *API) cleanupListener(ctx context.Context, l store.Listener) string {
 			fail("revoking the listener invitation failed", err)
 		}
 	}
+	// The Clerk user: the bound one, or (an invitee who signed up but never
+	// opened /listen) the account with the invited email.
+	var userID, role string
+	var found bool
+	var err error
 	if l.ClerkUserID != nil {
+		userID = *l.ClerkUserID
+		role, found, err = cl.UserRole(ctx, userID)
+	} else {
+		userID, role, found, err = cl.FindUser(ctx, l.Email)
+	}
+	if l.ClerkUserID != nil || err != nil || found {
 		if result == cleanupSkipped {
 			result = cleanupOK
 		}
-		role, found, err := cl.UserRole(ctx, *l.ClerkUserID)
-		switch {
-		case err != nil:
-			fail("reading the listener's Clerk role failed", err)
-		case found && role == ListenerRole:
-			if err := cl.SetRole(ctx, *l.ClerkUserID, nil); err != nil {
-				fail("removing the listener role failed", err)
-			}
+	}
+	switch {
+	case err != nil:
+		fail("reading the listener's Clerk role failed", err)
+	case found && role == ListenerRole:
+		if err := cl.SetRole(ctx, userID, nil); err != nil {
+			fail("removing the listener role failed", err)
 		}
-		if a.Redis != nil {
-			_ = a.Redis.Del(ctx, ProfileCacheKey(*l.ClerkUserID)).Err()
-		}
+	}
+	if userID != "" && a.Redis != nil {
+		_ = a.Redis.Del(ctx, ProfileCacheKey(userID)).Err()
 	}
 	return result
 }

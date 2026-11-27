@@ -325,3 +325,75 @@ func TestListListeners(t *testing.T) {
 		t.Errorf("db error = %d", code)
 	}
 }
+
+// failingCreate fails every insert with err.
+type failingCreate struct {
+	*fakeListeners
+	err error
+}
+
+func (f failingCreate) CreateListener(context.Context, store.NewListener) (store.Listener, error) {
+	return store.Listener{}, f.err
+}
+
+func TestInviteExistingAccountUndoesRoleOnInsertFailure(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"conflict", store.ErrListenerExists, 409},
+		{"db error", errors.New("db down"), 500},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newListenersHarness()
+			h.clerk.users["bob@example.com"] = "user_b"
+			h.clerk.users["root@example.com"], h.clerk.roles["user_r"] = "user_r", "admin"
+			api := &API{Deps: Deps{Log: slog.New(slog.DiscardHandler)},
+				listeners: failingCreate{h.db, c.err}, clerkInv: h.clerk, auditor: h.audit}
+			r := chi.NewRouter()
+			r.Route("/admin/api", api.mountListeners)
+			h.router = r
+			if code, _ := h.do(t, "POST", "/admin/api/listeners", `{"email":"bob@example.com"}`); code != c.status {
+				t.Errorf("status = %d", code)
+			}
+			if got := strings.Join(h.clerk.setRoles, ","); got != "user_b=listener,user_b=<nil>" {
+				t.Errorf("roles = %s", got)
+			}
+			// A role this call did not set is left alone.
+			h.clerk.setRoles = nil
+			h.do(t, "POST", "/admin/api/listeners", `{"email":"root@example.com"}`)
+			if len(h.clerk.setRoles) != 0 || len(h.audit.calls) != 0 {
+				t.Errorf("roles = %v, audits = %v", h.clerk.setRoles, h.audit.calls)
+			}
+		})
+	}
+}
+
+func TestRevokeClearsRoleOfUnboundSignup(t *testing.T) {
+	h := newListenersHarness()
+	h.do(t, "POST", "/admin/api/listeners", `{"email":"ann@example.com"}`)
+	// Ann accepted the invitation in Clerk but never opened /listen.
+	h.clerk.users["ann@example.com"], h.clerk.roles["user_a"] = "user_a", ListenerRole
+	code, out := h.do(t, "POST", "/admin/api/listeners/1/revoke", ``)
+	if code != 200 || string(out["clerk_cleanup"]) != `"ok"` {
+		t.Fatalf("revoke = %d %s", code, out)
+	}
+	if got := strings.Join(h.clerk.setRoles, ","); got != "user_a=<nil>" {
+		t.Errorf("roles = %s", got)
+	}
+
+	// The lookup failing is reported.
+	h.do(t, "POST", "/admin/api/listeners", `{"email":"cy@example.com"}`)
+	h.clerk.findErr = errors.New("down")
+	if _, out := h.do(t, "POST", "/admin/api/listeners/2/revoke", ``); string(out["clerk_cleanup"]) != `"failed"` {
+		t.Errorf("cleanup = %s", out["clerk_cleanup"])
+	}
+	// An admin found by email keeps their role.
+	h.clerk.findErr, h.clerk.setRoles = nil, nil
+	h.db.rows = append(h.db.rows, store.Listener{ID: 9, Email: "root@example.com", Status: store.ListenerInvited, InvitedBy: "a"})
+	h.clerk.users["root@example.com"], h.clerk.roles["user_r"] = "user_r", "admin"
+	if _, out := h.do(t, "POST", "/admin/api/listeners/9/revoke", ``); string(out["clerk_cleanup"]) != `"ok"` || len(h.clerk.setRoles) != 0 {
+		t.Errorf("admin: cleanup %s roles %v", out["clerk_cleanup"], h.clerk.setRoles)
+	}
+}

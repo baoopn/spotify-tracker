@@ -842,7 +842,8 @@ song in `listener_plays`:
   so races at a track change are quiet. The one exception is the last flush
   of a song, which often arrives just after the track changed: it still
   extends that song's play when it was reported as current in the last 30 s,
-  but never starts a new one. A late report does not move that 30 s window. Nothing is stored for an admin previewing the page.
+  but never starts a new one. A late report does not move that 30 s window.
+  Nothing is stored for an admin previewing the page.
 - A report within two minutes of the last one for the same song extends that
   play; later, a new play starts (the song played again).
 - An extension adds at most the time since the last report plus 5 s, and a
@@ -862,9 +863,9 @@ a name (1 to 80 characters), an email and an optional message (up to 500
 characters). An invite is still the admin's choice; there is no sign-up.
 
 - Valid input always answers 202 `{"ok": true}`: for a new email, for an
-  email with a pending request (its name and message are updated, no second
-  alert), for a listener's email and for an email dismissed before (a new
-  pending request). So the endpoint tells nobody who is invited.
+  email with a pending request (no second alert), for a listener's email and for an email dismissed before (a new
+  pending request). A resubmission keeps the first name and message (it only
+  fills an empty message), so nobody can rewrite someone else's request. So the endpoint tells nobody who is invited.
 - `website` is a hidden honeypot field: when a bot fills it, the API answers
   202 and stores nothing.
 - Text is trimmed and control characters are dropped. Errors are 422
@@ -1053,7 +1054,10 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   honeypot field drops simple bots, a fixed window of 3 requests per hour
   per salted client IP hash (no raw IP is stored) and a cap of 100 pending
   requests limit abuse, and the alert email escapes every value the visitor
-  typed (the subject cannot add header lines).
+  typed (the subject cannot add header lines). A resubmission for a pending
+  email never replaces the first name and message. The `listener.requested`
+  audit row keeps the requester's email after the request itself is deleted
+  (90 days after the decision), like the rest of the audit log.
 - Listening now stores no IP address: only the country from Cloudflare, the
   device and browser family from the User-Agent, and the listener's email and
   state, in Redis for 90 s.

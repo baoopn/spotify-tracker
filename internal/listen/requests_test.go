@@ -29,9 +29,7 @@ type fakeRequestStore struct {
 
 func (f *fakeRequestStore) SubmitListenRequest(_ context.Context, n store.NewListenRequest, max int) (store.ListenRequest, bool, error) {
 	if r, ok := f.pending[n.Email]; ok {
-		r.Name = n.Name
-		f.pending[n.Email] = r
-		return r, false, nil
+		return r, false, nil // the first submission's text stays
 	}
 	if f.full || len(f.pending) >= max {
 		return store.ListenRequest{}, false, store.ErrRequestsFull
@@ -88,7 +86,7 @@ func TestRequestsAlertOnce(t *testing.T) {
 	if len(m.sent) != 1 || m.sent[0].Subject != "Listen-along request from Ann" {
 		t.Errorf("sent = %+v", m.sent)
 	}
-	if db.pending["ann@example.com"].Name != "Ann B" || len(db.audits) != 1 || db.audits[0] != "ann@example.com listener.requested" {
+	if db.pending["ann@example.com"].Name != "Ann" || len(db.audits) != 1 || db.audits[0] != "ann@example.com listener.requested" {
 		t.Errorf("store = %+v audits %v", db.pending, db.audits)
 	}
 	// No SMTP: no email, no error.

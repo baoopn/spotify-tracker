@@ -94,25 +94,46 @@ func (a *API) inviteRequest(w http.ResponseWriter, r *http.Request) {
 		notPending(w)
 		return
 	}
+	// Already a listener: nothing to invite; the request is handled.
+	if existing, err := a.listenerDB().ListenerForUser(r.Context(), "", req.Email); err == nil {
+		req, ok = a.markInvited(w, r, req)
+		if !ok {
+			return
+		}
+		a.audit(r, "listener.request_invited", map[string]any{"id": req.ID, "email": req.Email, "already_listener": true})
+		writeJSON(w, http.StatusOK, map[string]any{"data": toListenerView(existing), "invitation_sent": false, "request": req})
+		return
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		a.internal(w, r, err)
+		return
+	}
 	l, found, ok := a.invite(w, r, req.Email)
 	if !ok {
 		return
 	}
-	decided, err := a.requestDB().DecideListenRequest(r.Context(), req.ID, store.RequestInvited, actorEmail(r))
-	switch {
-	case err == nil:
-		req = decided
-	case errors.Is(err, store.ErrRequestNotPending):
-		// Dismissed meanwhile: the invite still stands.
-		if cur, gerr := a.requestDB().GetListenRequest(r.Context(), req.ID); gerr == nil {
-			req = cur
-		}
-	default:
-		a.internal(w, r, err)
+	if req, ok = a.markInvited(w, r, req); !ok {
 		return
 	}
 	a.audit(r, "listener.request_invited", map[string]any{"id": req.ID, "email": req.Email})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": toListenerView(l), "invitation_sent": !found, "request": req})
+}
+
+// markInvited marks the request invited. A request decided meanwhile keeps
+// its status (the invite still stands); false has written a 500.
+func (a *API) markInvited(w http.ResponseWriter, r *http.Request, req store.ListenRequest) (store.ListenRequest, bool) {
+	decided, err := a.requestDB().DecideListenRequest(r.Context(), req.ID, store.RequestInvited, actorEmail(r))
+	switch {
+	case err == nil:
+		return decided, true
+	case errors.Is(err, store.ErrRequestNotPending):
+		if cur, gerr := a.requestDB().GetListenRequest(r.Context(), req.ID); gerr == nil {
+			return cur, true
+		}
+		return req, true
+	default:
+		a.internal(w, r, err)
+		return req, false
+	}
 }
 
 func (a *API) dismissRequest(w http.ResponseWriter, r *http.Request) {

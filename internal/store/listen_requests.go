@@ -68,9 +68,10 @@ func scanListenRequest(row pgx.Row) (ListenRequest, error) {
 	return x, err
 }
 
-// SubmitListenRequest stores a request: it updates the pending request of
-// the same email (created is false), or adds a new one unless maxPending
-// requests are already pending (ErrRequestsFull).
+// SubmitListenRequest stores a request. For an email with a pending request
+// it keeps that request's name and message (filling only an empty message or
+// country) and moves updated_at (created is false); otherwise it adds a new
+// one unless maxPending requests are already pending (ErrRequestsFull).
 func (s *Store) SubmitListenRequest(ctx context.Context, n NewListenRequest, maxPending int) (ListenRequest, bool, error) {
 	var out ListenRequest
 	created := false
@@ -78,9 +79,11 @@ func (s *Store) SubmitListenRequest(ctx context.Context, n NewListenRequest, max
 		if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, listenRequestLockKey); err != nil {
 			return fmt.Errorf("lock listen requests: %w", err)
 		}
-		r, err := scanListenRequest(q.db.QueryRow(ctx, `UPDATE listen_requests r SET name = $2, message = $3,
-				country = COALESCE($4, r.country), updated_at = now()
-			WHERE r.email = $1 AND r.status = 'pending' RETURNING `+listenRequestColumns, n.Email, n.Name, n.Message, n.Country))
+		// Anyone can submit any email, so a resubmission never replaces what
+		// the first one said: it only fills empty fields.
+		r, err := scanListenRequest(q.db.QueryRow(ctx, `UPDATE listen_requests r SET message = COALESCE(r.message, $2),
+				country = COALESCE(r.country, $3), updated_at = now()
+			WHERE r.email = $1 AND r.status = 'pending' RETURNING `+listenRequestColumns, n.Email, n.Message, n.Country))
 		if err == nil {
 			out = r
 			return nil

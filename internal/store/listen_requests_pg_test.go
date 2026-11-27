@@ -21,11 +21,23 @@ func TestPGListenRequests(t *testing.T) {
 	if err != nil || !created || r.Status != store.RequestPending || *r.Message != msg || *r.Country != "VN" || r.AlreadyListener {
 		t.Fatalf("submit = %+v %v %v", r, created, err)
 	}
-	// Same email again: the pending row is updated, not duplicated.
-	r2, created, err := st.SubmitListenRequest(ctx, store.NewListenRequest{Name: "Ann B", Email: "ann@example.com"}, 100)
-	if err != nil || created || r2.ID != r.ID || r2.Name != "Ann B" || r2.Message != nil || *r2.Country != "VN" {
-		t.Fatalf("update = %+v %v %v", r2, created, err)
+	// Same email again: not duplicated, and the first name and message stay
+	// (anyone may submit any email).
+	other := "Not me"
+	r2, created, err := st.SubmitListenRequest(ctx, store.NewListenRequest{Name: "Mallory", Email: "ann@example.com", Message: &other}, 100)
+	if err != nil || created || r2.ID != r.ID || r2.Name != "Ann" || *r2.Message != msg || *r2.Country != "VN" ||
+		!r2.UpdatedAt.After(r.UpdatedAt) {
+		t.Fatalf("resubmit = %+v %v %v", r2, created, err)
 	}
+	// An empty message is filled by a later submission.
+	b, _, err := st.SubmitListenRequest(ctx, store.NewListenRequest{Name: "Bea", Email: "bea@example.com"}, 100)
+	if err != nil || b.Message != nil {
+		t.Fatalf("bea = %+v %v", b, err)
+	}
+	if b2, _, _ := st.SubmitListenRequest(ctx, store.NewListenRequest{Name: "Bea", Email: "bea@example.com", Message: &other}, 100); b2.Message == nil || *b2.Message != other {
+		t.Errorf("fill = %+v", b2)
+	}
+	exec(t, pool, `DELETE FROM listen_requests WHERE email = 'bea@example.com'`)
 	// already_listener follows the listeners table.
 	if _, err := st.CreateListener(ctx, store.NewListener{Email: "ann@example.com", InvitedBy: "a"}); err != nil {
 		t.Fatal(err)

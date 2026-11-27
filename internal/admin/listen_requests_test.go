@@ -138,12 +138,14 @@ func TestInviteRequestReusesInvite(t *testing.T) {
 			t.Errorf("%s = %d %s", path, code, out)
 		}
 	}
+	// Already a listener: 200 with that listener, no Clerk call, request handled.
 	h.db.rows = append(h.db.rows, store.Listener{ID: 50, Email: "bob@example.com", Status: store.ListenerActive, InvitedBy: "a"})
-	if code, out := h.do(t, "POST", "/admin/api/listeners/requests/3/invite", ``); code != 409 || errCode(t, out) != "listener_exists" {
+	code, out = h.do(t, "POST", "/admin/api/listeners/requests/3/invite", ``)
+	if code != 200 || string(out["invitation_sent"]) != "false" || view(t, out["data"]).ID != 50 || len(h.clerk.invites) != 1 {
 		t.Errorf("already a listener = %d %s", code, out)
 	}
-	if r, _ := h.reqs.GetListenRequest(context.Background(), 3); r.Status != store.RequestPending {
-		t.Errorf("failed invite changed the request: %+v", r)
+	if r, _ := h.reqs.GetListenRequest(context.Background(), 3); r.Status != store.RequestInvited {
+		t.Errorf("request not handled: %+v", r)
 	}
 }
 

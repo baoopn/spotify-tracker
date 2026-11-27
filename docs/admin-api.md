@@ -317,7 +317,7 @@ type JoinRequest = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/admin/api/listeners/requests?status=pending\|dismissed\|all` | – | `{ data: JoinRequest[], pending: number }`, newest first (at most 200); default `pending`; `400 invalid_status` otherwise |
-| POST | `/admin/api/listeners/requests/{id}/invite` | – | `201 { data: Listener, invitation_sent, request: JoinRequest }`: the same steps and errors as `POST /admin/api/listeners`, then the request is `invited`; `409 not_pending`, `404 not_found` |
+| POST | `/admin/api/listeners/requests/{id}/invite` | – | `201 { data: Listener, invitation_sent, request: JoinRequest }`: the same steps and errors as `POST /admin/api/listeners`, then the request is `invited`. When the email is already a listener: `200` with that listener, `invitation_sent: false`, and the request marked `invited`. `409 not_pending`, `404 not_found` |
 | POST | `/admin/api/listeners/requests/{id}/dismiss` | – | `{ request: JoinRequest }`; `409 not_pending`, `404 not_found` |
 
 `GET /admin/api/listeners` also returns `pending_requests` (a count for the

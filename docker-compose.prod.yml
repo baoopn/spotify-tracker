@@ -135,6 +135,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_PREFIX: ${S3_PREFIX:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Cloudflare Turnstile on "Request an invite" (on when both are set).
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       # Brand files from the baoopn brand API; set BRAND_API_URL= (empty) to
       # always use the static copies.
       BRAND_API_URL: ${BRAND_API_URL-https://baoopn.com/api/v1/brand/listening}

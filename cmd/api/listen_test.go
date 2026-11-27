@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -103,5 +104,21 @@ func TestListenOptions(t *testing.T) {
 	}
 	if info := listenInfo(cfg); info.URL != "https://listening.example.com/listen" || !info.Enabled || info.AudioConfigured {
 		t.Errorf("info = %+v", info)
+	}
+}
+
+// Turnstile checks the PUBLIC_URL host, except in development.
+func TestListenTurnstileHost(t *testing.T) {
+	cfg := listenCfg()
+	cfg.Turnstile = config.Turnstile{SiteKey: "1x00000000000000000000AA", SecretKey: "1x0000000000000000000000000000000AA"}
+	if !cfg.Turnstile.Enabled() || listenTurnstile(cfg) == nil {
+		t.Fatal("turnstile off")
+	}
+	if got := fmt.Sprintf("%+v", *listenTurnstile(cfg)); !strings.Contains(got, "hostname:listening.example.com") {
+		t.Errorf("verifier = %s", got)
+	}
+	cfg.Env = "development"
+	if got := fmt.Sprintf("%+v", *listenTurnstile(cfg)); !strings.Contains(got, "hostname: ") {
+		t.Errorf("development verifier = %s", got)
 	}
 }

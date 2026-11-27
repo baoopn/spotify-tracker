@@ -142,3 +142,17 @@ func (s *S3) validate(dev bool) error {
 	}
 	return nil
 }
+
+// Turnstile is the Cloudflare Turnstile widget on "Request an invite" at
+// /listen. It is on only when both keys are set.
+type Turnstile struct {
+	// SiteKey is public (sent to the page in /api/v1/listen/config).
+	SiteKey string `env:"TURNSTILE_SITE_KEY"`
+	// SecretKey verifies tokens with Cloudflare. Never logged.
+	SecretKey string `env:"TURNSTILE_SECRET_KEY,unset"`
+}
+
+// Enabled reports whether both keys are set.
+func (t Turnstile) Enabled() bool {
+	return strings.TrimSpace(t.SiteKey) != "" && strings.TrimSpace(t.SecretKey) != ""
+}

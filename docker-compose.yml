@@ -137,6 +137,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_PREFIX: ${S3_PREFIX:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Cloudflare Turnstile on "Request an invite" (on when both are set).
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       # Lyrics from LRCLIB (shown in the admin dashboard and admin MCP tools only).
       LYRICS_ENABLED: ${LYRICS_ENABLED:-true}
       LYRICS_API_URL: ${LYRICS_API_URL:-https://lrclib.net}

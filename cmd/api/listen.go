@@ -66,7 +66,11 @@ func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *adm
 	}
 	// Left nil (not a typed nil) without storage: the audio endpoint then
 	// answers storage_unconfigured.
-	if loc := listen.NewLocator(cfg.Listen, rdb, log.With(slog.String("component", "listen"))); loc != nil {
+	var db listen.AudioDB
+	if st != nil {
+		db = st
+	}
+	if loc := listen.NewLocator(cfg.Listen, rdb, db, log.With(slog.String("component", "listen"))); loc != nil {
 		o.Audio = loc
 	}
 	log.Info("listen along enabled", slog.Bool("audio_configured", cfg.Listen.Configured()),
@@ -94,12 +98,22 @@ func listenPresence(cfg config.API, rdb *redis.Client) *listen.PresenceStore {
 	return listen.NewPresenceStore(rdb)
 }
 
-// attachPresence lets the admin show who is listening now (left nil, not
-// a typed nil, when listen along is off).
-func attachPresence(a *admin.API, cfg config.API, rdb *redis.Client) {
+// attachListen lets the admin show who is listening now and the audio
+// files (each left nil, not a typed nil, when off). It returns the bucket
+// syncer to run, nil when listen along or the S3 storage is off.
+func attachListen(a *admin.API, cfg config.API, st *store.Store, rdb *redis.Client, log *slog.Logger) *listen.Syncer {
 	if p := listenPresence(cfg, rdb); p != nil {
 		a.Presence = p
 	}
+	if !cfg.Listen.Enabled || st == nil {
+		return nil
+	}
+	s := listen.NewSyncer(cfg.Listen, st, rdb, log.With(slog.String("component", "listen_sync")))
+	if s != nil {
+		a.AudioSync = s
+		log.Info("audio bucket sync", slog.Duration("interval", cfg.Listen.AudioSyncInterval))
+	}
+	return s
 }
 
 // listenInfo describes listen along for the admin Listeners page.

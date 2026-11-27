@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,18 @@ const (
 // Presign returns a URL for method on key, valid for ttl (clamped to 1s..7d)
 // from now. The URL carries a credential: never log it.
 func (s *Signer) Presign(method, key string, ttl time.Duration, now time.Time) string {
+	return s.presign(method, "/"+encodeURI(key, true), nil, ttl, now)
+}
+
+// PresignBucket returns a URL for method on the bucket itself (e.g. a
+// ListObjectsV2 GET) with the extra query params, signed like Presign.
+func (s *Signer) PresignBucket(method string, params map[string]string, ttl time.Duration, now time.Time) string {
+	return s.presign(method, "/", params, ttl, now)
+}
+
+// presign signs method on path (the object path, or "/" for the bucket)
+// with the extra query params.
+func (s *Signer) presign(method, path string, params map[string]string, ttl time.Duration, now time.Time) string {
 	ttl = min(max(ttl, minPresign), maxPresign)
 	now = now.UTC()
 	date := now.Format("20060102")
@@ -57,21 +70,37 @@ func (s *Signer) Presign(method, key string, ttl time.Duration, now time.Time) s
 	scope := date + "/" + s.Region + "/s3/aws4_request"
 
 	host := s.Endpoint.Host
-	path := "/" + encodeURI(key, true)
 	if s.PathStyle {
-		path = "/" + encodeURI(s.Bucket, false) + path
+		if path == "/" {
+			path = "/" + encodeURI(s.Bucket, false)
+		} else {
+			path = "/" + encodeURI(s.Bucket, false) + path
+		}
 	} else {
 		host = s.Bucket + "." + host
 	}
 
-	// Already in sorted order.
-	query := strings.Join([]string{
-		"X-Amz-Algorithm=" + sigAlgorithm,
-		"X-Amz-Credential=" + encodeURI(s.AccessKeyID+"/"+scope, false),
-		"X-Amz-Date=" + stamp,
-		"X-Amz-Expires=" + strconv.FormatInt(int64(ttl/time.Second), 10),
-		"X-Amz-SignedHeaders=host",
-	}, "&")
+	q := map[string]string{
+		"X-Amz-Algorithm":     sigAlgorithm,
+		"X-Amz-Credential":    s.AccessKeyID + "/" + scope,
+		"X-Amz-Date":          stamp,
+		"X-Amz-Expires":       strconv.FormatInt(int64(ttl/time.Second), 10),
+		"X-Amz-SignedHeaders": "host",
+	}
+	for k, v := range params {
+		q[k] = v
+	}
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k)
+	}
+	// SigV4 sorts by the encoded name; the names here encode to themselves.
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = encodeURI(k, false) + "=" + encodeURI(q[k], false)
+	}
+	query := strings.Join(parts, "&")
 	canonical := method + "\n" + path + "\n" + query + "\nhost:" + host + "\n\nhost\nUNSIGNED-PAYLOAD"
 	sum := sha256.Sum256([]byte(canonical))
 	toSign := sigAlgorithm + "\n" + stamp + "\n" + scope + "\n" + hex.EncodeToString(sum[:])

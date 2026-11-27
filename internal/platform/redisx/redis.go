@@ -43,6 +43,12 @@ const (
 	// KeyListenAudioPrefix prefixes the listen-along audio lookup cache:
 	// which file extension a track's audio has in S3, or that it has none.
 	KeyListenAudioPrefix = prefix + "listen:audio:"
+	// KeyListenAudioSyncLock is held (SET NX, 10 min) while one replica lists
+	// the audio bucket; KeyListenAudioSyncStatus is the last sync result and
+	// KeyListenAudioSyncCooldown limits syncs started from the admin.
+	KeyListenAudioSyncLock     = prefix + "listen:audio-sync:lock"
+	KeyListenAudioSyncStatus   = prefix + "listen:audio-sync:status"
+	KeyListenAudioSyncCooldown = prefix + "listen:audio-sync:cooldown"
 	// KeyListenPresencePrefix prefixes who is on /listen right now, one key
 	// per listener ID (JSON, 90 s TTL).
 	KeyListenPresencePrefix = prefix + "listen:presence:"

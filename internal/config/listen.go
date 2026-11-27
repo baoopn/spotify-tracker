@@ -23,6 +23,9 @@ type Listen struct {
 	// AudioExtensions are the file extensions tried, in order, for
 	// {S3_PREFIX}{spotify_track_id}.{ext}.
 	AudioExtensions []string `env:"LISTEN_AUDIO_EXTENSIONS" envSeparator:"," envDefault:"mp3,m4a,flac,ogg,opus"`
+	// AudioSyncInterval is how often the bucket is listed to record the
+	// uploaded files (0 = off; 1m..24h).
+	AudioSyncInterval time.Duration `env:"LISTEN_AUDIO_SYNC_INTERVAL" envDefault:"15m"`
 	S3
 }
 
@@ -91,6 +94,9 @@ func (l *Listen) validate(dev bool, adminRole string) error {
 		return fmt.Errorf("LISTEN_AUDIO_EXTENSIONS must list 1 to 10 extensions")
 	}
 	l.AudioExtensions = exts
+	if l.AudioSyncInterval != 0 && (l.AudioSyncInterval < time.Minute || l.AudioSyncInterval > 24*time.Hour) {
+		return fmt.Errorf("LISTEN_AUDIO_SYNC_INTERVAL must be 0 (off) or between 1m and 24h")
+	}
 	return l.S3.validate(dev)
 }
 

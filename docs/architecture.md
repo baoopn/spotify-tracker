@@ -760,6 +760,28 @@ puts the bucket in the path. With `false` the bucket becomes part of the host
 name, so a bucket name with dots fails the TLS check over https: keep path
 style for such buckets.
 
+**Uploaded files.** The `track_audio` table records the files in the bucket,
+one row per track (the first extension in `LISTEN_AUDIO_EXTENSIONS` order
+when a track has several). No foreign key: a file may exist before its track
+is in the catalog.
+
+- The API lists the bucket prefix (S3 ListObjectsV2, signed like the audio
+  URLs) every `LISTEN_AUDIO_SYNC_INTERVAL` (default 15 minutes, `0` turns it
+  off), the first time about 30 s after start. It keeps only keys
+  `{S3_PREFIX}{spotify_track_id}.{ext}` with an allowed extension.
+- A Redis lock (10 minutes) lets only one replica sync at a time.
+- It upserts the listed files, then deletes the rows not in the listing. It
+  deletes only after a complete listing: a failed page changes no rows.
+- It clears the Redis lookup cache of every listed and removed track, so a
+  cached "no file" answer ends at once.
+- The last sync time, the file count and the last error are kept in Redis.
+- The admin can sync now from the Audio files page (at most every 30 s).
+
+The audio lookup checks `track_audio` first: a recorded file is signed at
+once, with no request to the bucket. Without a row it sends the HEAD requests
+as before, and records a file it finds, so the next lookup is instant. The
+read key needs list access for the sync.
+
 **Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
 so the MCP server cannot reach them):
 

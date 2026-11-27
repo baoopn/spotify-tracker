@@ -36,6 +36,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/config"
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
+	"github.com/baoopn/spotify-tracker/internal/listen"
 	"github.com/baoopn/spotify-tracker/internal/logging"
 	"github.com/baoopn/spotify-tracker/internal/lyrics"
 	"github.com/baoopn/spotify-tracker/internal/mcpserver"
@@ -111,6 +112,7 @@ func run(ctx context.Context) error {
 		g.Go(func() error { return c.translator.Run(gctx) })
 	}
 	g.Go(func() error { return c.brand.Run(gctx) })
+	g.Go(func() error { return c.listenSync.Run(gctx) }) // nil when off
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
 	}
@@ -138,6 +140,7 @@ type components struct {
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
 	topPlaylists *topplaylists.Runner
+	listenSync   *listen.Syncer // nil when listen along or S3 is off
 }
 
 // wire builds every service and server from config and connections.
@@ -192,7 +195,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Checks: checks, MCP: mcpInfo(cfg), Listen: listenInfo(cfg),
 	}}
 
-	attachPresence(adminAPI, cfg, rdb)
+	listenSync := attachListen(adminAPI, cfg, st, rdb, log)
 	topCfg := topPlaylistsConfig(cfg, log)
 	var topRunner *topplaylists.Runner
 	if topCfg.Enabled() {
@@ -220,6 +223,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		lyrics:       lyricsRefresher,
 		translator:   translator,
 		topPlaylists: topRunner,
+		listenSync:   listenSync,
 		brand:        brandCache,
 	}, nil
 }

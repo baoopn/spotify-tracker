@@ -8,7 +8,7 @@ import (
 )
 
 func validListen() Listen {
-	return Listen{Enabled: true, AudioURLTTL: 10 * time.Minute, AudioExtensions: []string{"mp3", "m4a"},
+	return Listen{Enabled: true, AudioURLTTL: 10 * time.Minute, AudioExtensions: []string{"mp3", "m4a"}, AudioSyncInterval: 15 * time.Minute,
 		S3: S3{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "music",
 			AccessKeyID: "AKID", SecretAccessKey: "secret", Prefix: "audio/", ForcePathStyle: true}}
 }
@@ -42,6 +42,9 @@ func TestListenValidate(t *testing.T) {
 		{"endpoint with query", func(l *Listen) { l.Endpoint = "https://s3.example.com?x=1" }, false, "admin", "no path"},
 		{"endpoint with fragment", func(l *Listen) { l.Endpoint = "https://s3.example.com#x" }, false, "admin", "no path"},
 		{"endpoint no host", func(l *Listen) { l.Endpoint = "s3.example.com" }, false, "admin", "absolute"},
+		{"sync off", func(l *Listen) { l.AudioSyncInterval = 0 }, false, "admin", ""},
+		{"sync too often", func(l *Listen) { l.AudioSyncInterval = 30 * time.Second }, false, "admin", "LISTEN_AUDIO_SYNC_INTERVAL"},
+		{"sync too rare", func(l *Listen) { l.AudioSyncInterval = 48 * time.Hour }, false, "admin", "LISTEN_AUDIO_SYNC_INTERVAL"},
 		{"empty region", func(l *Listen) { l.Region = " " }, false, "admin", "S3_REGION"},
 		{"prefix slash", func(l *Listen) { l.Prefix = "/audio" }, false, "admin", "S3_PREFIX"},
 		{"prefix dotdot", func(l *Listen) { l.Prefix = "a/../b/" }, false, "admin", "S3_PREFIX"},
@@ -100,7 +103,7 @@ func TestLoadAPIListenDefaults(t *testing.T) {
 	}
 	l := cfg.Listen
 	if l.Enabled || l.AudioURLTTL != 10*time.Minute || !slices.Equal(l.AudioExtensions, []string{"mp3", "m4a", "flac", "ogg", "opus"}) ||
-		l.Region != "us-east-1" || !l.ForcePathStyle || l.Configured() {
+		l.Region != "us-east-1" || !l.ForcePathStyle || l.Configured() || l.AudioSyncInterval != 15*time.Minute {
 		t.Errorf("defaults = %+v", l)
 	}
 }

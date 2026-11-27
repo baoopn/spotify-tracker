@@ -340,6 +340,43 @@ Audit actions: `listener.invited` (`id`, `email`, `existing_account`),
 `clerk_cleanup`), `listener.accepted` (`id`, `email`, `clerk_user_id`; the
 actor is the listener's email). Refused listeners are logged, not audited.
 
+## Audio files
+
+The Listen → Audio files page lists the listen-along audio files recorded
+from the bucket (see [architecture.md](architecture.md#listen-along)). None of
+these routes are reachable through MCP.
+
+```ts
+type AudioTrack = { id: string; name: string; duration_ms: number; artists: { id: string; name: string }[]
+                    album_name: string; cover_image_url: string }
+type AudioFile = {
+  track_id: string; ext: string; size_bytes: number; content_type: string | null
+  last_modified: string | null          // from the bucket
+  first_seen_at: string
+  track: AudioTrack | null              // null when the track is not in the catalog
+  owner_plays: number                   // the owner's plays of the track
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listen/audio?q=&limit=&offset=` | – | `{ data: AudioFile[], total, summary: { files, total_bytes, tracks_in_catalog, last_sync_at, last_error, sync_interval_s } }`: newest `last_modified` first; `q` searches the track and artist names; `limit` 1 to 100, default 50 |
+| GET | `/admin/api/listen/audio/missing?limit=&offset=` | – | `{ data: [{ track: AudioTrack, owner_plays, last_played_at }], total }`: the owner's most-played tracks (all time) with no file |
+| POST | `/admin/api/listen/audio/sync` | – | `{ files, added, removed, took_ms }` after a sync (at most 60 s) |
+
+`last_sync_at` is the last attempt and `last_error` its error (`null` when it
+worked); both are `null` before the first sync. `sync_interval_s` is
+`LISTEN_AUDIO_SYNC_INTERVAL` in seconds (`0` = off).
+
+Sync errors: `409 sync_running` (a sync runs on some replica),
+`429 rate_limited` (less than 30 s since the last one), `503
+storage_unconfigured` (listen along or S3 is off), `503 sync_failed` (the
+bucket could not be listed; no rows changed). Audit action:
+`listen.audio_synced` (`files`, `added`, `removed`, or `error`).
+
+`GET /admin/api/tracks` also takes `audio=has|missing` (400 `invalid_audio`
+otherwise), and each row has `has_audio`.
+
 ## Data
 
 | Method | Path | Query | Response |
@@ -633,7 +670,8 @@ time-zone handling as the API analytics):
 `top_playlists.generated`, `top_playlists.regenerated`, `top_playlists.hidden`,
 `top_playlists.shown`, `backups.run_requested`, `backups.refresh_requested`,
 `backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change),
-`listener.invited`, `listener.resent`, `listener.revoked`, `listener.accepted` (see [Listeners](#listeners)).
+`listener.invited`, `listener.resent`, `listener.revoked`, `listener.accepted` (see [Listeners](#listeners)),
+`listen.audio_synced` (see [Audio files](#audio-files)).
 
 ## Playlists
 

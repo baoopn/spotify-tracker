@@ -25,6 +25,8 @@ type TrackRow struct {
 	// LyricsSynced is true when the stored lyrics have a time-synced version.
 	LyricsSynced bool      `json:"lyrics_synced"`
 	CreatedAt    time.Time `json:"created_at"`
+	// HasAudio is true when the track has a listen-along audio file.
+	HasAudio bool `json:"has_audio"`
 }
 
 // Lyrics filters of AdminTracks.
@@ -172,6 +174,13 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 // lyrics is "" or one of the LyricsFilter constants (an unknown value adds no
 // filter; callers validate it with ValidLyricsFilter).
 func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort, order string, limit, offset int) ([]TrackRow, int64, error) {
+	return q.AdminTrackList(ctx, TrackQuery{Search: search, Status: status, Lyrics: lyrics, Sort: sort, Order: order,
+		Limit: limit, Offset: offset})
+}
+
+// AdminTrackList is AdminTracks with every filter, including audio.
+func (q *Queries) AdminTrackList(ctx context.Context, tq TrackQuery) ([]TrackRow, int64, error) {
+	search, status, lyrics, sort, order, limit, offset := tq.Search, tq.Status, tq.Lyrics, tq.Sort, tq.Order, tq.Limit, tq.Offset
 	sortCol := map[string]string{
 		"plays": "plays", "last_played": "last_played", "name": "t.name", "created": "t.created_at",
 	}[sort]
@@ -204,6 +213,9 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 	if cond := lyricsFilters[lyrics]; cond != "" {
 		where = append(where, "("+cond+")")
 	}
+	if cond := audioFilters[tq.Audio]; cond != "" {
+		where = append(where, cond)
+	}
 	base := `
 		FROM tracks t
 		LEFT JOIN albums al ON al.id = t.album_id
@@ -223,7 +235,7 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 	rows, err := q.db.Query(ctx, `
 		SELECT COALESCE(p.plays, 0) AS plays, p.last_played AS last_played,
 			COALESCE(tf.status, 'pending'), COALESCE(l.status, 'pending'), COALESCE(l.synced_lyrics, '') <> '',
-			t.created_at, `+trackColumns+base+
+			t.created_at, `+hasAudio+`, `+trackColumns+base+
 		fmt.Sprintf(` ORDER BY %s %s NULLS LAST, t.id LIMIT $%d OFFSET $%d`, sortCol, dir, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("admin tracks: %w", err)
@@ -234,7 +246,7 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 		var tr TrackRow
 		var al albumScan
 		if err := rows.Scan(append(append([]any{&tr.Plays, &tr.LastPlayed, &tr.EnrichmentStatus,
-			&tr.LyricsStatus, &tr.LyricsSynced, &tr.CreatedAt},
+			&tr.LyricsStatus, &tr.LyricsSynced, &tr.CreatedAt, &tr.HasAudio},
 			scanTrack(&tr.Track)...), al.targets()...)...); err != nil {
 			return nil, 0, err
 		}

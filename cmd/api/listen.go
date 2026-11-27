@@ -23,7 +23,8 @@ import (
 // publicSiteOptions configures the public page: its CSP also allows the
 // Spotify embed player used for the top playlists, and the live footer credit
 // (fetched from baoopn.com, logo served from media.baoopn.com). With listen
-// along on, /listen also allows Clerk (sign-in) and the audio bucket.
+// along on, / and /listen also allow Clerk (the account menu signs people in
+// on both), and /listen the audio bucket too.
 func publicSiteOptions(cfg config.API) staticsite.Options {
 	opts := staticsite.Options{
 		ExtraCSP: map[string]string{
@@ -35,16 +36,19 @@ func publicSiteOptions(cfg config.API) staticsite.Options {
 	}
 	if cfg.Listen.Enabled && cfg.Admin.Enabled() {
 		clerk := admin.ClerkCSPSources(cfg.Admin.ClerkPublishableKey)
-		page := map[string]string{
-			"script-src":  clerk,
-			"connect-src": clerk,
-			"frame-src":   clerk,
-			"img-src":     "https://img.clerk.com",
+		clerkPage := func() map[string]string {
+			return map[string]string{
+				"script-src":  clerk,
+				"connect-src": clerk,
+				"frame-src":   clerk,
+				"img-src":     "https://img.clerk.com",
+			}
 		}
+		listenPage := clerkPage()
 		if origin := cfg.Listen.Origin(); origin != "" {
-			page["media-src"] = origin
+			listenPage["media-src"] = origin // audio plays on /listen only
 		}
-		opts.PageCSP = map[string]map[string]string{"listen.html": page}
+		opts.PageCSP = map[string]map[string]string{"listen.html": listenPage, "index.html": clerkPage()}
 	}
 	return opts
 }

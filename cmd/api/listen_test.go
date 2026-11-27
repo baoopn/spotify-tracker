@@ -2,11 +2,15 @@ package main
 
 import (
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/config"
+	"github.com/baoopn/spotify-tracker/internal/staticsite"
 )
 
 func listenCfg() config.API {
@@ -39,6 +43,50 @@ func TestListenPageCSP(t *testing.T) {
 	noS3.Listen.S3 = config.S3{}
 	if _, ok := publicSiteOptions(noS3).PageCSP["listen.html"]["media-src"]; ok {
 		t.Error("media-src without storage")
+	}
+}
+
+// / gets the Clerk sources (the account menu) only when listen along and
+// Clerk are on, never the audio bucket; /listen is unchanged.
+func TestIndexPageCSP(t *testing.T) {
+	site := func(cfg config.API) *staticsite.Site {
+		return staticsite.New(fstest.MapFS{
+			"index.html":  {Data: []byte("<script>home()</script>")},
+			"listen.html": {Data: []byte("<script>listen()</script>")},
+		}, publicSiteOptions(cfg))
+	}
+	csp := func(s *staticsite.Site, path string) map[string]string {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		out := map[string]string{}
+		for _, d := range strings.Split(rec.Header().Get("Content-Security-Policy"), "; ") {
+			name, value, _ := strings.Cut(d, " ")
+			out[name] = value
+		}
+		return out
+	}
+	on := site(listenCfg())
+	home := csp(on, "/")
+	for _, d := range []string{"script-src", "connect-src", "frame-src"} {
+		if !strings.Contains(home[d], "https://clerk.example.com") || !strings.Contains(home[d], "https://challenges.cloudflare.com") {
+			t.Errorf("/ %s = %q", d, home[d])
+		}
+	}
+	if !strings.Contains(home["img-src"], "https://img.clerk.com") || home["media-src"] != "'self'" ||
+		home["frame-ancestors"] != "'none'" || !strings.Contains(home["frame-src"], "https://open.spotify.com") ||
+		!strings.Contains(home["connect-src"], "https://baoopn.com") {
+		t.Errorf("/ = %v", home)
+	}
+	listen := csp(on, "/listen")
+	if listen["media-src"] != "'self' https://s3.example.com" || !strings.Contains(listen["script-src"], "https://clerk.example.com") {
+		t.Errorf("/listen = %v", listen)
+	}
+
+	for name, cfg := range map[string]config.API{"listen off": func() config.API { c := listenCfg(); c.Listen.Enabled = false; return c }(),
+		"no clerk": func() config.API { c := listenCfg(); c.Admin = config.Admin{}; return c }()} {
+		if got := csp(site(cfg), "/"); strings.Contains(got["script-src"], "clerk") || strings.Contains(got["img-src"], "img.clerk.com") {
+			t.Errorf("%s: / = %v", name, got)
+		}
 	}
 }
 

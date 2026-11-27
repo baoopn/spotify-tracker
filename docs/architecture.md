@@ -896,10 +896,39 @@ update. No Postgres row and no IP address: the country is Cloudflare's
 same rules as page stats. A revoke deletes the key, and the admin list leaves
 out revoked listeners. Nothing is stored for an admin previewing the page.
 
+**Sign-in from `/`.** With listen along on, the header of `/` and `/listen`
+has a small account control:
+
+- Signed out: a Sign in button. It opens Clerk's sign-in as a modal. After
+  sign-in the page asks `/api/v1/listen/me`: 200 goes to `/listen`, 403 stays
+  on `/` with "Request an invite" in the menu.
+- Signed in: an avatar that opens a menu with Listen along (when allowed),
+  Request an invite (when not), Manage profile (Clerk's profile modal, with
+  account deletion hidden) and Sign out.
+- With listen along off, the header looks as before.
+- Clerk loads lazily on `/`. A visitor with no sign-in cookie (Clerk's
+  `__client_uat` unset or 0) loads no Clerk code until they click Sign in.
+  With the cookie set, Clerk loads to show the avatar.
+
+Redirect rules:
+
+- Clerk always returns to the page itself: it never sends people to a
+  Clerk-hosted page or to `/admin`.
+- An invitation link (`/listen?__clerk_ticket=…&__clerk_status=sign_up`)
+  opens sign-up on `/listen` and stays there.
+- A `redirect_url` or `return_to` parameter is used only when it is a
+  same-origin path: it starts with `/` and not with `//` or `/\`. Anything
+  else is ignored.
+- Sign out stays on the current page: `/listen` shows its sign-in card, `/`
+  stays `/`.
+- The admin keeps its own sign-in at `/admin`.
+
 **CSP.** The public site's CSP adds `media-src 'self'`. `/listen` has its own
 CSP: the hashes of its own inline scripts, Clerk's hosts for scripts, frames
 and requests, `https://img.clerk.com` for images and the bucket origin for
-`media-src`.
+`media-src`. With listen along and Clerk on, `/` gets the same Clerk sources
+(not the bucket origin, since no audio plays there); the 404 page keeps the
+site CSP.
 
 ## MCP server
 
@@ -1043,6 +1072,11 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   only prefetched is not found on the public `GET /api/v1/tracks/{id}`
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
+- Sign-in from `/` follows only same-origin `redirect_url` / `return_to`
+  paths (a leading `/`, never `//` or `/\`), so it cannot be used as an open
+  redirect. Clerk is allowed in the CSP of `/` only when listen along is on,
+  and it loads only on demand: visitors with no sign-in cookie fetch no Clerk
+  code.
 - Listen along (`/listen`): the `listeners` table, not the Clerk role,
   decides access, and it is read on every request, so a revoke cuts access on
   the next request. An audio URL that was already issued keeps working until

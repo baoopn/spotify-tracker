@@ -27,7 +27,9 @@ type Options struct {
 	// Extra CSP sources per directive, e.g. {"script-src": "https://x"}.
 	ExtraCSP map[string]string
 	// PageCSP adds CSP sources for one prerendered page, keyed by its file
-	// name in the build (e.g. "listen.html"), on top of ExtraCSP.
+	// name in the build (e.g. "listen.html"), on top of ExtraCSP. An
+	// "index.html" entry applies to the index page (and the SPA fallback),
+	// never to the 404 page or the placeholder of a missing build.
 	PageCSP map[string]map[string]string
 	// Placeholder is served as index.html when the build is missing.
 	Placeholder string
@@ -40,6 +42,8 @@ type Site struct {
 	index []byte
 	nf    []byte
 	csp   string
+	// indexCSP is the CSP of the index page: csp plus PageCSP["index.html"].
+	indexCSP string
 	// pages is the CSP of each prerendered page other than index.html and
 	// 404.html, from that page's own inline scripts.
 	pages map[string]string
@@ -50,14 +54,20 @@ type Site struct {
 func New(dist fs.FS, opts Options) *Site {
 	s := &Site{dist: dist, opts: opts, files: http.FileServerFS(dist)}
 	idx, err := fs.ReadFile(dist, "index.html")
-	if err != nil {
+	built := err == nil
+	if !built {
 		idx = []byte(`<!doctype html><meta charset="utf-8"><title>Not built</title><p>` + opts.Placeholder + `</p>`)
 	}
 	s.index = idx
 	if nf, err := fs.ReadFile(dist, "404.html"); err == nil {
 		s.nf = nf
 	}
-	s.csp = BuildCSP(append(append([]byte{}, idx...), s.nf...), opts.ExtraCSP)
+	scripts := append(append([]byte{}, idx...), s.nf...)
+	s.csp = BuildCSP(scripts, opts.ExtraCSP)
+	s.indexCSP = s.csp
+	if extra, ok := opts.PageCSP["index.html"]; ok && built {
+		s.indexCSP = BuildCSP(scripts, merge(opts.ExtraCSP, extra))
+	}
 	s.pages = map[string]string{}
 	_ = fs.WalkDir(dist, ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path.Ext(name) != ".html" || name == "index.html" || name == "404.html" {
@@ -112,7 +122,7 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, s.opts.Prefix)
 	p = strings.TrimPrefix(p, "/")
 	if p == "" || p == "index.html" {
-		s.html(w, http.StatusOK, s.index, s.csp)
+		s.html(w, http.StatusOK, s.index, s.indexCSP)
 		return
 	}
 	clean := path.Clean(p)
@@ -149,7 +159,7 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.opts.SPA && path.Ext(clean) == "" {
-		s.html(w, http.StatusOK, s.index, s.csp)
+		s.html(w, http.StatusOK, s.index, s.indexCSP)
 		return
 	}
 	s.notFound(w, r)

@@ -32,11 +32,18 @@ func TestClerkFrontendHost(t *testing.T) {
 
 func TestClerkSources(t *testing.T) {
 	pk := "pk_live_" + base64.StdEncoding.EncodeToString([]byte("clerk.example.com$"))
-	if got := ClerkCSPSources(pk); got != "https://clerk.example.com https://challenges.cloudflare.com" {
-		t.Errorf("with a host: %q", got)
+	want := ClerkCSP{
+		Script:  "https://clerk.example.com https://challenges.cloudflare.com https://*.protect.clerk.com",
+		Connect: "https://clerk.example.com https://challenges.cloudflare.com https://*.protect.clerk.com:*",
+		Frame:   "https://clerk.example.com https://challenges.cloudflare.com https://*.protect.clerk.com",
+		Img:     "https://img.clerk.com",
 	}
-	if got := ClerkCSPSources(""); got != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com" {
-		t.Errorf("fallback: %q", got)
+	if got := ClerkCSPSources(pk); got != want {
+		t.Errorf("with a host: %+v", got)
+	}
+	if got := ClerkCSPSources(""); got.Script != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com https://*.protect.clerk.com" ||
+		got.Connect != "https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com https://*.protect.clerk.com:*" {
+		t.Errorf("fallback: %+v", got)
 	}
 }
 
@@ -88,6 +95,16 @@ func TestSPA(t *testing.T) {
 	}
 	if strings.Contains(directive("script-src"), "unsafe-inline") {
 		t.Errorf("script-src must not allow unsafe-inline: %s", csp)
+	}
+	// Clerk's protection hosts (Device Intelligence), per Clerk's CSP guide.
+	for d, want := range map[string]string{"script-src": "https://*.protect.clerk.com", "frame-src": "https://*.protect.clerk.com",
+		"connect-src": "https://*.protect.clerk.com:*"} {
+		if !strings.Contains(" "+directive(d)+" ", " "+want+" ") {
+			t.Errorf("%s misses %q: %q", d, want, directive(d))
+		}
+	}
+	if !strings.Contains(directive("worker-src"), "blob:") || !strings.Contains(directive("style-src"), "'unsafe-inline'") {
+		t.Errorf("worker-src / style-src: %s", csp)
 	}
 
 	if rec := get("/admin/_app/immutable/entry.js"); rec.Code != 200 ||

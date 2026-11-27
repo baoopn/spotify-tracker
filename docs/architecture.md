@@ -754,7 +754,8 @@ that order (a Spotify rate limit at any step ends the tick):
 
 SvelteKit SPA built to static files and embedded with `go:embed`, served at
 `/admin` with a strict CSP. Script hashes are computed from `index.html` at
-startup, and the Clerk Frontend API host is derived from the publishable key.
+startup, and the Clerk Frontend API host is derived from the publishable key
+(the Clerk sources are listed under Listen along, CSP).
 Authentication is by Clerk: the SPA sends the Clerk session JWT as a Bearer
 token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
@@ -977,6 +978,23 @@ and requests, `https://img.clerk.com` for images and the bucket origin for
 (not the bucket origin, since no audio plays there); the 404 page keeps the
 site CSP.
 
+The Clerk sources follow Clerk's CSP guide, the same on `/`, `/listen` and
+the admin SPA (`admin.ClerkCSPSources`):
+
+- `script-src`: the Frontend API host, `https://challenges.cloudflare.com`
+  and `https://*.protect.clerk.com`;
+- `connect-src`: the Frontend API host and `https://*.protect.clerk.com:*`
+  (any port, as the guide asks);
+- `frame-src`: the Frontend API host, `https://challenges.cloudflare.com` and
+  `https://*.protect.clerk.com`;
+- `img-src`: `https://img.clerk.com`. The base CSP already has
+  `worker-src 'self' blob:` and `style-src 'unsafe-inline'`.
+
+`*.protect.clerk.com` serves Clerk's abuse and fraud protection (Device
+Intelligence). When the CSP blocks it, those checks cannot run, and a Clerk
+Protect policy that requires them blocks sign-ups (this blocked invitation
+sign-ups once).
+
 ## MCP server
 
 `cmd/api` also serves a remote [MCP](https://modelcontextprotocol.io) server at
@@ -1119,6 +1137,10 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   only prefetched is not found on the public `GET /api/v1/tracks/{id}`
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
+- Clerk's protection hosts (`*.protect.clerk.com`) are allowed in every
+  Clerk CSP so Device Intelligence can run; without them Clerk Protect
+  rejects sign-ups that its policy requires to be checked. The CSP still
+  lists only Clerk's own hosts and Cloudflare Turnstile.
 - Sign-in from `/` follows only same-origin `redirect_url` / `return_to`
   paths (a leading `/`, never `//`, a `\`, control characters or `/admin`),
   so it cannot be used as an open redirect. Clerk is allowed in the CSP of

@@ -78,6 +78,14 @@ func TestIndexPageCSP(t *testing.T) {
 		!strings.Contains(home["connect-src"], "https://baoopn.com") {
 		t.Errorf("/ = %v", home)
 	}
+	// Clerk's protection hosts, on / and /listen alike.
+	for _, page := range []string{"/", "/listen"} {
+		got := csp(on, page)
+		if !strings.Contains(got["script-src"], "https://*.protect.clerk.com") || !strings.Contains(got["frame-src"], "https://*.protect.clerk.com") ||
+			!strings.Contains(got["connect-src"], "https://*.protect.clerk.com:*") {
+			t.Errorf("%s protect hosts = %v", page, got)
+		}
+	}
 	listen := csp(on, "/listen")
 	if listen["media-src"] != "'self' https://s3.example.com" || !strings.Contains(listen["script-src"], "https://clerk.example.com") {
 		t.Errorf("/listen = %v", listen)

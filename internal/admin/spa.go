@@ -12,21 +12,19 @@ import (
 )
 
 // MountSPA serves the built dashboard at /admin with client-side routing
-// fallback and a strict CSP that also allows Clerk's Frontend API (derived
-// from the publishable key; Clerk's wildcard hosts only without one) and
-// Cloudflare Turnstile.
+// fallback and a strict CSP that also allows Clerk (ClerkCSPSources).
 func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
 	clerk := ClerkCSPSources(clerkPublishableKey)
 	site := staticsite.New(dist, staticsite.Options{
 		Prefix: "/admin",
 		SPA:    true,
 		ExtraCSP: map[string]string{
-			"script-src": clerk,
+			"script-src": clerk.Script,
 			// The sidebar credit fetches https://baoopn.com/api/v1/credit and
 			// shows the brand mark from media.baoopn.com.
-			"connect-src": clerk + " https://baoopn.com",
-			"frame-src":   clerk,
-			"img-src":     "https://img.clerk.com https://media.baoopn.com",
+			"connect-src": clerk.Connect + " https://baoopn.com",
+			"frame-src":   clerk.Frame,
+			"img-src":     clerk.Img + " https://media.baoopn.com",
 		},
 		Placeholder: "The admin UI was not built. Run <code>pnpm --dir web/admin build</code>.",
 	})
@@ -37,15 +35,36 @@ func MountSPA(r chi.Router, dist fs.FS, clerkPublishableKey string) {
 	r.Head("/admin/*", site.ServeHTTP)
 }
 
-// ClerkCSPSources is the CSP source list for Clerk and Turnstile (the admin
-// SPA and the /listen page): the Frontend API host from the publishable key,
-// or Clerk's wildcard hosts only when the key carries no usable host.
-func ClerkCSPSources(pk string) string {
-	const turnstile = "https://challenges.cloudflare.com"
+// ClerkCSP is the CSP sources Clerk needs, per directive.
+type ClerkCSP struct {
+	Script, Connect, Frame, Img string
+}
+
+const (
+	turnstileHost = "https://challenges.cloudflare.com"
+	// protectHost serves Clerk's abuse and fraud protection (Device
+	// Intelligence). When it is blocked, Clerk Protect cannot run its checks
+	// and a policy that requires them blocks sign-ups.
+	protectHost = "https://*.protect.clerk.com"
+)
+
+// ClerkCSPSources is the CSP for Clerk on the admin SPA, /listen and / (see
+// Clerk's CSP guide): the Frontend API host from the publishable key (Clerk's
+// wildcard hosts only when the key carries no usable host), Cloudflare
+// Turnstile, and Clerk's protection hosts (any port for connections, as the
+// guide asks). The pages' base CSP already has worker-src 'self' blob: and
+// style-src 'unsafe-inline'.
+func ClerkCSPSources(pk string) ClerkCSP {
+	fapi := "https://*.clerk.accounts.dev https://*.clerk.com"
 	if host := ClerkFrontendHost(pk); host != "" {
-		return "https://" + host + " " + turnstile
+		fapi = "https://" + host
 	}
-	return "https://*.clerk.accounts.dev https://*.clerk.com " + turnstile
+	return ClerkCSP{
+		Script:  fapi + " " + turnstileHost + " " + protectHost,
+		Connect: fapi + " " + turnstileHost + " " + protectHost + ":*",
+		Frame:   fapi + " " + turnstileHost + " " + protectHost,
+		Img:     "https://img.clerk.com",
+	}
 }
 
 // ClerkFrontendHost decodes the Frontend API host embedded in a Clerk

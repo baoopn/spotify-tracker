@@ -39,10 +39,10 @@ func publicSiteOptions(cfg config.API) staticsite.Options {
 		clerk := admin.ClerkCSPSources(cfg.Admin.ClerkPublishableKey)
 		clerkPage := func() map[string]string {
 			return map[string]string{
-				"script-src":  clerk,
-				"connect-src": clerk,
-				"frame-src":   clerk,
-				"img-src":     "https://img.clerk.com",
+				"script-src":  clerk.Script,
+				"connect-src": clerk.Connect,
+				"frame-src":   clerk.Frame,
+				"img-src":     clerk.Img,
 			}
 		}
 		listenPage := clerkPage()

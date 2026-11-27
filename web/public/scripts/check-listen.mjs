@@ -3,6 +3,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+	hasClerkParams,
+	hasInviteTicket,
+	inviteMode,
+	stripClerkParams
+} from '../src/lib/account/invite.ts';
+import {
 	DriftController,
 	DriftState,
 	HARD_SEEK_MS,
@@ -484,6 +490,30 @@ near(rateFor(-30), 1.01, 'rounded to 0.005 (1.0075)');
 	c.noteSeek();
 	assert.equal(c.seekPending, false, 'cleared by the player seek');
 }
+
+// Invitation links: which Clerk screen, and stripping the params afterwards.
+assert.equal(inviteMode('?__clerk_status=sign_up&__clerk_ticket=t'), 'sign_up');
+assert.equal(inviteMode('?__clerk_status=complete&__clerk_ticket=t'), 'used');
+assert.equal(inviteMode('?__clerk_status=sign_in'), 'used');
+assert.equal(inviteMode(''), 'none');
+assert.equal(inviteMode('?redirect_url=/listen'), 'none');
+assert.equal(inviteMode('?__clerk_status=other'), 'none');
+assert.equal(hasInviteTicket('?__clerk_status=sign_up&__clerk_ticket=t'), true);
+assert.equal(hasInviteTicket('?__clerk_ticket='), false, 'empty ticket');
+assert.equal(hasInviteTicket('?__clerk_status=sign_up'), false);
+assert.equal(hasClerkParams('?a=1&__clerk_status=complete'), true);
+assert.equal(hasClerkParams('?a=1'), false);
+assert.equal(
+	stripClerkParams('/listen', '?a=1&__clerk_status=sign_up&__clerk_ticket=t&b=2', '#history'),
+	'/listen?a=1&b=2#history',
+	'keeps other params and the hash'
+);
+assert.equal(
+	stripClerkParams('/listen', '?__clerk_status=sign_up&__clerk_ticket=t', ''),
+	'/listen',
+	'no empty ?'
+);
+assert.equal(stripClerkParams('/listen', '', '#x'), '/listen#x');
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

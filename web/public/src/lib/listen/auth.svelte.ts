@@ -100,7 +100,17 @@ async function navigateTo(to: string, replaceState = false): Promise<void> {
 }
 
 class ListenAuth {
-	status = $state<ListenAuthStatus>('idle');
+	#status = $state<ListenAuthStatus>('idle');
+	/** Was signed out at some point on this page (a sign-in or sign-up then happened here). */
+	everSignedOut = $state(false);
+
+	get status(): ListenAuthStatus {
+		return this.#status;
+	}
+	set status(v: ListenAuthStatus) {
+		this.#status = v;
+		if (v === 'signed-out') this.everSignedOut = true;
+	}
 	me = $state<ListenMe | null>(null);
 	error = $state<string | null>(null);
 	clerk = $state.raw<Clerk | null>(null);

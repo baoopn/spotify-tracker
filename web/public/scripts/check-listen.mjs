@@ -10,6 +10,8 @@ import {
 	SEEK_LEAD_MS,
 	URL_REFRESH_MARGIN_MS,
 	audioNote,
+	joinSeekMs,
+	nextStatus,
 	parseVolume,
 	seekTarget,
 	shouldRefreshUrl,
@@ -137,6 +139,42 @@ assert.equal(parseVolume('1'), 1);
 assert.equal(parseVolume('7'), 1);
 assert.equal(parseVolume('-2'), 0);
 assert.equal(parseVolume('Infinity'), DEFAULT_VOLUME);
+
+// Join after Stop streaming starts at Bao's live position, never where the
+// listener stopped: the audio position plays no part.
+assert.equal(joinSeekMs(95_000, 200_000), 95_000 + SEEK_LEAD_MS);
+assert.equal(joinSeekMs(null, 200_000), null, 'nothing to follow');
+assert.equal(joinSeekMs(199_900, 200_000), 199_750, 'stays inside the file');
+
+// nextStatus: the status after a tick.
+/** @type {import('../src/lib/listen/sync.ts').StatusInput} */
+const st = {
+	current: 'loading',
+	hasTrack: true,
+	targetMs: 10_000,
+	ownerPlaying: true,
+	joined: true,
+	hasSource: true,
+	paused: false,
+	readyState: 4,
+	driftMs: 100
+};
+assert.equal(nextStatus(st), 'in-sync');
+assert.equal(nextStatus({ ...st, driftMs: DRIFT_MS }), 'loading', 'too far off');
+assert.equal(nextStatus({ ...st, readyState: 2 }), 'loading', 'still buffering');
+assert.equal(nextStatus({ ...st, ownerPlaying: false }), 'paused-by-owner');
+assert.equal(nextStatus({ ...st, targetMs: null }), 'waiting');
+assert.equal(nextStatus({ ...st, hasTrack: false }), 'waiting');
+assert.equal(
+	nextStatus({ ...st, current: 'no-audio' }),
+	'no-audio',
+	'sticks until the song changes'
+);
+assert.equal(nextStatus({ ...st, current: 'ended', paused: true }), 'ended');
+// Not joined (also after Stop streaming): ready once the metadata is in.
+assert.equal(nextStatus({ ...st, joined: false, paused: true, readyState: 1 }), 'in-sync');
+assert.equal(nextStatus({ ...st, joined: false, paused: true, readyState: 0 }), 'loading');
+assert.equal(nextStatus({ ...st, hasSource: false }), 'loading');
 
 // playedDelta: currentTime steps count; seeks and steps back do not.
 assert.equal(playedDelta(null, 10), 0, 'first reading');

@@ -44,8 +44,12 @@ export function store(key: string, value: string): void {
 	}
 }
 
-/** OS play joins, OS pause leaves; everything else does nothing. */
-export function setupMediaSession(onPlay: () => void, onPause: () => void): void {
+/** OS play joins, OS pause leaves, OS stop stops streaming; seek and skip do nothing. */
+export function setupMediaSession(
+	onPlay: () => void,
+	onPause: () => void,
+	onStop: () => void
+): void {
 	if (!('mediaSession' in navigator)) return;
 	const ms = navigator.mediaSession;
 	const set = (action: MediaSessionAction, fn: MediaSessionActionHandler | null) => {
@@ -60,6 +64,7 @@ export function setupMediaSession(onPlay: () => void, onPause: () => void): void
 	for (const action of NOOP_ACTIONS) set(action, noop);
 	set('play', onPlay);
 	set('pause', onPause);
+	set('stop', onStop);
 }
 
 export function setMediaMetadata(track: NowPlaying['track'] | undefined): void {

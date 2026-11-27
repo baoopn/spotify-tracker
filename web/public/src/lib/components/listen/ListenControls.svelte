@@ -38,7 +38,14 @@
 	);
 	const percent = $derived(Math.round(p.volume * 100));
 	const hint = $derived(
-		p.note ?? (p.joined ? null : p.ready ? 'Press Join to hear what Bao hears.' : null)
+		p.note ??
+			(p.joined
+				? null
+				: p.stopped
+					? 'Stopped. Join again to hear Bao live.'
+					: p.ready
+						? 'Press Join to hear what Bao hears.'
+						: null)
 	);
 </script>
 
@@ -56,15 +63,37 @@
 			{label}
 		</p>
 
-		{#if showJoin}
-			<!-- Enabled once the audio is loaded, so play() runs inside the click (iOS). -->
+		{#if p.joined || showJoin}
+			<!-- One button for Join and Stop streaming, so keyboard focus stays on it.
+			     Join is enabled once the audio is loaded, so play() runs inside the
+			     click (iOS). Stop is not a pause: Join later starts at Bao's live spot. -->
 			<button
 				type="button"
-				class="btn btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-				onclick={() => p.join()}
-				disabled={!p.ready}
+				class={[
+					'btn disabled:cursor-not-allowed disabled:opacity-60',
+					p.joined ? 'btn-secondary' : 'btn-primary'
+				]}
+				onclick={() => (p.joined ? p.stop() : p.join())}
+				disabled={!p.joined && !p.ready}
 			>
-				Join
+				{#if p.joined}
+					<!-- lucide "square" -->
+					<svg
+						viewBox="0 0 24 24"
+						class="size-4"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<rect x="3" y="3" width="18" height="18" rx="2" />
+					</svg>
+					Stop streaming
+				{:else}
+					Join
+				{/if}
 			</button>
 		{/if}
 

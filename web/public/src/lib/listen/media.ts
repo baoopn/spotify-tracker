@@ -7,7 +7,7 @@ export const VOLUME_KEY = 'st-public:listen-volume';
 export const MUTED_KEY = 'st-public:listen-muted';
 
 /** No seeking or skipping from the OS: Bao's position decides. */
-const NULL_ACTIONS: MediaSessionAction[] = [
+const NOOP_ACTIONS: MediaSessionAction[] = [
 	'seekto',
 	'seekbackward',
 	'seekforward',
@@ -42,7 +42,9 @@ export function setupMediaSession(onPlay: () => void, onPause: () => void): void
 			// action not supported by this browser
 		}
 	};
-	for (const action of NULL_ACTIONS) set(action, null);
+	// No-op handlers, not null: null lets the browser fall back to its own seek.
+	const noop = () => {};
+	for (const action of NOOP_ACTIONS) set(action, noop);
 	set('play', onPlay);
 	set('pause', onPause);
 }

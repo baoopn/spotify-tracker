@@ -13,7 +13,8 @@
 		'no-audio': 'No audio',
 		'cant-play': "Can't play here",
 		ended: 'Song ended',
-		'access-ended': 'Access ended'
+		'access-ended': 'Access ended',
+		off: 'Off'
 	};
 	const spots: Record<ListenStatus, string> = {
 		waiting: '--spot-butter',
@@ -23,15 +24,18 @@
 		'no-audio': '--spot-rose',
 		'cant-play': '--spot-rose',
 		ended: '--spot-lilac',
-		'access-ended': '--spot-rose'
+		'access-ended': '--spot-rose',
+		off: '--spot-butter'
 	};
 
-	const ready = $derived(p.status === 'in-sync');
-	const label = $derived(p.joined ? labels[p.status] : ready ? 'Ready' : labels[p.status]);
-	const canJoin = $derived(!p.joined && p.status !== 'access-ended');
+	const inSync = $derived(p.status === 'in-sync');
+	const label = $derived(
+		p.joined ? labels[p.status] : p.ready && inSync ? 'Ready' : labels[p.status]
+	);
+	const showJoin = $derived(!p.joined && p.status !== 'access-ended' && p.status !== 'off');
 	const percent = $derived(Math.round(p.volume * 100));
 	const hint = $derived(
-		p.note ?? (p.joined ? null : ready ? 'Press Join to hear what Bao hears.' : null)
+		p.note ?? (p.joined ? null : p.ready ? 'Press Join to hear what Bao hears.' : null)
 	);
 </script>
 
@@ -42,15 +46,23 @@
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-3">
 		<p class="chip label" style:--chip="var({spots[p.status]})" aria-live="polite">
 			<BrandIcon
-				name={p.joined && ready ? 'now-playing' : 'headphones'}
+				name={p.joined && inSync ? 'now-playing' : 'headphones'}
 				tone="navy"
 				class="size-4"
 			/>
 			{label}
 		</p>
 
-		{#if canJoin}
-			<button type="button" class="btn btn-primary" onclick={() => p.join()}>Join</button>
+		{#if showJoin}
+			<!-- Enabled once the audio is loaded, so play() runs inside the click (iOS). -->
+			<button
+				type="button"
+				class="btn btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+				onclick={() => p.join()}
+				disabled={!p.ready}
+			>
+				Join
+			</button>
 		{/if}
 
 		<div class="flex min-w-0 flex-1 basis-48 items-center gap-3">

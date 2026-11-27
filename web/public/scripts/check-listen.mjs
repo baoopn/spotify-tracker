@@ -1,6 +1,7 @@
 // Listen-along sync checks, run by `pnpm check`.
 // Uses Node's built-in TypeScript type stripping to import the real helpers.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
 	DEFAULT_VOLUME,
 	DRIFT_MS,
@@ -128,5 +129,15 @@ assert.equal(parseVolume('1'), 1);
 assert.equal(parseVolume('7'), 1);
 assert.equal(parseVolume('-2'), 0);
 assert.equal(parseVolume('Infinity'), DEFAULT_VOLUME);
+
+// The <audio> attachment must not track state: Svelte re-runs (and tears
+// down) an attachment when state it read changes, so a mute or volume change
+// would stop the player.
+const player = readFileSync(new URL('../src/lib/listen/player.svelte.ts', import.meta.url), 'utf8');
+assert.match(
+	player,
+	/attach = \(el: HTMLAudioElement\) => untrack\(/,
+	'listenPlayer.attach must run its body in untrack()'
+);
 
 console.log('check-listen: ok');

@@ -2,6 +2,7 @@
 // Uses Node's built-in TypeScript type stripping to import the real helpers.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { turnstileTheme } from '../src/lib/account/turnstile.ts';
 import {
 	hasClerkParams,
 	hasInviteTicket,
@@ -514,6 +515,12 @@ assert.equal(
 	'no empty ?'
 );
 assert.equal(stripClerkParams('/listen', '', '#x'), '/listen#x');
+
+// Turnstile follows the site's resolved theme.
+assert.equal(turnstileTheme('dark'), 'dark');
+assert.equal(turnstileTheme('light'), 'light');
+assert.equal(turnstileTheme(undefined), 'light');
+assert.equal(turnstileTheme('system'), 'light', 'only a resolved dark is dark');
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

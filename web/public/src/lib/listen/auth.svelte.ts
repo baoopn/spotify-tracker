@@ -103,6 +103,8 @@ class ListenAuth {
 	#status = $state<ListenAuthStatus>('idle');
 	/** Was signed out at some point on this page (a sign-in or sign-up then happened here). */
 	everSignedOut = $state(false);
+	/** Turnstile site key for Request an invite (null: no check). */
+	turnstileSiteKey = $state<string | null>(null);
 
 	get status(): ListenAuthStatus {
 		return this.#status;
@@ -180,6 +182,7 @@ class ListenAuth {
 	#config(): Promise<string | null> {
 		this.#configPromise ??= fetchListenConfig().then((cfg) => {
 			this.enabled = cfg.enabled;
+			this.turnstileSiteKey = cfg.turnstile_site_key ?? null;
 			if (!cfg.enabled) {
 				this.status = 'disabled';
 				return null;

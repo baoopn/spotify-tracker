@@ -57,3 +57,38 @@ export function listenersQuery() {
 export function canResend(l: Listener): boolean {
 	return l.status === 'invited' && !l.has_account;
 }
+
+/** One counted play in a listener's history (GET /listeners/{id}/history). */
+export type ListenPlay = {
+	id: number;
+	/** When the play started. */
+	listened_at: string;
+	last_heard_at: string;
+	heard_ms: number;
+	track: {
+		id: string;
+		name: string;
+		duration_ms: number;
+		explicit: boolean;
+		external_url?: string;
+		artists: { id: string; name: string }[];
+		album_name: string;
+		cover_image_url: string;
+	};
+};
+
+export type ListenHistoryPage = { data: ListenPlay[]; next_cursor: string | null };
+
+export const HISTORY_LIMIT = 50;
+
+/** A listener's counted plays, newest first (read-only, also for revoked listeners). */
+export function listenerHistory(
+	id: number,
+	cursor: string | null,
+	{ signal }: { signal?: AbortSignal } = {}
+): Promise<ListenHistoryPage> {
+	return request<ListenHistoryPage>(`${BASE}/${id}/history`, {
+		query: { limit: HISTORY_LIMIT, cursor },
+		signal
+	});
+}

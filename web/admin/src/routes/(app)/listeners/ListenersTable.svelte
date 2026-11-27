@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { LoaderCircle, Send, UserRoundX } from '@lucide/svelte';
+	import { History, LoaderCircle, Send, UserRoundX } from '@lucide/svelte';
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import Badge, { type Tone } from '#lib/components/Badge.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
+	import HistoryDialog from './HistoryDialog.svelte';
 	import RelTime from '#lib/components/RelTime.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import {
@@ -27,6 +28,8 @@
 
 	let confirmOpen = $state(false);
 	let target = $state<Listener | null>(null);
+	let historyOpen = $state(false);
+	let historyFor = $state<Listener | null>(null);
 
 	const resend = createMutation(() => ({
 		mutationFn: (id: number) => listenersApi.resend(id),
@@ -50,6 +53,11 @@
 		onError: (err) => toasts.error('Could not revoke', errorMessage(err)),
 		onSettled: () => queryClient.invalidateQueries({ queryKey: listenersKey })
 	}));
+
+	function showHistory(l: Listener) {
+		historyFor = l;
+		historyOpen = true;
+	}
 
 	function askRevoke(l: Listener) {
 		target = l;
@@ -80,7 +88,7 @@
 						<th scope="col" class="w-28">Status</th>
 						<th scope="col" class="w-40">Invited</th>
 						<th scope="col" class="w-40">Last seen</th>
-						<th scope="col" class="w-56"><span class="sr-only">Actions</span></th>
+						<th scope="col" class="w-72"><span class="sr-only">Actions</span></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -108,8 +116,16 @@
 								{/if}
 							</td>
 							<td>
-								{#if l.status !== 'revoked'}
-									<div class="flex flex-wrap justify-end gap-2">
+								<div class="flex flex-wrap justify-end gap-2">
+									<button
+										type="button"
+										class="btn btn-secondary btn-sm"
+										onclick={() => showHistory(l)}
+										aria-label="History of {l.email}"
+									>
+										<History class="size-4" aria-hidden="true" /> History
+									</button>
+									{#if l.status !== 'revoked'}
 										{#if canResend(l)}
 											<button
 												type="button"
@@ -134,8 +150,8 @@
 										>
 											<UserRoundX class="size-4" aria-hidden="true" /> Revoke
 										</button>
-									</div>
-								{/if}
+									{/if}
+								</div>
 							</td>
 						</tr>
 					{/each}
@@ -155,3 +171,5 @@
 	danger
 	onconfirm={onRevoke}
 />
+
+<HistoryDialog bind:open={historyOpen} listener={historyFor} />

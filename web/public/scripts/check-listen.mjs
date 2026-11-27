@@ -16,6 +16,13 @@ import {
 	syncAction,
 	targetMs
 } from '../src/lib/listen/sync.ts';
+import {
+	MAX_REPORT_MS,
+	SEEK_JUMP_MS,
+	chunkReport,
+	playedDelta
+} from '../src/lib/listen/progress.ts';
+import { dayKey, dayLabel, groupByDay, previousDay } from '../src/lib/listen/history.ts';
 
 const T0 = Date.parse('2026-11-26T12:00:00Z');
 /** @param {number} ms */
@@ -129,6 +136,65 @@ assert.equal(parseVolume('1'), 1);
 assert.equal(parseVolume('7'), 1);
 assert.equal(parseVolume('-2'), 0);
 assert.equal(parseVolume('Infinity'), DEFAULT_VOLUME);
+
+// playedDelta: currentTime steps count; seeks and steps back do not.
+assert.equal(playedDelta(null, 10), 0, 'first reading');
+assert.equal(playedDelta(10, 10.25), 250);
+assert.equal(playedDelta(10, 10 + SEEK_JUMP_MS / 1000), SEEK_JUMP_MS, 'exactly 2 s counts');
+assert.equal(playedDelta(10, 12.01), 0, 'a jump over 2 s is a seek');
+assert.equal(playedDelta(10, 9), 0, 'back seek');
+assert.equal(playedDelta(10, 10), 0);
+assert.equal(playedDelta(NaN, 10), 0);
+assert.equal(playedDelta(10, NaN), 0);
+
+// chunkReport: whole ms, at most MAX_REPORT_MS per report, remainder kept.
+assert.deepEqual(chunkReport(0), { chunks: [], rest: 0 });
+assert.deepEqual(chunkReport(0.4), { chunks: [], rest: 0.4 });
+assert.deepEqual(chunkReport(15_000), { chunks: [15_000], rest: 0 });
+assert.deepEqual(chunkReport(MAX_REPORT_MS), { chunks: [MAX_REPORT_MS], rest: 0 });
+assert.deepEqual(chunkReport(45_000), { chunks: [20_000, 20_000, 5000], rest: 0 });
+{
+	const r = chunkReport(1000.75);
+	assert.deepEqual(r.chunks, [1000]);
+	assert.ok(Math.abs(r.rest - 0.75) < 1e-9);
+}
+assert.deepEqual(chunkReport(NaN), { chunks: [], rest: 0 });
+for (const c of chunkReport(123_456).chunks) assert.ok(c >= 1 && c <= MAX_REPORT_MS);
+
+// History days: calendar days in the viewer's zone.
+const NY = 'America/New_York';
+assert.equal(dayKey(Date.parse('2026-11-26T03:00:00Z'), NY), '2026-11-25', 'still the 25th in NY');
+assert.equal(dayKey(Date.parse('2026-11-26T03:00:00Z'), 'UTC'), '2026-11-26');
+assert.equal(previousDay('2026-03-01'), '2026-02-28');
+assert.equal(previousDay('2026-01-01'), '2025-12-31');
+assert.equal(dayLabel('2026-11-26', '2026-11-26'), 'Today');
+assert.equal(dayLabel('2026-11-25', '2026-11-26'), 'Yesterday');
+assert.equal(dayLabel('2026-11-20', '2026-11-26'), 'Fri, Nov 20');
+assert.equal(dayLabel('2025-11-20', '2026-11-26'), 'Thu, Nov 20, 2025');
+{
+	const now = Date.parse('2026-11-26T18:00:00Z');
+	const plays = [
+		{ id: 3, listened_at: '2026-11-26T17:00:00Z' },
+		{ id: 2, listened_at: '2026-11-26T01:00:00Z' }, // Nov 25 evening in NY
+		{ id: 1, listened_at: '2026-11-20T12:00:00Z' },
+		{ id: 0, listened_at: 'bad' }
+	];
+	const g = groupByDay(plays, now, NY);
+	assert.deepEqual(
+		g.map((x) => [x.label, x.items.map((p) => p.id)]),
+		[
+			['Today', [3]],
+			['Yesterday', [2]],
+			['Fri, Nov 20', [1]]
+		]
+	);
+	assert.deepEqual(
+		groupByDay(plays, now, 'UTC').map((x) => x.items.length),
+		[2, 1],
+		'same day in UTC'
+	);
+	assert.deepEqual(groupByDay([], now, NY), []);
+}
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

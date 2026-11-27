@@ -6,6 +6,7 @@
 	import SiteCredit from '#lib/components/SiteCredit.svelte';
 	import ListenControls from '#lib/components/listen/ListenControls.svelte';
 	import ListenGate from '#lib/components/listen/ListenGate.svelte';
+	import ListenHistory from '#lib/components/listen/ListenHistory.svelte';
 	import { live } from '#lib/live.svelte.js';
 	import { listenAuth } from '#lib/listen/auth.svelte.js';
 	import { listenPlayer } from '#lib/listen/player.svelte.js';
@@ -29,6 +30,7 @@
 		const allowed = listenAuth.status === 'allowed';
 		untrack(() => listenPlayer.update(np, allowed));
 	});
+	const trackId = $derived(now.data?.track?.id ?? null);
 </script>
 
 <svelte:head>
@@ -45,6 +47,7 @@
 	<ListenGate>
 		<ListenControls />
 		<NowPlayingHero />
+		<ListenHistory {trackId} />
 	</ListenGate>
 </main>
 

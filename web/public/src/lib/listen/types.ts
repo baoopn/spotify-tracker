@@ -33,3 +33,28 @@ export type ListenAudio = {
 	content_type: string | null;
 	reason: ListenAudioReason | null;
 };
+
+/** One counted play in a listener's history (GET /api/v1/listen/history). */
+export type ListenPlay = {
+	id: number;
+	/** When the play started (RFC 3339). */
+	listened_at: string;
+	last_heard_at: string;
+	heard_ms: number;
+	track: {
+		id: string;
+		name: string;
+		duration_ms: number;
+		explicit: boolean;
+		external_url?: string;
+		artists: { id: string; name: string }[];
+		album_name: string;
+		cover_image_url: string;
+	};
+};
+
+/** A page of history, newest first; `next_cursor` is null on the last page. */
+export type ListenHistoryPage = { data: ListenPlay[]; next_cursor: string | null };
+
+/** POST /api/v1/listen/progress: audio time actually played since the last report. */
+export type ListenProgress = { track_id: string; heard_ms: number };

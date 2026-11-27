@@ -7,7 +7,8 @@ import { ApiError } from '../api';
 import { live } from '../live.svelte';
 import type { NowPlaying } from '../types';
 import { listenAuth } from './auth.svelte';
-import { fetchListenAudio } from './api';
+import { fetchListenAudio, postListenProgress } from './api';
+import { ProgressTracker } from './progress';
 import {
 	ACCESS_CHECK_MS,
 	CHECK_MS,
@@ -23,6 +24,7 @@ import {
 	targetMs
 } from './sync.ts';
 import {
+	applyVolume,
 	MUTED_KEY,
 	VOLUME_KEY,
 	readStored,
@@ -77,6 +79,9 @@ class ListenPlayer {
 	#timers = new Set<ReturnType<typeof setTimeout>>();
 	#loop: ReturnType<typeof setInterval> | null = null;
 	#accessLoop: ReturnType<typeof setInterval> | null = null;
+	#progress = new ProgressTracker(async (track_id, heard_ms, keepalive) =>
+		postListenProgress(await listenAuth.getToken(), { track_id, heard_ms }, keepalive)
+	);
 
 	/**
 	 * Attachment for the page's <audio>: wires events and the sync loop.
@@ -89,12 +94,7 @@ class ListenPlayer {
 		this.#audio = el;
 		this.volume = parseVolume(readStored(VOLUME_KEY));
 		this.muted = readStored(MUTED_KEY) === '1';
-		const before = el.volume;
-		el.volume = 0.5;
-		this.volumeSupported = el.volume === 0.5;
-		el.volume = this.volume;
-		el.muted = this.muted;
-		if (!this.volumeSupported) el.volume = before;
+		this.volumeSupported = applyVolume(el, this.volume, this.muted);
 
 		const on = <K extends keyof HTMLMediaElementEventMap>(type: K, fn: () => void) => {
 			el.addEventListener(type, fn);
@@ -107,7 +107,11 @@ class ListenPlayer {
 			on('ended', () => {
 				if (this.joined) this.status = 'ended';
 			}),
-			on('error', () => this.#onError())
+			on('error', () => this.#onError()),
+			// History: only time heard while joined and in sync counts.
+			this.#progress.attach(el, () =>
+				this.joined && this.status === 'in-sync' ? (this.#trackId ?? null) : null
+			)
 		];
 		this.#loop = setInterval(() => this.#tick(), CHECK_MS);
 		setupMediaSession(
@@ -447,6 +451,7 @@ class ListenPlayer {
 		const el = this.#audio;
 		this.#expiresAt = null;
 		this.ready = false;
+		this.#progress.flush();
 		if (!el) return;
 		this.#pauseQuietly(el);
 		if (el.getAttribute('src') == null) return;

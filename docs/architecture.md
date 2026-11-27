@@ -818,6 +818,12 @@ once, with no request to the bucket. Without a row it sends the HEAD requests
 as before, and records a file it finds, so the next lookup is instant. The
 read key needs list access for the sync.
 
+The admin shows whether a song can be listened along (the Overview and
+Player pages, and the queue): `GET /admin/api/listen/audio/status` reads
+`track_audio`, and for the song playing now with no row it uses the same
+cached HEAD lookup, so a file uploaded since the last sync shows at once. It
+never signs a URL.
+
 **Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
 so the MCP server cannot reach them):
 

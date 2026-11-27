@@ -162,3 +162,17 @@ func TestPGMissingAudioSearch(t *testing.T) {
 		t.Errorf("all = %v %d", ids(rows), n)
 	}
 }
+
+func TestPGTrackAudioByIDs(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	exec(t, pool, `TRUNCATE track_audio`)
+	exec(t, pool, `INSERT INTO track_audio (track_id, ext, size_bytes) VALUES ('b1', 'mp3', 10), ('b2', 'flac', 20), ('b3', 'm4a', 30)`)
+	got, err := st.TrackAudioByIDs(ctx, []string{"b1", "b3", "none"})
+	if err != nil || len(got) != 2 || got["b1"].Ext != "mp3" || got["b3"].SizeBytes != 30 {
+		t.Errorf("by ids = %+v %v", got, err)
+	}
+	if got, err := st.TrackAudioByIDs(ctx, nil); err != nil || len(got) != 0 {
+		t.Errorf("empty = %+v %v", got, err)
+	}
+}

@@ -106,7 +106,8 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
   ],
   "version": "1.2.3",
   "up_next": UpNext | null,
-  "listen_storage": ListenStorage | null
+  "listen_storage": ListenStorage | null,
+  "listen_audio": { "available": boolean } | null
 }
 ```
 `Summary = { total_plays, unique_tracks, unique_artists, listening_ms, first_played_at, last_played_at, enriched_tracks }`.
@@ -127,6 +128,10 @@ type UpNext = {
     artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }[];
 };
 ```
+
+`listen_audio` says whether the track playing now has an audio file, as the
+audio status route answers it: null when nothing plays, listen along is off,
+or the check failed (logged; the overview never fails because of it).
 
 `listen_storage` sums up the listen-along audio files (one query over
 `track_audio` and the history). It is null when listen along or the S3
@@ -414,6 +419,7 @@ type AudioFile = {
 | GET | `/admin/api/listen/audio?q=&limit=&offset=` | – | `{ data: AudioFile[], total, summary: { files, total_bytes, tracks_in_catalog, last_sync_at, last_error, sync_interval_s } }`: newest `last_modified` first; `q` searches the track and artist names; `limit` 1 to 100, default 50 |
 | GET | `/admin/api/listen/audio/missing?q=&limit=&offset=` | – | `{ data: [{ track: AudioTrack, owner_plays, last_played_at }], total }`: the owner's most-played tracks (all time) with no file; `q` searches like the `q` of `GET /admin/api/tracks` (track, album or artist name, ISRC, or a Spotify ID, URI or URL, ignoring accents and case), and `total` counts the matches |
 | POST | `/admin/api/listen/audio/sync` | – | `{ files, added, removed, took_ms }` after a sync (at most 60 s) |
+| GET | `/admin/api/listen/audio/status?ids=<id>,<id>…` | – | `{ data: { "<id>": { available: boolean, ext: string \| null, size_bytes: number \| null } }, listen_enabled, audio_configured }`: whether each track can be listened along; 1 to 50 Spotify track IDs (duplicates ignored), else `400 invalid_ids` |
 
 `last_sync_at` is the last attempt and `last_error` its error (`null` when it
 worked); both are `null` before the first sync. `sync_interval_s` is
@@ -424,6 +430,13 @@ Sync errors: `409 sync_running` (a sync runs on some replica),
 storage_unconfigured` (listen along or S3 is off), `503 sync_failed` (the
 bucket could not be listed; no rows changed). Audit action:
 `listen.audio_synced` (`files`, `added`, `removed`, or `error`).
+
+The status route reads `track_audio` in one query. For the first ID (the
+song playing now) with no row it also asks the bucket (the cached HEAD
+lookups of `/listen/audio`), so a file uploaded since the last sync shows at
+once; `size_bytes` is then null. It never signs or returns a URL, and is not
+audited. With listen along or the S3 storage off, every track is
+`available: false`.
 
 `GET /admin/api/tracks` also takes `audio=has|missing` (400 `invalid_audio`
 otherwise), and each row has `has_audio`.

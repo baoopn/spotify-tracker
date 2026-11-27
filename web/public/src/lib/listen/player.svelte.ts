@@ -2,6 +2,7 @@
 // Spotify playback (see sync.ts for the rules). Listeners can only join, mute
 // and set the volume; Bao's position decides everything else.
 
+import { untrack } from 'svelte';
 import { ApiError } from '../api';
 import { live } from '../live.svelte';
 import type { NowPlaying } from '../types';
@@ -38,11 +39,14 @@ export type ListenStatus =
 	| 'no-audio'
 	| 'cant-play'
 	| 'ended'
-	| 'access-ended';
+	| 'access-ended'
+	/** Listen along was switched off on the server. */
+	| 'off';
 
 const ERROR_RETRIES = 3;
 const ERROR_BACKOFF_MS = 5000;
 const ACCESS_ENDED_NOTE = 'Your access to listen along has ended';
+const OFF_NOTE = 'Listen along is off right now';
 
 class ListenPlayer {
 	joined = $state(false);
@@ -52,6 +56,8 @@ class ListenPlayer {
 	muted = $state(false);
 	/** False where the browser ignores audio.volume (iOS): hide the slider. */
 	volumeSupported = $state(true);
+	/** A source with metadata is loaded: Join can play inside the click (iOS). */
+	ready = $state(false);
 
 	#audio: HTMLAudioElement | null = null;
 	#np: NowPlaying | null = null;
@@ -72,8 +78,14 @@ class ListenPlayer {
 	#loop: ReturnType<typeof setInterval> | null = null;
 	#accessLoop: ReturnType<typeof setInterval> | null = null;
 
-	/** Attachment for the page's <audio>: wires events and the sync loop. */
-	attach = (el: HTMLAudioElement) => {
+	/**
+	 * Attachment for the page's <audio>: wires events and the sync loop.
+	 * Untracked: an attachment re-runs (and tears down) when state it read
+	 * changes, and this one reads volume and mute.
+	 */
+	attach = (el: HTMLAudioElement) => untrack(() => this.#attach(el));
+
+	#attach(el: HTMLAudioElement): () => void {
 		this.#audio = el;
 		this.volume = parseVolume(readStored(VOLUME_KEY));
 		this.muted = readStored(MUTED_KEY) === '1';
@@ -112,7 +124,7 @@ class ListenPlayer {
 			this.#stopAll();
 			this.#audio = null;
 		};
-	};
+	}
 
 	/** Called with every now-playing snapshot; `enabled` = signed in and allowed. */
 	update(np: NowPlaying | null, enabled: boolean): void {
@@ -132,13 +144,10 @@ class ListenPlayer {
 	/** The Join button: must call play() synchronously in the click (autoplay rules). */
 	join(): void {
 		const el = this.#audio;
-		if (!el || this.#accessEnded) return;
+		// Only with a loaded source, so play() runs inside the click (iOS).
+		if (!el || this.#accessEnded || !this.ready || !el.src) return;
 		this.joined = true;
 		this.#startAccessChecks();
-		if (!el.src) {
-			this.#tick();
-			return;
-		}
 		const target = this.#target();
 		if (target != null && el.readyState >= HTMLMediaElement.HAVE_METADATA) {
 			el.currentTime = seekTarget(target, el.duration * 1000) / 1000;
@@ -234,6 +243,7 @@ class ListenPlayer {
 		this.note = null;
 		this.status = 'loading';
 		this.#pauseQuietly(el);
+		this.ready = false;
 		el.src = res.url;
 		el.load();
 		// load() drops queued media events, our pause event included.
@@ -242,16 +252,27 @@ class ListenPlayer {
 	}
 
 	async #onAudioError(err: unknown, gen: number, attempt: number, andPlay: boolean) {
-		if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+		if (err instanceof ApiError && err.status === 403) {
 			this.#endAccess();
+			return;
+		}
+		if (err instanceof ApiError && err.status === 404) {
+			this.#endAccess(true);
 			return;
 		}
 		if (err instanceof ApiError && err.status === 401) {
 			const access = await listenAuth.check();
 			if (gen !== this.#gen) return;
-			if (access === 'ok' && attempt < 1) void this.#loadAudio(gen, attempt + 1, andPlay);
-			else if (access === 'forbidden') this.#endAccess();
-			return;
+			if (access === 'forbidden' || access === 'disabled') {
+				this.#endAccess(access === 'disabled');
+				return;
+			}
+			if (access === 'signed-out') return;
+			if (access === 'ok' && attempt < 1) {
+				void this.#loadAudio(gen, attempt + 1, andPlay);
+				return;
+			}
+			// still refused, or the check failed: try again later
 		}
 		this.status = 'no-audio';
 		this.note = audioNote('unavailable');
@@ -368,6 +389,7 @@ class ListenPlayer {
 
 	#onMetadata(): void {
 		const el = this.#audio;
+		this.ready = !!el?.getAttribute('src');
 		const target = this.#target();
 		if (el && target != null) {
 			el.currentTime = seekTarget(target, el.duration * 1000) / 1000;
@@ -380,6 +402,7 @@ class ListenPlayer {
 		const el = this.#audio;
 		if (!el?.getAttribute('src') || !this.#trackId) return;
 		const gen = this.#gen;
+		this.ready = false;
 		this.#errors++;
 		if (this.#errors > ERROR_RETRIES) {
 			this.status = 'no-audio';
@@ -396,7 +419,7 @@ class ListenPlayer {
 		if (this.#accessLoop) return;
 		this.#accessLoop = setInterval(async () => {
 			const res = await listenAuth.check();
-			if (res === 'forbidden') this.#endAccess();
+			if (res === 'forbidden' || res === 'disabled') this.#endAccess(res === 'disabled');
 			else if (res === 'signed-out') this.#reset();
 		}, ACCESS_CHECK_MS);
 	}
@@ -406,15 +429,16 @@ class ListenPlayer {
 		this.#accessLoop = null;
 	}
 
-	#endAccess(): void {
+	/** Stop for good on this page: access revoked, or (`off`) listen along switched off. */
+	#endAccess(off = false): void {
 		this.#accessEnded = true;
 		this.joined = false;
 		this.#gen++;
 		this.#stopAccessChecks();
 		this.#clearTimers();
 		this.#clearSource();
-		this.status = 'access-ended';
-		this.note = ACCESS_ENDED_NOTE;
+		this.status = off ? 'off' : 'access-ended';
+		this.note = off ? OFF_NOTE : ACCESS_ENDED_NOTE;
 	}
 
 	// ---------- housekeeping ----------
@@ -422,6 +446,7 @@ class ListenPlayer {
 	#clearSource(): void {
 		const el = this.#audio;
 		this.#expiresAt = null;
+		this.ready = false;
 		if (!el) return;
 		this.#pauseQuietly(el);
 		if (el.getAttribute('src') == null) return;

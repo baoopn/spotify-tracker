@@ -26,7 +26,7 @@ export type ListenAuthStatus =
 	| 'error';
 
 /** Result of an access re-check while listening. */
-export type AccessCheck = 'ok' | 'forbidden' | 'signed-out' | 'error';
+export type AccessCheck = 'ok' | 'forbidden' | 'disabled' | 'signed-out' | 'error';
 
 /** Clerk appearance from the shared CSS tokens, so it follows palette and mode. */
 export function clerkAppearance() {
@@ -178,9 +178,8 @@ class ListenAuth {
 		}
 		const res = await this.#me();
 		if (res.ok) return 'ok';
-		if (res.err instanceof ApiError && (res.err.status === 403 || res.err.status === 404)) {
-			return 'forbidden';
-		}
+		if (res.err instanceof ApiError && res.err.status === 403) return 'forbidden';
+		if (res.err instanceof ApiError && res.err.status === 404) return 'disabled';
 		if (res.err instanceof ApiError && res.err.status === 401) {
 			await this.#dropSession();
 			return 'signed-out';

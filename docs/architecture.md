@@ -63,6 +63,12 @@ lives in the single-row `listen_state` table. It is read with
 decide and save are atomic: a database error writes nothing, and concurrent
 or retried snapshots are decided one at a time.
 
+A snapshot's `fetched_at` is the midpoint of the Spotify request (the time
+halfway between sending it and getting the answer), for a clear too. Spotify
+reads `progress_ms` somewhere during the request, so the midpoint keeps most
+of the request time out of the position the public page and `/listen`
+estimate from it.
+
 1. **A listen counts once**, when at least `PLAY_COUNT_MIN_FRACTION` (30%,
    at most 90%) of the song has been heard, less up to 3 s for the unseen
    end of the song (so a play counts slightly before the exact fraction),

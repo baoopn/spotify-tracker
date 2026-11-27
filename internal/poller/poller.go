@@ -119,15 +119,21 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	// Spotify reads progress_ms somewhere during the request: the midpoint
+	// is the best guess, and removes most of the request time from the
+	// listeners' position estimate (stamping the response time made the
+	// progress look older than it is).
+	start := time.Now()
 	pb, err := p.src.CurrentlyPlaying(cctx)
 	if err != nil {
 		return "", err
 	}
+	fetchedAt := midpoint(start, time.Now())
 	if pb == nil {
 		observability.PollCycles.WithLabelValues("idle").Inc()
 		if p.wasPlaying || p.lastTrackID != "" {
 			if _, err := p.ingest.ClearPlayback(cctx, &trackerv1.ClearPlaybackRequest{
-				FetchedAt: timestamppb.Now(),
+				FetchedAt: timestamppb.New(fetchedAt),
 			}); err != nil {
 				return "", fmt.Errorf("clear playback: %w", err)
 			}
@@ -141,6 +147,7 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	}
 
 	observability.PollCycles.WithLabelValues("playing").Inc()
+	pb.FetchedAt = fetchedAt
 	res, err := p.ingest.RecordPlayback(cctx, &trackerv1.RecordPlaybackRequest{Playback: grpcapi.PlaybackToProto(*pb)})
 	if err != nil {
 		return "", fmt.Errorf("record playback: %w", err)
@@ -159,6 +166,11 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 		p.prefetch.kick(ctx, pb.Track.ID)
 	}
 	return state + ": " + pb.Track.Name, nil
+}
+
+// midpoint is the time halfway between start and end, in UTC.
+func midpoint(start, end time.Time) time.Time {
+	return start.Add(end.Sub(start) / 2).UTC()
 }
 
 // holdUntil pauses queue reads until t; it never shortens a pause.

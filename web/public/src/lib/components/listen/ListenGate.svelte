@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import BrandIcon from '../BrandIcon.svelte';
 	import ClerkMount from './ClerkMount.svelte';
+	import RequestInvite from './RequestInvite.svelte';
 	import { listenAuth } from '#lib/listen/auth.svelte.js';
 
 	let { children }: { children: Snippet } = $props();
@@ -35,6 +36,7 @@
 				<BrandIcon name="headphones" class="size-5 shrink-0" />
 				Sign in with the email your invite went to.
 			</p>
+			<RequestInvite />
 		</div>
 		<div class="min-w-0">
 			<ClerkMount clerk={listenAuth.clerk} />
@@ -48,9 +50,13 @@
 		</h2>
 	</section>
 {:else if status === 'forbidden'}
-	<section class="border-t border-ink pt-8" role="alert">
+	<!-- No alert role on the section: it also holds the request form. -->
+	<section class="border-t border-ink pt-8" aria-labelledby="listen-forbidden-h">
 		{@render chip('No access', '--spot-rose')}
-		<h2 class="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+		<h2
+			id="listen-forbidden-h"
+			class="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl"
+		>
 			This account isn't invited
 		</h2>
 		<p class="mt-2 break-words text-ink-soft">
@@ -67,6 +73,7 @@
 				Check again
 			</button>
 		</div>
+		<RequestInvite email={listenAuth.email ?? ''} />
 	</section>
 {:else if status === 'error'}
 	<section class="border-t border-ink pt-8" role="alert">

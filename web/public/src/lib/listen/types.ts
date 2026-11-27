@@ -67,3 +67,11 @@ export type ListenProgress = { track_id: string; heard_ms: number };
  */
 export type PresenceState = 'listening' | 'following' | 'idle';
 export type ListenPresence = { state: PresenceState; track_id: string | null };
+
+/** POST /api/v1/listen/requests (no sign-in). `website` is a honeypot: always empty. */
+export type ListenRequestInput = {
+	name: string;
+	email: string;
+	message?: string;
+	website?: string;
+};

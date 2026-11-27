@@ -27,6 +27,8 @@ export type ListenersList = {
 	/** S3 storage is set up for the audio files. */
 	audio_configured: boolean;
 	listen_url: string;
+	/** Invite requests waiting for a decision (sidebar badge). */
+	pending_requests: number;
 };
 
 export type InviteResult = { data: Listener; invitation_sent: boolean };
@@ -117,5 +119,47 @@ export function liveListenersQuery() {
 		queryFn: ({ signal }) =>
 			request<{ data: LivePresence[] }>(`${BASE}/live`, { signal }).then((r) => r.data ?? []),
 		refetchInterval: 15_000
+	});
+}
+
+export type JoinRequestStatus = 'pending' | 'invited' | 'dismissed';
+
+/** Someone asked for an invite on /listen. */
+export type JoinRequest = {
+	id: number;
+	name: string;
+	email: string;
+	message: string | null;
+	status: JoinRequestStatus;
+	/** ISO 3166-1 alpha-2, null when unknown. */
+	country: string | null;
+	created_at: string;
+	updated_at: string;
+	decided_at: string | null;
+	decided_by: string | null;
+	/** A live listeners row exists for this email. */
+	already_listener: boolean;
+};
+
+export type RequestsFilter = 'pending' | 'dismissed' | 'all';
+export type RequestsList = { data: JoinRequest[]; pending: number };
+export type RequestInviteResult = InviteResult & { request: JoinRequest };
+
+export const requestsKey = (status: RequestsFilter) => ['listeners', 'requests', status] as const;
+
+export const requestsApi = {
+	list: (status: RequestsFilter, { signal }: { signal?: AbortSignal } = {}) =>
+		request<RequestsList>(`${BASE}/requests`, { query: { status }, signal }),
+	invite: (id: number) =>
+		request<RequestInviteResult>(`${BASE}/requests/${id}/invite`, { method: 'POST' }),
+	dismiss: (id: number) =>
+		request<{ request: JoinRequest }>(`${BASE}/requests/${id}/dismiss`, { method: 'POST' })
+};
+
+export function requestsQuery(status: RequestsFilter) {
+	return queryOptions({
+		queryKey: requestsKey(status),
+		queryFn: ({ signal }) => requestsApi.list(status, { signal }),
+		refetchInterval: 60_000
 	});
 }

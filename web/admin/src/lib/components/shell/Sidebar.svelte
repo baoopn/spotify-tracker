@@ -21,6 +21,8 @@
 		X
 	} from '@lucide/svelte';
 	import { page } from '$app/state';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { listenersQuery } from '#lib/listeners.js';
 	import { resolve } from '$app/paths';
 	import { MediaQuery } from 'svelte/reactivity';
 
@@ -35,15 +37,27 @@
 		/** lucide icon, or a listening brand glyph (rendered as a currentColor mask). */
 		icon?: typeof History;
 		brand?: ListeningIconName;
+		/** Count shown after the label (hidden when 0). */
+		badge?: number;
 	};
 
-	const sections: { label: string; items: NavItem[] }[] = [
+	// Pending invite requests for the Listeners badge (same cache as the Listeners page).
+	const listeners = createQuery(() => listenersQuery());
+	const pendingRequests = $derived(listeners.data?.pending_requests ?? 0);
+
+	const sections: { label: string; items: NavItem[] }[] = $derived([
 		{
 			label: 'Listen',
 			items: [
 				{ href: resolve(''), label: 'Overview', brand: 'headphones', exact: true },
 				{ href: resolve('player'), label: 'Player', icon: SquarePlay, exact: false },
-				{ href: resolve('listeners'), label: 'Listeners', icon: UsersRound, exact: false },
+				{
+					href: resolve('listeners'),
+					label: 'Listeners',
+					icon: UsersRound,
+					exact: false,
+					badge: pendingRequests
+				},
 				{ href: resolve('listen-audio'), label: 'Audio files', icon: FileAudio, exact: false }
 			]
 		},
@@ -84,7 +98,7 @@
 				{ href: resolve('settings/appearance'), label: 'Appearance', icon: Palette, exact: false }
 			]
 		}
-	];
+	]);
 
 	function isActive(href: string, exact: boolean): boolean {
 		const path = page.url.pathname.replace(/\/$/, '') || '/';
@@ -151,6 +165,12 @@
 									<item.icon class="size-4.5 shrink-0" aria-hidden="true" />
 								{/if}
 								{item.label}
+								{#if item.badge}
+									<span
+										class="ml-auto rounded-full bg-spot-butter px-1.5 font-mono text-[0.6875rem] text-on-spot tabular-nums"
+										>{item.badge}<span class="sr-only"> waiting</span></span
+									>
+								{/if}
 							</a>
 						</li>
 					{/each}

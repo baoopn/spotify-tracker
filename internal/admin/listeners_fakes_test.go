@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,8 @@ type fakeListeners struct {
 	audit   fakeAuditor
 	// beforeAccept runs inside AcceptListener before the update (races).
 	beforeAccept func()
+	// history is returned by ListenerHistory, keyed by listener ID.
+	history map[int64][]store.ListenPlay
 }
 
 func (f *fakeListeners) live(match func(store.Listener) bool) (int, bool) {
@@ -213,4 +216,24 @@ func (c *fakeClerk) SetRole(_ context.Context, id string, role *string) error {
 	}
 	c.setRoles = append(c.setRoles, id+"="+v)
 	return nil
+}
+
+func (f *fakeListeners) ListenerHistory(_ context.Context, id int64, limit int, cursor string) ([]store.ListenPlay, *string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if cursor == "bad" {
+		return nil, nil, store.ErrBadCursor
+	}
+	all := f.history[id]
+	start := 0
+	if cursor != "" {
+		start, _ = strconv.Atoi(cursor)
+	}
+	end := min(start+limit, len(all))
+	var next *string
+	if end < len(all) {
+		c := strconv.Itoa(end)
+		next = &c
+	}
+	return all[start:end], next, nil
 }

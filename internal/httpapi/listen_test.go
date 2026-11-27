@@ -164,11 +164,14 @@ func TestListenAudioRemaining(t *testing.T) {
 // The MCP server's in-process handler never serves listen along.
 func TestV1HandlerHasNoListenRoutes(t *testing.T) {
 	h := &Handler{log: slog.New(slog.DiscardHandler), opts: Options{Listen: &ListenOptions{Enabled: true, Auth: allowAll, Me: me}}}
-	for _, p := range []string{"/api/v1/listen/config", "/api/v1/listen/me", "/api/v1/listen/audio"} {
-		rec := httptest.NewRecorder()
-		h.V1Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("V1Handler %s = %d", p, rec.Code)
+	for _, p := range []string{"/api/v1/listen/config", "/api/v1/listen/me", "/api/v1/listen/audio",
+		"/api/v1/listen/progress", "/api/v1/listen/history", "/api/v1/listen/presence"} {
+		for _, m := range []string{http.MethodGet, http.MethodPost} {
+			rec := httptest.NewRecorder()
+			h.V1Handler().ServeHTTP(rec, httptest.NewRequest(m, p, nil))
+			if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("V1Handler %s %s = %d", m, p, rec.Code)
+			}
 		}
 	}
 }

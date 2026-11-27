@@ -34,6 +34,7 @@ type listenerAdminStore interface {
 	SetListenerInvitation(ctx context.Context, id int64, invitationID string) (store.Listener, error)
 	RevokeListener(ctx context.Context, id int64) (store.Listener, error)
 	ListenerForUser(ctx context.Context, clerkUserID, email string) (store.Listener, error)
+	ListenerHistory(ctx context.Context, listenerID int64, limit int, cursor string) ([]store.ListenPlay, *string, error)
 }
 
 // mountListeners registers the listener routes. They are writes or reveal
@@ -43,6 +44,41 @@ func (a *API) mountListeners(r chi.Router) {
 	r.Post("/listeners", a.inviteListener)
 	r.Post("/listeners/{id}/resend", a.resendListener)
 	r.Post("/listeners/{id}/revoke", a.revokeListener)
+	r.Get("/listeners/{id}/history", a.listenerHistory)
+}
+
+// listenerHistory serves a listener's counted plays (any status), newest
+// first. Read-only and not audited.
+func (a *API) listenerHistory(w http.ResponseWriter, r *http.Request) {
+	id, ok := listenerID(w, r)
+	if !ok {
+		return
+	}
+	limit, err := intParam(r, "limit", 50, 1, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_limit", err.Error())
+		return
+	}
+	db := a.listenerDB()
+	if _, err := db.GetListener(r.Context(), id); errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "listener not found")
+		return
+	} else if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	plays, next, err := db.ListenerHistory(r.Context(), id, limit, r.URL.Query().Get("cursor"))
+	if errors.Is(err, store.ErrBadCursor) {
+		writeError(w, http.StatusBadRequest, "invalid_cursor", "invalid cursor")
+		return
+	} else if err != nil {
+		a.internal(w, r, err)
+		return
+	}
+	if plays == nil {
+		plays = []store.ListenPlay{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": plays, "next_cursor": next})
 }
 
 func (a *API) listenerDB() listenerAdminStore {

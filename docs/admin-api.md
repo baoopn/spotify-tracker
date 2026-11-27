@@ -277,12 +277,28 @@ type Listener = {
 | POST | `/admin/api/listeners` | `{ "email": string }` | `201 { data: Listener, invitation_sent: boolean }` (`false` for an existing account) |
 | POST | `/admin/api/listeners/{id}/resend` | – | `{ data: Listener }`: revokes the old Clerk invitation and sends a new one |
 | POST | `/admin/api/listeners/{id}/revoke` | – | `{ data: Listener, clerk_cleanup: "ok" \| "failed" \| "skipped" }` |
+| GET | `/admin/api/listeners/{id}/history?limit=&cursor=` | – | `{ data: ListenPlay[], next_cursor: string \| null }`: the listener's counted plays (any status, revoked too), newest first; `limit` 1 to 100, default 50 |
 
 `listen_enabled` mirrors `LISTEN_ENABLED`, `audio_configured` reports whether
 the S3 settings are complete, and `listen_url` is `PUBLIC_URL + "/listen"`.
 
+```ts
+type ListenPlay = {
+  id: number
+  listened_at: string                 // when the play started
+  last_heard_at: string
+  heard_ms: number
+  track: { id: string; name: string; duration_ms: number; explicit: boolean; external_url?: string
+           artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }
+}
+```
+
+`next_cursor` is opaque: pass it back as `cursor` for the next page.
+
 Errors:
 
+- History: `404 not_found` for an unknown listener; `400 invalid_limit`,
+  `400 invalid_cursor`. Reading a history is not audited.
 - Invite: `422 validation_failed` with `fields.email` "must be a valid email
   address" (a bare address, at most 254 characters); `409 listener_exists`
   when a live row has this email (checked before Clerk is called);

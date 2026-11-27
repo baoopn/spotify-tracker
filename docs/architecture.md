@@ -770,8 +770,12 @@ so the MCP server cannot reach them):
   rules as the public lyrics), `not_found` (no file), `storage_unconfigured`
   or `unavailable` (the bucket did not answer; ask again in 30 s). A paused
   track still gets a URL.
+- `POST /api/v1/listen/progress`: `{ track_id, heard_ms }`, the audio time
+  heard since the last report (1 to 20000 ms), answers 204. See History below.
+- `GET /api/v1/listen/history?limit=&cursor=`: the caller's own counted plays,
+  newest first, `{ data, next_cursor }` (`limit` 1 to 100, default 50).
 
-With listen along off, `/me` and `/audio` answer 404 `listen_disabled`;
+With listen along off, every route but `/config` answers 404 `listen_disabled`;
 without Clerk they answer 503 `listen_unavailable`. A person who is not
 invited gets 403 `forbidden`. These refusals are logged, not audited.
 
@@ -799,6 +803,28 @@ keeps it in step with the snapshot from the public SSE stream:
 When there is no audio (no file, storage not set up, bucket down) or access
 fails, the now-playing card and lyrics still follow over the public SSE
 stream, and the player bar shows a short note.
+
+**History.** The page reports the audio time it really played: only while the
+listener has joined, the audio plays in sync and is not seeking (muted audio
+counts). It reports every 15 s while playing, and once on pause, track change
+and when the page is hidden. The API keeps one row per listener per play of a
+song in `listener_plays`:
+
+- A report counts only for the song playing now (the same rules as
+  `/listen/audio`). A report for another song answers 204 and stores nothing,
+  so races at a track change are quiet. Nothing is stored for an admin
+  previewing the page.
+- A report within two minutes of the last one for the same song extends that
+  play; later, a new play starts (the song played again).
+- An extension adds at most the time since the last report plus 5 s, so
+  repeated reports cannot inflate a play. Reports of one listener are
+  serialized, so concurrent ones never count twice.
+- A play counts once 30 s are heard, or half the song when it is shorter
+  than a minute. Only counted plays show in a history.
+
+Listeners see their own history on `/listen`. The admin sees each listener's
+history, read-only, on the Listeners page. Deleting a listener row deletes
+their plays; a revoke keeps them.
 
 **CSP.** The public site's CSP adds `media-src 'self'`. `/listen` has its own
 CSP: the hashes of its own inline scripts, Clerk's hosts for scripts, frames

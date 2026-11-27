@@ -25,6 +25,17 @@ type ListenOptions struct {
 	Me http.HandlerFunc
 	// Audio finds audio files; nil answers reason storage_unconfigured.
 	Audio AudioLocator
+	// Listener returns the invited listener Auth put in the context; ok is
+	// false for an admin previewing (nothing is stored for them).
+	Listener func(ctx context.Context) (ListenerIdentity, bool)
+	// Plays stores and reads listen-along history; nil stores nothing.
+	Plays ListenPlayStore
+}
+
+// ListenerIdentity is the invited listener making a request.
+type ListenerIdentity struct {
+	ID    int64
+	Email string
 }
 
 // AudioLocator finds the audio of a track (implemented by *listen.Locator).
@@ -87,6 +98,8 @@ func (h *Handler) mountListen(r chi.Router) {
 			}
 			r.Get("/me", func(w http.ResponseWriter, r *http.Request) { o.Me(w, r) })
 			r.Get("/audio", h.listenAudio)
+			r.Post("/progress", h.listenProgress)
+			r.Get("/history", h.listenHistory)
 		})
 	})
 }

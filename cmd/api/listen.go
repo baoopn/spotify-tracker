@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 
@@ -53,8 +54,12 @@ func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *adm
 	}
 	if auth != nil {
 		o.Auth, o.Me = auth.ListenerMiddleware(st), admin.ListenerMe
+		o.Listener = invitedListener
 	} else {
 		log.Warn("listen along needs the Clerk admin settings; /api/v1/listen answers 503")
+	}
+	if st != nil {
+		o.Plays = st
 	}
 	// Left nil (not a typed nil) without storage: the audio endpoint then
 	// answers storage_unconfigured.
@@ -65,6 +70,16 @@ func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *adm
 		slog.String("extensions", strings.Join(cfg.Listen.AudioExtensions, ",")),
 		slog.Duration("audio_url_ttl", cfg.Listen.AudioURLTTL), slog.Bool("clerk", auth != nil))
 	return o
+}
+
+// invitedListener returns the invited listener of a request; an admin
+// previewing /listen is not one (nothing is stored for them).
+func invitedListener(ctx context.Context) (httpapi.ListenerIdentity, bool) {
+	l, ok := admin.ListenerFrom(ctx)
+	if !ok || l.Admin || l.ID <= 0 {
+		return httpapi.ListenerIdentity{}, false
+	}
+	return httpapi.ListenerIdentity{ID: l.ID, Email: l.Email}, true
 }
 
 // listenInfo describes listen along for the admin Listeners page.

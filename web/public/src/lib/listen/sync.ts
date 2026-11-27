@@ -32,6 +32,8 @@ export type SyncSnapshot = {
 	is_playing: boolean;
 	progress_ms: number | null;
 	fetched_at: string;
+	/** The last owner action (play, pause, seek, skip); null or absent when unknown. */
+	changed_at?: string | null;
 	track: { id: string } | null;
 };
 

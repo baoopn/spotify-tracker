@@ -19,6 +19,9 @@ export { LISTEN_PATH };
 /** The signed-in person, for the account menu (Clerk's user is not reactive). */
 export type AccountProfile = { name: string; email: string; imageUrl: string | null };
 
+/** A sign-in started from the menu moves on to /listen only within this time. */
+const SIGN_IN_WINDOW_MS = 10 * 60_000;
+
 /** Hide account deletion in Clerk's profile: listeners keep their account. */
 const PROFILE_APPEARANCE = { elements: { profileSection__danger: { display: 'none' } } };
 
@@ -77,13 +80,23 @@ export function clerkAppearance() {
 
 /** Navigate within the site when same-origin, otherwise do a full page load. */
 async function navigateTo(to: string, replaceState = false): Promise<void> {
-	const url = new URL(to, window.location.href);
-	if (url.origin !== window.location.origin) {
-		window.location.href = url.href;
+	let url: URL;
+	try {
+		url = new URL(to, window.location.href);
+	} catch {
 		return;
 	}
-	// eslint-disable-next-line svelte/no-navigation-without-resolve -- `to` is already an absolute site path
-	await goto(url.pathname + url.search + url.hash, { replaceState });
+	// Only single-slash same-origin paths (never another site or /admin).
+	const path =
+		url.origin === window.location.origin
+			? safeRedirect(url.pathname + url.search + url.hash, null)
+			: null;
+	if (path === null) {
+		console.warn('listen: refused a sign-in redirect off this site');
+		return;
+	}
+	// eslint-disable-next-line svelte/no-navigation-without-resolve -- `path` is a checked site path
+	await goto(path, { replaceState });
 }
 
 class ListenAuth {
@@ -97,7 +110,7 @@ class ListenAuth {
 
 	#configPromise: Promise<string | null> | null = null;
 	/** Sign in was started from the account menu: move on to /listen once allowed. */
-	#afterSignIn = false;
+	#afterSignInUntil = 0;
 	#initPromise: Promise<void> | null = null;
 	/** The last token Clerk gave us, for sends that cannot wait (page hide). */
 	#lastToken: string | null = null;
@@ -132,7 +145,8 @@ class ListenAuth {
 
 	/** Sign in in a Clerk modal; invited listeners then move on to /listen. */
 	async openSignIn(): Promise<void> {
-		this.#afterSignIn = true;
+		// Clerk has no close callback: the flag expires if the modal is dismissed.
+		this.#afterSignInUntil = Date.now() + SIGN_IN_WINDOW_MS;
 		if (this.status === 'error' && !this.clerk) await this.retry();
 		else await this.init();
 		const clerk = this.clerk;
@@ -204,10 +218,9 @@ class ListenAuth {
 				appearance: clerkAppearance(),
 				signInUrl: LISTEN_PATH,
 				signUpUrl: LISTEN_PATH,
-				// Clerk never sends anyone to a hosted page or to /admin.
-				signInForceRedirectUrl: signInTarget(window.location.pathname, window.location.search),
-				signUpForceRedirectUrl: signInTarget(window.location.pathname, window.location.search),
-				afterSignOutUrl: herePath(),
+				// Per-call redirects (openSignIn, ClerkMount, signOut) are set where
+				// they are used, so they never go stale after an in-app navigation.
+				afterSignOutUrl: '/',
 				routerPush: (to: string) => navigateTo(to),
 				routerReplace: (to: string) => navigateTo(to, true)
 			});
@@ -238,8 +251,8 @@ class ListenAuth {
 		}
 		if (this.status !== 'allowed') this.status = 'checking';
 		const res = await this.#me();
-		const moveOn = this.#afterSignIn;
-		this.#afterSignIn = false;
+		const moveOn = Date.now() < this.#afterSignInUntil;
+		this.#afterSignInUntil = 0;
 		if (res.ok) {
 			this.me = res.me;
 			this.status = 'allowed';
@@ -298,7 +311,7 @@ class ListenAuth {
 		this.me = null;
 		this.#lastToken = null;
 		try {
-			await this.clerk?.signOut();
+			await this.clerk?.signOut({ redirectUrl: herePath() });
 		} catch {
 			// the sign-in form shows either way
 		}

@@ -2,9 +2,11 @@
 //
 // Redirect rules:
 // - Only same-origin relative paths are followed: they start with "/", not
-//   "//" or "/\", and hold no control characters or backslashes. Anything
-//   else (full URLs, protocol-relative URLs) is ignored, so a crafted
-//   ?redirect_url= can never send someone to another site.
+//   "//" or "/\", and hold no control characters or backslashes. They are
+//   normalized like a browser would ("/..//x" and "/%2e%2e//x" become "//x")
+//   and refused when that result is protocol-relative. Paths under /admin
+//   are refused too (the admin has its own sign-in). So a crafted
+//   ?redirect_url= can never send someone to another site or to /admin.
 // - On /listen, a safe ?redirect_url= or ?return_to= wins; otherwise
 //   sign-in ends on /listen. Elsewhere (/), sign-in stays on the page and
 //   the app moves an invited listener on to /listen itself.
@@ -22,8 +24,25 @@ export function safeRedirect<T extends string | null>(
 	// Browsers treat "\" like "/", so "/\evil.example" is protocol-relative too.
 	// eslint-disable-next-line no-control-regex -- rejecting control characters is the point
 	if (/[\\\u0000-\u001f\u007f]/.test(raw)) return fallback;
-	return raw;
+	// Normalize like the browser: dot segments ("/..//x", "/%2e%2e//x") can
+	// otherwise collapse into a protocol-relative "//x".
+	let url: URL;
+	try {
+		url = new URL(raw, PARSE_BASE);
+	} catch {
+		return fallback;
+	}
+	if (url.origin !== PARSE_ORIGIN) return fallback;
+	const path = url.pathname;
+	if (path.startsWith('//') || path.startsWith('/\\')) return fallback;
+	// The admin has its own sign-in: listener redirects never go there.
+	if (/^\/admin(\/|$)/i.test(path)) return fallback;
+	return path + url.search + url.hash;
 }
+
+/** A host that can never be real: only used to normalize paths. */
+const PARSE_BASE = 'https://redirect.invalid';
+const PARSE_ORIGIN = new URL(PARSE_BASE).origin;
 
 /** Where Clerk should land after sign-in or sign-up on this page. */
 export function signInTarget(pathname: string, search: string): string {

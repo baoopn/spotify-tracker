@@ -56,6 +56,7 @@ import type {
 	V1List
 } from './types';
 import type { McpSettings, McpSettingsUpdate, McpTokenCreated } from './mcp';
+import type { AudioFilter } from './listenAudio';
 import type { LrcLineError } from './lrc';
 
 export const ADMIN_API = '/admin/api';
@@ -318,6 +319,7 @@ export const api = {
 			q?: string;
 			status?: EnrichmentStatus | '';
 			lyrics?: LyricsFilter | '';
+			audio?: AudioFilter | '';
 			sort?: TrackSort;
 			order?: SortOrder;
 			limit?: number;

@@ -82,6 +82,13 @@ func NewAuthenticator(secretKey string, allowedEmails, allowedUserIDs []string, 
 
 // Middleware requires a valid Clerk session token for an allow-listed user.
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
+	return a.withSubject(func(w http.ResponseWriter, r *http.Request, subject string, tc *TokenClaims) {
+		a.authorize(w, r, next, subject, tc)
+	})
+}
+
+// verifier verifies the Clerk session token in the Authorization header.
+func (a *Authenticator) verifier() func(http.Handler) http.Handler {
 	opts := []clerkhttp.AuthorizationOption{
 		clerkhttp.AuthorizationFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			azp, iss := unverifiedClaims(r)
@@ -98,58 +105,29 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	}
 	// WithHeaderAuthorization (not Require…) so missing/malformed tokens reach
 	// our handler and get a JSON 401 instead of a bare 403.
-	verify := clerkhttp.WithHeaderAuthorization(opts...)
+	return clerkhttp.WithHeaderAuthorization(opts...)
+}
 
-	return verify(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// withSubject verifies the session token and calls serve with its subject
+// (the Clerk user ID) and custom claims (nil when absent). A missing token
+// or subject answers 401.
+func (a *Authenticator) withSubject(serve func(w http.ResponseWriter, r *http.Request, subject string, tc *TokenClaims)) http.Handler {
+	return a.verifier()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := clerk.SessionClaimsFromContext(r.Context())
 		if !ok || claims.Subject == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "sign in required")
 			return
 		}
 		tc, _ := claims.Custom.(*TokenClaims)
-		a.authorize(w, r, next, claims.Subject, tc)
+		serve(w, r, claims.Subject, tc)
 	}))
 }
 
 // authorize looks up the verified token's user and serves next if the user
 // is an admin.
 func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next http.Handler, subject string, tc *TokenClaims) {
-	claimRole := ""
-	if tc != nil {
-		claimRole = tc.Role
-	}
-	u, err := a.lookup(r.Context(), subject, claimRole)
-	switch {
-	case err == nil:
-		// Clerk answered: its profile decides. Token claims are used only
-		// when Clerk cannot be reached (below).
-	case errors.Is(err, errBlocked):
-		if a.onForbidden != nil {
-			a.onForbidden(r.Context(), u, clientIP(r))
-		}
-		writeError(w, http.StatusForbidden, "forbidden", "this account is banned or locked")
-		return
-	case errors.Is(err, errNoVerifiedEmail):
-		if a.onForbidden != nil {
-			a.onForbidden(r.Context(), u, clientIP(r))
-		}
-		writeError(w, http.StatusForbidden, "forbidden", "this account has no verified email")
-		return
-	case clerkUnavailable(err) && tc != nil && (tc.Role != "" || tc.Email != ""):
-		// Clerk's Backend API is unreachable, but the verified token
-		// carries enough to authorize; profile details stay empty.
-		a.log.WarnContext(r.Context(), "clerk user lookup failed; authorizing from token claims", logging.Err(err))
-		u = User{ID: subject, Email: tc.Email, Role: tc.Role}
-	case clerkStatus(err) == http.StatusNotFound:
-		// The token is valid but Clerk no longer has the user (deleted).
-		a.log.WarnContext(r.Context(), "clerk user not found", logging.Err(err))
-		writeError(w, http.StatusUnauthorized, "unauthorized", "sign in required")
-		return
-	default:
-		a.log.ErrorContext(r.Context(), "clerk user lookup failed", logging.Err(err))
-		// 503, not 502: the production proxy replaces 502 bodies with an
-		// HTML error page, and the SPA needs this JSON.
-		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "could not verify the user with Clerk")
+	u, ok := a.resolve(w, r, subject, tc, a.onForbidden)
+	if !ok {
 		return
 	}
 	if !a.allowed(u) {
@@ -160,6 +138,52 @@ func (a *Authenticator) authorize(w http.ResponseWriter, r *http.Request, next h
 		return
 	}
 	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+}
+
+// resolve looks up the verified token's user. On failure it writes the
+// error response (calling onForbidden, when set, for banned, locked and
+// unverified accounts) and returns false.
+func (a *Authenticator) resolve(w http.ResponseWriter, r *http.Request, subject string, tc *TokenClaims,
+	onForbidden func(ctx context.Context, u User, ip string)) (User, bool) {
+	claimRole := ""
+	if tc != nil {
+		claimRole = tc.Role
+	}
+	u, err := a.lookup(r.Context(), subject, claimRole)
+	switch {
+	case err == nil:
+		// Clerk answered: its profile decides. Token claims are used only
+		// when Clerk cannot be reached (below).
+	case errors.Is(err, errBlocked):
+		if onForbidden != nil {
+			onForbidden(r.Context(), u, clientIP(r))
+		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account is banned or locked")
+		return User{}, false
+	case errors.Is(err, errNoVerifiedEmail):
+		if onForbidden != nil {
+			onForbidden(r.Context(), u, clientIP(r))
+		}
+		writeError(w, http.StatusForbidden, "forbidden", "this account has no verified email")
+		return User{}, false
+	case clerkUnavailable(err) && tc != nil && (tc.Role != "" || tc.Email != ""):
+		// Clerk's Backend API is unreachable, but the verified token
+		// carries enough to authorize; profile details stay empty.
+		a.log.WarnContext(r.Context(), "clerk user lookup failed; authorizing from token claims", logging.Err(err))
+		u = User{ID: subject, Email: tc.Email, Role: tc.Role}
+	case clerkStatus(err) == http.StatusNotFound:
+		// The token is valid but Clerk no longer has the user (deleted).
+		a.log.WarnContext(r.Context(), "clerk user not found", logging.Err(err))
+		writeError(w, http.StatusUnauthorized, "unauthorized", "sign in required")
+		return User{}, false
+	default:
+		a.log.ErrorContext(r.Context(), "clerk user lookup failed", logging.Err(err))
+		// 503, not 502: the production proxy replaces 502 bodies with an
+		// HTML error page, and the SPA needs this JSON.
+		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "could not verify the user with Clerk")
+		return User{}, false
+	}
+	return u, true
 }
 
 // errBlocked means Clerk has the user but the account is banned or locked.
@@ -191,7 +215,8 @@ func (a *Authenticator) allowed(u User) bool {
 	if slices.Contains(a.allowedUserIDs, u.ID) {
 		return true
 	}
-	if a.adminRole != "" && u.Role == a.adminRole {
+	// The listener role never grants admin, even if ADMIN_ROLE named it.
+	if a.adminRole != "" && a.adminRole != ListenerRole && u.Role == a.adminRole {
 		return true
 	}
 	return u.Email != "" && slices.Contains(a.allowedEmails, strings.ToLower(u.Email))
@@ -202,7 +227,7 @@ func (a *Authenticator) allowed(u User) bool {
 // (claimRole, "" when absent) is stale, e.g. the role was just granted or
 // revoked: it is fetched again. The claim itself never sets the role.
 func (a *Authenticator) lookup(ctx context.Context, id, claimRole string) (User, error) {
-	key := "spotify-tracker:admin:user:" + id
+	key := ProfileCacheKey(id)
 	if raw, err := a.cacheGet(ctx, key); err == nil {
 		var u User
 		if json.Unmarshal(raw, &u) == nil && (claimRole == "" || u.Role == claimRole) {
@@ -267,6 +292,9 @@ func (a *Authenticator) cacheSet(ctx context.Context, key string, raw []byte) {
 	}
 	_ = a.rdb.Set(ctx, key, raw, 5*time.Minute).Err()
 }
+
+// ProfileCacheKey is the Redis key of a Clerk user's cached profile.
+func ProfileCacheKey(userID string) string { return "spotify-tracker:admin:user:" + userID }
 
 // profileCache replaces Redis for the profile cache in tests.
 type profileCache interface {

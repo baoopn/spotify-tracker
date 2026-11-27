@@ -1,6 +1,8 @@
 // Types for every shape in docs/admin-api.md (the source of truth) plus the
 // public /api/v1 read endpoints the dashboard consumes.
 
+import type { ListenStorage } from './listenAudio';
+
 // ---------- shared ----------
 
 export type Artist = {
@@ -131,6 +133,8 @@ export type Overview = {
 	version: string;
 	/** The next tracks of the Spotify queue (queue prefetch); private, null when none. */
 	up_next: UpNext | null;
+	/** Listen-along audio storage; null (or absent on an older API) when off. */
+	listen_storage?: ListenStorage | null;
 };
 
 export type UpNext = {
@@ -372,6 +376,8 @@ export type TrackRow = {
 	lyrics_status: LyricsStatus;
 	/** True when the lyrics have a time-synced version. */
 	lyrics_synced: boolean;
+	/** A listen-along audio file exists for the track. */
+	has_audio?: boolean;
 	created_at: string;
 };
 

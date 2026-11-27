@@ -36,6 +36,7 @@ import (
 	"github.com/baoopn/spotify-tracker/internal/config"
 	"github.com/baoopn/spotify-tracker/internal/grpcapi"
 	"github.com/baoopn/spotify-tracker/internal/httpapi"
+	"github.com/baoopn/spotify-tracker/internal/listen"
 	"github.com/baoopn/spotify-tracker/internal/logging"
 	"github.com/baoopn/spotify-tracker/internal/lyrics"
 	"github.com/baoopn/spotify-tracker/internal/mcpserver"
@@ -101,7 +102,7 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return ops.RunHTTP(gctx, c.http, log) })
 	g.Go(func() error { return c.alerts.Run(gctx, time.Hour) })
 	g.Go(func() error { return c.analytics.Run(gctx, 15*time.Second) })
-	g.Go(func() error { return pruneAnalytics(gctx, c.analytics, log) })
+	g.Go(func() error { return pruneDaily(gctx, c.analytics, c.prune, log) })
 	g.Go(func() error { return c.images.Run(gctx) })
 	g.Go(func() error { return c.albums.Run(gctx) })
 	if c.lyrics != nil {
@@ -111,6 +112,7 @@ func run(ctx context.Context) error {
 		g.Go(func() error { return c.translator.Run(gctx) })
 	}
 	g.Go(func() error { return c.brand.Run(gctx) })
+	g.Go(func() error { return c.listenSync.Run(gctx) }) // nil when off
 	if c.topPlaylists != nil {
 		g.Go(func() error { return c.topPlaylists.Run(gctx) })
 	}
@@ -138,6 +140,8 @@ type components struct {
 	brand *brandkit.Cache
 	// topPlaylists is nil when the feature is disabled.
 	topPlaylists *topplaylists.Runner
+	listenSync   *listen.Syncer        // nil when listen along or S3 is off
+	prune        func(context.Context) // more daily pruning (listen requests)
 }
 
 // wire builds every service and server from config and connections.
@@ -189,9 +193,10 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Analytics: recorder, Redis: rdb, Log: log.With(slog.String("component", "admin")),
 		Version: app.Version, ClerkPublishableKey: cfg.Admin.ClerkPublishableKey,
 		RedirectURI: cfg.Spotify.RedirectURI, TokenLifetimeDays: cfg.Spotify.TokenLifetimeDays,
-		Checks: checks, MCP: mcpInfo(cfg),
+		Checks: checks, MCP: mcpInfo(cfg), Listen: listenInfo(cfg),
 	}}
 
+	listenSync := attachListen(adminAPI, cfg, st, rdb, log)
 	topCfg := topPlaylistsConfig(cfg, log)
 	var topRunner *topplaylists.Runner
 	if topCfg.Enabled() {
@@ -219,6 +224,8 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		lyrics:       lyricsRefresher,
 		translator:   translator,
 		topPlaylists: topRunner,
+		listenSync:   listenSync,
+		prune:        pruneListenRequests(st, log),
 		brand:        brandCache,
 	}, nil
 }
@@ -362,13 +369,14 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)
 			},
-			Site:                  staticsite.New(publicui.FS(), publicSiteOptions()),
+			Site:                  staticsite.New(publicui.FS(), publicSiteOptions(cfg)),
 			MCP:                   newMCP(cfg, adminAPI, log),
 			MCPRateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
 			Translation:           cfg.Translate.Enabled,
 			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
 			LyricsLookup:          cfg.Lyrics.Enabled,
 			LyricsWarmer:          warmer,
+			Listen:                listenOptions(cfg, st, rdb, auth, recorder, adminAPI.Notifier, log),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -406,36 +414,6 @@ func mcpInfo(cfg config.API) admin.MCPInfo {
 		EndpointURL:        strings.TrimRight(cfg.PublicURL, "/") + "/mcp",
 		EnvTokenConfigured: cfg.MCP.AdminToken != "",
 		RateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
-	}
-}
-
-// publicSiteOptions configures the public page: its CSP also allows the
-// Spotify embed player used for the top playlists, and the live footer credit
-// (fetched from baoopn.com, logo served from media.baoopn.com).
-func publicSiteOptions() staticsite.Options {
-	return staticsite.Options{
-		ExtraCSP: map[string]string{
-			"frame-src":   "https://open.spotify.com",
-			"connect-src": "https://baoopn.com",
-			"img-src":     "https://media.baoopn.com",
-		},
-		Placeholder: "The public page was not built. Run <code>pnpm --dir web/public build</code>.",
-	}
-}
-
-// pruneAnalytics deletes analytics older than 90 days, once a day.
-func pruneAnalytics(ctx context.Context, recorder *analytics.Recorder, log *slog.Logger) error {
-	t := time.NewTicker(24 * time.Hour)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if err := recorder.Prune(ctx, 90*24*time.Hour); err != nil {
-				log.Warn("prune analytics failed", logging.Err(err))
-			}
-		}
 	}
 }
 

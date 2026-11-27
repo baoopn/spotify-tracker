@@ -69,6 +69,12 @@ type Deps struct {
 	LyricsLookup bool
 	// LyricsNudge starts the lyrics fetcher after a re-queue (nil when off).
 	LyricsNudge func()
+	// Listen describes listen along for the Listeners page.
+	Listen ListenInfo
+	// Presence is who is on /listen right now (nil: nobody is shown).
+	Presence ListenPresence
+	// AudioSync lists the audio bucket (nil when storage is not set up).
+	AudioSync AudioSyncer
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.
@@ -94,6 +100,13 @@ type API struct {
 	auditor        auditor
 	player         playerControl
 	invalidate     func(context.Context)
+	listeners      listenerAdminStore
+	clerkInv       listenerClerk
+	liveLookup     liveStore
+	audioStore     audioAdminStore
+	requests       requestAdminStore
+	storage        storageStore
+	storageMemo    storageMemo
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).
@@ -270,6 +283,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		"services":       services,
 		"version":        a.Version,
 		"up_next":        a.upNext(ctx),
+		"listen_storage": a.listenStorage(ctx),
 	})
 }
 
@@ -651,7 +665,12 @@ func (a *API) tracks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_lyrics", "unknown lyrics filter")
 		return
 	}
-	rows, total, err := a.Store.AdminTracks(r.Context(), q.Get("q"), status, lyrics, q.Get("sort"), q.Get("order"), limit, offset)
+	if !store.ValidAudioFilter(q.Get("audio")) {
+		writeError(w, http.StatusBadRequest, "invalid_audio", "audio must be has or missing")
+		return
+	}
+	rows, total, err := a.Store.AdminTrackList(r.Context(), store.TrackQuery{Search: q.Get("q"), Status: status, Lyrics: lyrics,
+		Audio: q.Get("audio"), Sort: q.Get("sort"), Order: q.Get("order"), Limit: limit, Offset: offset})
 	if err != nil {
 		a.internal(w, r, err)
 		return

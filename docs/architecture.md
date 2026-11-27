@@ -727,6 +727,180 @@ token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
 is written to `admin_audit`.
 
+## Listen along
+
+Invited people can hear the song Bao is playing, in sync, at `/listen`. The
+feature is off unless `LISTEN_ENABLED=true`. It needs the Clerk settings of the
+admin dashboard, and audio files in an S3-compatible bucket (AWS S3,
+Cloudflare R2, MinIO). The page has no link from `/`.
+
+**Access.** The admin invites people by email on the Listeners page
+(`docs/admin-api.md`). A person without a Clerk account gets a Clerk
+invitation email whose link lands on `/listen`; a person who already has an
+account just signs in there. The `listeners` table decides access, not Clerk:
+a row is `invited`, then `active` after the first signed-in request, or
+`revoked`. Every request to `/api/v1/listen/me` and `/api/v1/listen/audio`
+reads the row again, so a revoke takes effect on the next request. Admins can
+always listen along. The Clerk role `listener` (`public_metadata.role`) is set
+on invited accounts as a hint only: it never grants admin access, and
+`ADMIN_ROLE=listener` is rejected at startup.
+
+**Audio files.** The file of a track is
+`{S3_PREFIX}{spotify_track_id}.{ext}`, with `ext` tried in the order of
+`LISTEN_AUDIO_EXTENSIONS` (default `mp3,m4a,flac,ogg,opus`). The API sends a
+presigned `HEAD` request per extension (2 s each, 6 s in all, one lookup for
+all callers) and caches the answer in Redis: the found extension for an hour,
+"no file" for five minutes. Errors are not cached. The API signs requests
+itself (AWS Signature Version 4, query parameters), so the browser fetches the
+file straight from the bucket. A URL is for the current track only and lives
+for `LISTEN_AUDIO_URL_TTL` (default 10 minutes) or until the song ends plus a
+minute, whichever is longer, at most an hour. Upload the files yourself; the
+API only reads them. `S3_FORCE_PATH_STYLE=true` (the default)
+puts the bucket in the path. With `false` the bucket becomes part of the host
+name, so a bucket name with dots fails the TLS check over https: keep path
+style for such buckets.
+
+**Uploaded files.** The `track_audio` table records the files in the bucket,
+one row per track (the first extension in `LISTEN_AUDIO_EXTENSIONS` order
+when a track has several). No foreign key: a file may exist before its track
+is in the catalog.
+
+- The API lists the bucket prefix (S3 ListObjectsV2, signed like the audio
+  URLs) every `LISTEN_AUDIO_SYNC_INTERVAL` (default 15 minutes, `0` turns it
+  off), the first time about 30 s after start. It keeps only keys
+  `{S3_PREFIX}{spotify_track_id}.{ext}` with an allowed extension.
+- A Redis lock (10 minutes) lets only one replica sync at a time.
+- It upserts the listed files, then deletes the rows not in the listing. It
+  deletes only after a complete listing: a failed page changes no rows.
+- It clears the Redis lookup cache of every listed and removed track, so a
+  cached "no file" answer ends at once.
+- The last sync time, the file count and the last error are kept in Redis.
+- The admin can sync now from the Audio files page (at most every 30 s).
+- The admin overview shows the storage: files and size, how many played
+  songs have a file, the share of the last 30 days of plays that had one,
+  and the files added this week.
+
+The audio lookup checks `track_audio` first: a recorded file is signed at
+once, with no request to the bucket. Without a row it sends the HEAD requests
+as before, and records a file it finds, so the next lookup is instant. The
+read key needs list access for the sync.
+
+**Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
+so the MCP server cannot reach them):
+
+- `GET /api/v1/listen/config`: `{ enabled, clerk_publishable_key }`, no sign-in.
+- `GET /api/v1/listen/me`: the signed-in listener `{ email, name, image_url, admin }`.
+- `GET /api/v1/listen/audio`: `{ track_id, url, expires_at, content_type, reason }`.
+  `reason` is `null` when there is a URL, else `idle` (nothing playing, same
+  rules as the public lyrics), `not_found` (no file), `storage_unconfigured`
+  or `unavailable` (the bucket did not answer; ask again in 30 s). A paused
+  track still gets a URL.
+- `POST /api/v1/listen/progress`: `{ track_id, heard_ms }`, the audio time
+  heard since the last report (1 to 20000 ms), answers 204. See History below.
+- `GET /api/v1/listen/history?limit=&cursor=`: the caller's own counted plays,
+  newest first, `{ data, next_cursor }` (`limit` 1 to 100, default 50).
+- `POST /api/v1/listen/presence`: `{ state, track_id }`, answers 204. See
+  Listening now below.
+
+With listen along off, every route but `/config` answers 404 `listen_disabled`;
+without Clerk they answer 503 `listen_unavailable`. A person who is not
+invited gets 403 `forbidden`. These refusals are logged, not audited.
+
+**The page.** `/listen` signs people in with Clerk (an invitation link opens
+the sign-up form). Then it shows a Join button and a small player bar above
+the usual now-playing card and lyrics. Join starts one `<audio>` element and
+keeps it in step with the snapshot from the public SSE stream:
+
+- It plays when Bao plays and pauses when Bao pauses. When a song ends it
+  waits for the next one.
+- It checks the drift every second. When the audio is more than 2 s off, it
+  seeks to the estimated position plus 0.3 s, at most once every 3 s.
+- On a track change it stops the old file and asks for the new URL. If the
+  answer names a different track (the snapshot moved first), it asks again
+  after 1.5 s, up to three times.
+- It asks for a fresh URL before playing again when the old one ends within
+  a minute. On an audio error it asks again, up to three times per track.
+- There are no seek, skip or pause controls. The listener sets the volume
+  and mute (kept in the browser). Pausing from the system media controls
+  while Bao plays leaves the session; the page shows Join again.
+- Audio keeps playing in a background tab.
+- Every 60 s the page checks `/api/v1/listen/me`. On 403 it stops the audio
+  and shows "Your access to listen along has ended".
+
+When there is no audio (no file, storage not set up, bucket down) or access
+fails, the now-playing card and lyrics still follow over the public SSE
+stream, and the player bar shows a short note.
+
+**History.** The page reports the audio time it really played: only while the
+listener has joined, the audio plays in sync and is not seeking (muted audio
+counts). It reports every 15 s while playing, and once on pause, track change
+and when the page is hidden. The API keeps one row per listener per play of a
+song in `listener_plays`:
+
+- A report counts only for the song playing now (the same rules as
+  `/listen/audio`). A report for another song answers 204 and stores nothing,
+  so races at a track change are quiet. The one exception is the last flush
+  of a song, which often arrives just after the track changed: it still
+  extends that song's play when it was reported as current in the last 30 s,
+  but never starts a new one. A late report does not move that 30 s window.
+  Nothing is stored for an admin previewing the page.
+- A report within two minutes of the last one for the same song extends that
+  play; later, a new play starts (the song played again).
+- An extension adds at most the time since the last report plus 5 s, and a
+  play never holds more than the time since it started plus 20 s, so
+  repeated reports cannot inflate a play. Reports of one listener are
+  serialized, so concurrent ones never count twice.
+- A play counts once 30 s are heard, or half the song when it is shorter
+  than a minute. Only counted plays show in a history.
+
+Listeners see their own history on `/listen`. The admin sees each listener's
+history, read-only, on the Listeners page. Deleting a listener row deletes
+their plays; a revoke keeps them.
+
+**Request an invite.** A visitor who is not invited can ask for an invite
+on `/listen` with `POST /api/v1/listen/requests` (public, no sign-in):
+a name (1 to 80 characters), an email and an optional message (up to 500
+characters). An invite is still the admin's choice; there is no sign-up.
+
+- Valid input always answers 202 `{"ok": true}`: for a new email, for an
+  email with a pending request (no second alert), for a listener's email and for an email dismissed before (a new
+  pending request). A resubmission keeps the first name and message (it only
+  fills an empty message), so nobody can rewrite someone else's request. So the endpoint tells nobody who is invited.
+- `website` is a hidden honeypot field: when a bot fills it, the API answers
+  202 and stores nothing.
+- Text is trimmed and control characters are dropped. Errors are 422
+  `validation_failed`.
+- At most 3 requests per client per hour (a Redis fixed window keyed by a
+  salted hash of the client IP, never the IP), then 429 with `Retry-After`.
+  With 100 requests pending, new ones are dropped with a log line (still
+  202). The `/api/v1` limiter applies too.
+- A new request emails the alert recipients (Settings → Email) in the
+  background, with the name, email, message, country and time and a link to
+  the Listeners page. The email template escapes every value, and the
+  subject stays on one header line. Without SMTP settings nothing is sent.
+- The admin invites (the same steps as inviting by email) or dismisses a
+  request on the Listeners page. Requests store the Cloudflare country, not
+  an IP. Invited and dismissed requests are deleted 90 days after the
+  decision, by the daily prune.
+
+**Listening now.** The admin Listeners page shows who is on `/listen` right
+now. The page sends its state on load, on every change and every 30 s while
+visible: `listening` (joined, audio in sync), `following` (open and allowed,
+not hearing audio) or `idle` (tab hidden or session ended). Each progress
+report also counts as `listening`, so a missed ping does not drop someone who
+is playing. The API keeps one Redis key per listener
+(`listen:presence:<listener_id>`) for 90 s after the last ping, with the
+email, state, track, country, device, browser, first-seen time and last
+update. No Postgres row and no IP address: the country is Cloudflare's
+`CF-IPCountry` and the device and browser come from the User-Agent, with the
+same rules as page stats. A revoke deletes the key, and the admin list leaves
+out revoked listeners. Nothing is stored for an admin previewing the page.
+
+**CSP.** The public site's CSP adds `media-src 'self'`. `/listen` has its own
+CSP: the hashes of its own inline scripts, Clerk's hosts for scripts, frames
+and requests, `https://img.clerk.com` for images and the bucket origin for
+`media-src`.
+
 ## MCP server
 
 `cmd/api` also serves a remote [MCP](https://modelcontextprotocol.io) server at
@@ -869,6 +1043,29 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   only prefetched is not found on the public `GET /api/v1/tracks/{id}`
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
+- Listen along (`/listen`): the `listeners` table, not the Clerk role,
+  decides access, and it is read on every request, so a revoke cuts access on
+  the next request. An audio URL that was already issued keeps working until
+  it expires: at most `LISTEN_AUDIO_URL_TTL` or the rest of the song plus a
+  minute, never more than an hour. The page checks access every 60 s and stops
+  the audio on 403. The `listener` role never grants admin access.
+- "Request an invite" is public, so it reveals nothing: valid input always
+  answers 202, whether the email is new, pending, invited or a listener. A
+  honeypot field drops simple bots, a fixed window of 3 requests per hour
+  per salted client IP hash (no raw IP is stored) and a cap of 100 pending
+  requests limit abuse, and the alert email escapes every value the visitor
+  typed (the subject cannot add header lines). A resubmission for a pending
+  email never replaces the first name and message. The `listener.requested`
+  audit row keeps the requester's email after the request itself is deleted
+  (90 days after the decision), like the rest of the audit log.
+- Listening now stores no IP address: only the country from Cloudflare, the
+  device and browser family from the User-Agent, and the listener's email and
+  state, in Redis for 90 s.
+- Audio URLs are presigned for the current track only, so listeners cannot
+  ask for other songs. Presigned URLs carry a credential: they are never
+  logged, and lookup errors drop the URL. The S3 keys are read once
+  (`unset`) and stay in the API. Give them read access to the audio prefix
+  only (plus list access, so a missing file answers 404 instead of 403).
 - Lyrics translation sends the lyrics of played and upcoming songs (title, artist and
   text) to the Anthropic API. The key is read once from `ANTHROPIC_API_KEY`
   (removed from the environment), lives only in the SDK client, and is never

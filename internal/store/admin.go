@@ -25,6 +25,8 @@ type TrackRow struct {
 	// LyricsSynced is true when the stored lyrics have a time-synced version.
 	LyricsSynced bool      `json:"lyrics_synced"`
 	CreatedAt    time.Time `json:"created_at"`
+	// HasAudio is true when the track has a listen-along audio file.
+	HasAudio bool `json:"has_audio"`
 }
 
 // Lyrics filters of AdminTracks.
@@ -168,10 +170,39 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 	return out, q.hydrate(ctx, views...)
 }
 
+// trackSearch is the tracks search condition over t (tracks) and al
+// (albums): an accent- and case-insensitive match of the track, album or an
+// artist name, the ISRC, or a Spotify track/album/artist ID, URI or URL. Its
+// parameters start after the n already bound; it returns "" for an empty
+// search. AdminTrackList and MissingAudio share it.
+func trackSearch(search string, n int) (string, []any) {
+	if strings.TrimSpace(search) == "" {
+		return "", nil
+	}
+	args := []any{likePattern(search)}
+	p := n + 1
+	ids := ""
+	if kind, id, ok := spotifyRef(search); ok {
+		args = append(args, id)
+		ids = orIDs(trackIDMatch(kind, n+len(args)))
+	}
+	return `(` + foldMatch("t.name", p) + fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, p) +
+		foldMatch("al.name", p) + ` OR EXISTS (
+			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
+			WHERE ta.track_id = t.id AND ` + foldMatch("a.name", p) + `)` + ids + `)`, args
+}
+
 // AdminTracks lists tracks with play counters, enrichment and lyrics status.
 // lyrics is "" or one of the LyricsFilter constants (an unknown value adds no
 // filter; callers validate it with ValidLyricsFilter).
 func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort, order string, limit, offset int) ([]TrackRow, int64, error) {
+	return q.AdminTrackList(ctx, TrackQuery{Search: search, Status: status, Lyrics: lyrics, Sort: sort, Order: order,
+		Limit: limit, Offset: offset})
+}
+
+// AdminTrackList is AdminTracks with every filter, including audio.
+func (q *Queries) AdminTrackList(ctx context.Context, tq TrackQuery) ([]TrackRow, int64, error) {
+	search, status, lyrics, sort, order, limit, offset := tq.Search, tq.Status, tq.Lyrics, tq.Sort, tq.Order, tq.Limit, tq.Offset
 	sortCol := map[string]string{
 		"plays": "plays", "last_played": "last_played", "name": "t.name", "created": "t.created_at",
 	}[sort]
@@ -184,18 +215,9 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 	}
 	where := []string{"true"}
 	args := []any{}
-	if strings.TrimSpace(search) != "" {
-		args = append(args, likePattern(search))
-		n := len(args)
-		ids := ""
-		if kind, id, ok := spotifyRef(search); ok {
-			args = append(args, id)
-			ids = orIDs(trackIDMatch(kind, len(args)))
-		}
-		where = append(where, `(`+foldMatch("t.name", n)+fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, n)+
-			foldMatch("al.name", n)+` OR EXISTS (
-			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND `+foldMatch("a.name", n)+`)`+ids+`)`)
+	if cond, more := trackSearch(search, len(args)); cond != "" {
+		args = append(args, more...)
+		where = append(where, cond)
 	}
 	if status != "" {
 		args = append(args, status)
@@ -203,6 +225,9 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 	}
 	if cond := lyricsFilters[lyrics]; cond != "" {
 		where = append(where, "("+cond+")")
+	}
+	if cond := audioFilters[tq.Audio]; cond != "" {
+		where = append(where, cond)
 	}
 	base := `
 		FROM tracks t
@@ -223,7 +248,7 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 	rows, err := q.db.Query(ctx, `
 		SELECT COALESCE(p.plays, 0) AS plays, p.last_played AS last_played,
 			COALESCE(tf.status, 'pending'), COALESCE(l.status, 'pending'), COALESCE(l.synced_lyrics, '') <> '',
-			t.created_at, `+trackColumns+base+
+			t.created_at, `+hasAudio+`, `+trackColumns+base+
 		fmt.Sprintf(` ORDER BY %s %s NULLS LAST, t.id LIMIT $%d OFFSET $%d`, sortCol, dir, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("admin tracks: %w", err)
@@ -234,7 +259,7 @@ func (q *Queries) AdminTracks(ctx context.Context, search, status, lyrics, sort,
 		var tr TrackRow
 		var al albumScan
 		if err := rows.Scan(append(append([]any{&tr.Plays, &tr.LastPlayed, &tr.EnrichmentStatus,
-			&tr.LyricsStatus, &tr.LyricsSynced, &tr.CreatedAt},
+			&tr.LyricsStatus, &tr.LyricsSynced, &tr.CreatedAt, &tr.HasAudio},
 			scanTrack(&tr.Track)...), al.targets()...)...); err != nil {
 			return nil, 0, err
 		}

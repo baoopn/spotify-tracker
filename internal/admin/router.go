@@ -70,6 +70,8 @@ func Mount(r chi.Router, a *API, auth *Authenticator) {
 			a.mountBackups(r)
 			a.mountMCP(r)
 			a.mountPlayer(r)
+			a.mountListeners(r)
+			a.mountListenAudio(r)
 
 			r.Get("/analytics", a.analytics)
 			r.Get("/analytics/pages", a.pageAnalytics)

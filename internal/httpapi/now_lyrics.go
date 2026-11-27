@@ -149,37 +149,49 @@ func (h *Handler) nowLyrics(ctx context.Context) (*nowLyricsBody, error) {
 	if h.lyrics == nil {
 		return nil, nil
 	}
+	np, _, ok, err := h.currentPlayback(ctx)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return h.lyricsBody(ctx, np.Track.ID, h.clock())
+}
+
+// currentPlayback returns the track playing now (or paused) and its
+// estimated position in ms. ok is false when there is none: no snapshot, no
+// track or progress, a snapshot older than a minute, or a position past the
+// end of the track.
+func (h *Handler) currentPlayback(ctx context.Context) (*playbackSnapshot, int64, bool, error) {
 	read := h.playback
 	if read == nil {
 		read = h.nowPlayingJSON
 	}
 	raw, err := read(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, false, err
 	}
 	var np *playbackSnapshot
 	if err := json.Unmarshal(raw, &np); err != nil {
-		return nil, fmt.Errorf("decode now playing: %w", err)
+		return nil, 0, false, fmt.Errorf("decode now playing: %w", err)
 	}
 	now := h.clock()
 	if np == nil || np.Track == nil || np.Track.ID == "" || np.ProgressMS == nil {
-		return nil, nil
+		return nil, 0, false, nil
 	}
 	// Playing or paused alike: the poller rewrites the snapshot (and its
 	// fetched_at) on every poll while Spotify still reports a current track,
 	// paused or not. A cleared snapshot (nothing playing) keeps the time of the
 	// clear, so it goes stale here, as does one the poller stopped updating.
 	if now.Sub(np.FetchedAt) > nowLyricsMaxAge {
-		return nil, nil
+		return nil, 0, false, nil
 	}
 	pos := max(0, *np.ProgressMS)
 	if np.IsPlaying {
 		pos = max(0, *np.ProgressMS+max(0, now.Sub(np.FetchedAt).Milliseconds()))
 	}
 	if d := np.Track.DurationMS; d > 0 && pos > d {
-		return nil, nil // the track has ended; the next snapshot names the new one
+		return nil, 0, false, nil // the track has ended; the next snapshot names the new one
 	}
-	return h.lyricsBody(ctx, np.Track.ID, now)
+	return np, pos, true, nil
 }
 
 // lyricsBody returns the body for trackID from the memo, or builds it once

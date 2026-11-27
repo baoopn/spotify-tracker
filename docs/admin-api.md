@@ -97,7 +97,8 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
     { "name": "postgres", "status": "…" }, { "name": "redis", "status": "…" }
   ],
   "version": "1.2.3",
-  "up_next": UpNext | null
+  "up_next": UpNext | null,
+  "listen_storage": ListenStorage | null
 }
 ```
 `Summary = { total_plays, unique_tracks, unique_artists, listening_ms, first_played_at, last_played_at, enriched_tracks }`.
@@ -116,6 +117,22 @@ type UpNext = {
   for_track_id: string;   // the song playing then
   items: { position: number; track_id: string; name: string; duration_ms: number;
     artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }[];
+};
+```
+
+`listen_storage` sums up the listen-along audio files (one query over
+`track_audio` and the history). It is null when listen along or the S3
+storage is off, and null on an error (logged): the overview never fails
+because of it.
+
+```ts
+type ListenStorage = {
+  files: number; total_bytes: number;              // recorded audio files
+  tracks_played: number;                           // distinct tracks in the history
+  tracks_with_audio: number;                       // of those, with a file
+  plays_30d: number; plays_30d_with_audio: number; // the owner's plays in the last 30 days, and of tracks with a file
+  last_sync_at: string | null; last_error: string | null; sync_interval_s: number;
+  added_7d: number;                                // files first seen in the last 7 days
 };
 ```
 
@@ -246,6 +263,162 @@ off, a valid token gets the public tools only (a wrong token is still 401).
 Audit actions: `mcp.settings_updated` (`admin_tools_enabled`),
 `mcp.token_generated` (`prefix`, `rotated`), `mcp.token_revoked` (`prefix`).
 The token is never logged or audited.
+
+## Listeners
+
+The Listeners page manages who may listen along at `/listen` (see
+[architecture.md](architecture.md#listen-along)). Inviting someone without a
+Clerk account sends a Clerk invitation email; its link lands on `listen_url`.
+Someone who already has an account gets no email: they sign in at `/listen`.
+The `listeners` table decides access, so a revoke takes effect on the
+listener's next request. None of these routes are reachable through MCP.
+
+```ts
+type Listener = {
+  id: number
+  email: string                       // lower case
+  status: "invited" | "active" | "revoked"
+  clerk_user_id: string | null
+  has_account: boolean                // clerk_user_id is set
+  invited_by: string                  // the admin's email
+  invited_at: string
+  accepted_at: string | null          // first signed-in request
+  revoked_at: string | null
+  last_seen_at: string | null         // updated at most every 5 minutes
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listeners` | – | `{ data: Listener[], listen_enabled: boolean, audio_configured: boolean, listen_url: string }`: active, then invited, then revoked, newest invitation first (at most 500) |
+| POST | `/admin/api/listeners` | `{ "email": string }` | `201 { data: Listener, invitation_sent: boolean }` (`false` for an existing account) |
+| POST | `/admin/api/listeners/{id}/resend` | – | `{ data: Listener }`: revokes the old Clerk invitation and sends a new one |
+| POST | `/admin/api/listeners/{id}/revoke` | – | `{ data: Listener, clerk_cleanup: "ok" \| "failed" \| "skipped" }` |
+| GET | `/admin/api/listeners/{id}/history?limit=&cursor=` | – | `{ data: ListenPlay[], next_cursor: string \| null }`: the listener's counted plays (any status, revoked too), newest first; `limit` 1 to 100, default 50 |
+| GET | `/admin/api/listeners/live` | – | `{ data: LivePresence[] }`: who is on `/listen` right now (presence lasts 90 s after the last ping), listening first, then following, then idle, each by `since`; revoked listeners are left out |
+
+`listen_enabled` mirrors `LISTEN_ENABLED`, `audio_configured` reports whether
+the S3 settings are complete, and `listen_url` is `PUBLIC_URL + "/listen"`.
+
+Invite requests from `/listen` (see
+[architecture.md](architecture.md#listen-along)):
+
+```ts
+type JoinRequest = {
+  id: number; name: string; email: string; message: string | null
+  status: "pending" | "invited" | "dismissed"
+  country: string | null              // from Cloudflare; no IP is stored
+  created_at: string; updated_at: string
+  decided_at: string | null; decided_by: string | null
+  already_listener: boolean           // a live listener has this email
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listeners/requests?status=pending\|dismissed\|all` | – | `{ data: JoinRequest[], pending: number }`, newest first (at most 200); default `pending`; `400 invalid_status` otherwise |
+| POST | `/admin/api/listeners/requests/{id}/invite` | – | `201 { data: Listener, invitation_sent, request: JoinRequest }`: the same steps and errors as `POST /admin/api/listeners`, then the request is `invited`. When the email is already a listener: `200` with that listener, `invitation_sent: false`, and the request marked `invited`. `409 not_pending`, `404 not_found` |
+| POST | `/admin/api/listeners/requests/{id}/dismiss` | – | `{ request: JoinRequest }`; `409 not_pending`, `404 not_found` |
+
+`GET /admin/api/listeners` also returns `pending_requests` (a count for the
+badge).
+
+```ts
+type ListenPlay = {
+  id: number
+  listened_at: string                 // when the play started
+  last_heard_at: string
+  heard_ms: number
+  track: { id: string; name: string; duration_ms: number; explicit: boolean; external_url?: string
+           artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }
+}
+```
+
+`next_cursor` is opaque: pass it back as `cursor` for the next page.
+
+```ts
+type LivePresence = {
+  listener_id: number
+  email: string
+  state: "listening" | "following" | "idle"
+  country: string | null              // ISO 3166-1 alpha-2 from Cloudflare, null when unknown
+  device: string                      // mobile | desktop, as in page stats
+  browser: string                     // Chrome, Safari, Firefox, Edge, Opera, Other
+  since: string                       // first seen while the presence lived
+  updated_at: string
+  track: { id: string; name: string; artists: { id: string; name: string }[] } | null
+}
+```
+
+No IP address is stored or returned. Reading the list is not audited.
+
+Errors:
+
+- History: `404 not_found` for an unknown listener; `400 invalid_limit`,
+  `400 invalid_cursor`. Reading a history is not audited.
+- Invite: `422 validation_failed` with `fields.email` "must be a valid email
+  address" (a bare address, at most 254 characters); `409 listener_exists`
+  when a live row has this email (checked before Clerk is called);
+  `409 clerk_rejected` when Clerk refuses the request (its first message);
+  `503 clerk_unavailable` on a network error, 5xx or 429 from Clerk.
+- Resend: `404 not_found`; `409 not_pending` when the row is not `invited`;
+  `409 no_invitation` ("This person already has an account. Ask them to sign
+  in at /listen.") for an existing account; `409 clerk_rejected` /
+  `503 clerk_unavailable` as above.
+- Revoke: `404 not_found`; `409 already_revoked`. The row is revoked first;
+  then a pending invitation is revoked in Clerk and the `listener` role is
+  removed from the Clerk user (an admin's role is never touched).
+  `clerk_cleanup` is `failed` when one of those Clerk calls failed (the
+  revoke still holds), `skipped` when there was nothing to clean up.
+- `{id}` must be a positive integer, else `404 not_found`.
+
+An existing account gets the Clerk role `listener` only when it has no role.
+Inviting a revoked email again creates a new row.
+
+Audit actions: `listener.requested` (`id`; the actor is the requester's
+email; only for a new request), `listener.request_invited` (`id`, `email`,
+plus the usual `listener.invited`), `listener.request_dismissed` (`id`,
+`email`), `listener.invited` (`id`, `email`, `existing_account`),
+`listener.resent` (`id`, `email`), `listener.revoked` (`id`, `email`,
+`clerk_cleanup`), `listener.accepted` (`id`, `email`, `clerk_user_id`; the
+actor is the listener's email). Refused listeners are logged, not audited.
+
+## Audio files
+
+The Listen → Audio files page lists the listen-along audio files recorded
+from the bucket (see [architecture.md](architecture.md#listen-along)). None of
+these routes are reachable through MCP.
+
+```ts
+type AudioTrack = { id: string; name: string; duration_ms: number; artists: { id: string; name: string }[]
+                    album_name: string; cover_image_url: string }
+type AudioFile = {
+  track_id: string; ext: string; size_bytes: number; content_type: string | null
+  last_modified: string | null          // from the bucket
+  first_seen_at: string
+  track: AudioTrack | null              // null when the track is not in the catalog
+  owner_plays: number                   // the owner's plays of the track
+}
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/admin/api/listen/audio?q=&limit=&offset=` | – | `{ data: AudioFile[], total, summary: { files, total_bytes, tracks_in_catalog, last_sync_at, last_error, sync_interval_s } }`: newest `last_modified` first; `q` searches the track and artist names; `limit` 1 to 100, default 50 |
+| GET | `/admin/api/listen/audio/missing?q=&limit=&offset=` | – | `{ data: [{ track: AudioTrack, owner_plays, last_played_at }], total }`: the owner's most-played tracks (all time) with no file; `q` searches like the `q` of `GET /admin/api/tracks` (track, album or artist name, ISRC, or a Spotify ID, URI or URL, ignoring accents and case), and `total` counts the matches |
+| POST | `/admin/api/listen/audio/sync` | – | `{ files, added, removed, took_ms }` after a sync (at most 60 s) |
+
+`last_sync_at` is the last attempt and `last_error` its error (`null` when it
+worked); both are `null` before the first sync. `sync_interval_s` is
+`LISTEN_AUDIO_SYNC_INTERVAL` in seconds (`0` = off).
+
+Sync errors: `409 sync_running` (a sync runs on some replica),
+`429 rate_limited` (less than 30 s since the last one), `503
+storage_unconfigured` (listen along or S3 is off), `503 sync_failed` (the
+bucket could not be listed; no rows changed). Audit action:
+`listen.audio_synced` (`files`, `added`, `removed`, or `error`).
+
+`GET /admin/api/tracks` also takes `audio=has|missing` (400 `invalid_audio`
+otherwise), and each row has `has_audio`.
 
 ## Data
 
@@ -539,7 +712,10 @@ time-zone handling as the API analytics):
 `enrichment.requeued`, `playlist.refreshed`, `top_playlists.run`,
 `top_playlists.generated`, `top_playlists.regenerated`, `top_playlists.hidden`,
 `top_playlists.shown`, `backups.run_requested`, `backups.refresh_requested`,
-`backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change).
+`backups.settings_updated`, `backups.settings_reset` (detail: `{ field: { from, to } }` for each change),
+`listener.invited`, `listener.resent`, `listener.revoked`, `listener.accepted` (see [Listeners](#listeners)),
+`listen.audio_synced` (see [Audio files](#audio-files)), `listener.requested`, `listener.request_invited`,
+`listener.request_dismissed`.
 
 ## Playlists
 

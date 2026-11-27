@@ -40,6 +40,21 @@ const (
 	// KeyCacheGeneration is part of every response-cache key; bumping it
 	// (BumpCache) makes all cached responses stale at once.
 	KeyCacheGeneration = prefix + "cache-gen"
+	// KeyListenAudioPrefix prefixes the listen-along audio lookup cache:
+	// which file extension a track's audio has in S3, or that it has none.
+	KeyListenAudioPrefix = prefix + "listen:audio:"
+	// KeyListenAudioSyncLock is held (SET NX, 10 min) while one replica lists
+	// the audio bucket; KeyListenAudioSyncStatus is the last sync result and
+	// KeyListenAudioSyncCooldown limits syncs started from the admin.
+	KeyListenAudioSyncLock     = prefix + "listen:audio-sync:lock"
+	KeyListenAudioSyncStatus   = prefix + "listen:audio-sync:status"
+	KeyListenAudioSyncCooldown = prefix + "listen:audio-sync:cooldown"
+	// KeyListenRequestRatePrefix counts "Request an invite" submissions per
+	// salted client IP hash and hour (fixed window).
+	KeyListenRequestRatePrefix = prefix + "listen:requests:rate:"
+	// KeyListenPresencePrefix prefixes who is on /listen right now, one key
+	// per listener ID (JSON, 90 s TTL).
+	KeyListenPresencePrefix = prefix + "listen:presence:"
 )
 
 // BumpCache invalidates every cached API response by moving to a new cache

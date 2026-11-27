@@ -14,7 +14,7 @@ import (
 
 // The public page may frame only the Spotify embed player.
 func TestPublicSiteCSPAllowsSpotifyEmbed(t *testing.T) {
-	csp := staticsite.BuildCSP(nil, publicSiteOptions().ExtraCSP)
+	csp := staticsite.BuildCSP(nil, publicSiteOptions(config.API{}).ExtraCSP)
 	if !strings.Contains(csp, "frame-src https://open.spotify.com;") {
 		t.Errorf("frame-src should allow only open.spotify.com: %s", csp)
 	}
@@ -25,7 +25,7 @@ func TestPublicSiteCSPAllowsSpotifyEmbed(t *testing.T) {
 
 // The live footer credit: fetched from baoopn.com, logo from media.baoopn.com.
 func TestPublicSiteCSPAllowsSiteCredit(t *testing.T) {
-	csp := staticsite.BuildCSP(nil, publicSiteOptions().ExtraCSP)
+	csp := staticsite.BuildCSP(nil, publicSiteOptions(config.API{}).ExtraCSP)
 	directives := map[string]string{}
 	for _, d := range strings.Split(csp, "; ") {
 		name, value, _ := strings.Cut(d, " ")

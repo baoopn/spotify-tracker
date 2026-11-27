@@ -79,6 +79,7 @@ type API struct {
 	Lyrics
 	Translate
 	Prefetch
+	Listen
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the
@@ -463,6 +464,9 @@ func (a *API) validate() error {
 		return err
 	}
 	if err := a.Translate.validate(); err != nil {
+		return err
+	}
+	if err := a.Listen.validate(a.IsDevelopment(), a.Admin.AdminRole); err != nil {
 		return err
 	}
 	// An empty BRAND_API_URL disables the brand API, so the default applies

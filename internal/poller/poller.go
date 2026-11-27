@@ -25,6 +25,13 @@ type Source interface {
 	CurrentlyPlaying(ctx context.Context) (*domain.Playback, error)
 }
 
+// timedSource also reports when the HTTP request that answered was sent and
+// received (*spotify.Player does), so a token refresh or a retry after a 401
+// does not move the midpoint.
+type timedSource interface {
+	CurrentlyPlayingTimed(ctx context.Context) (*domain.Playback, spotify.RequestTime, error)
+}
+
 // Heartbeat publishes the poller status (implemented by *heartbeat.Reporter).
 type Heartbeat interface {
 	OK(ctx context.Context, detail string)
@@ -125,12 +132,10 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	// is the best guess, and removes most of the request time from the
 	// listeners' position estimate (stamping the response time made the
 	// progress look older than it is).
-	start := time.Now()
-	pb, err := p.src.CurrentlyPlaying(cctx)
+	pb, fetchedAt, err := p.fetch(cctx)
 	if err != nil {
 		return "", err
 	}
-	fetchedAt := midpoint(start, time.Now())
 	if pb == nil {
 		observability.PollCycles.WithLabelValues("idle").Inc()
 		p.anchor.reset()
@@ -175,6 +180,24 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 		p.prefetch.kick(ctx, pb.Track.ID)
 	}
 	return state + ": " + pb.Track.Name, nil
+}
+
+// fetch reads the current playback and the midpoint of the request: the
+// source's own timing of the HTTP request when it has one, else the time
+// around the whole call.
+func (p *Poller) fetch(ctx context.Context) (*domain.Playback, time.Time, error) {
+	if ts, ok := p.src.(timedSource); ok {
+		pb, rt, err := ts.CurrentlyPlayingTimed(ctx)
+		if mid := rt.Mid(); err == nil && !mid.IsZero() {
+			return pb, mid, nil
+		}
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	start := time.Now()
+	pb, err := p.src.CurrentlyPlaying(ctx)
+	return pb, midpoint(start, time.Now()), err
 }
 
 // midpoint is the time halfway between start and end, in UTC.

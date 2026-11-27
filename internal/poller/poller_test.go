@@ -11,6 +11,7 @@ import (
 
 	trackerv1 "github.com/baoopn/spotify-tracker/gen/tracker/v1"
 	"github.com/baoopn/spotify-tracker/internal/domain"
+	"github.com/baoopn/spotify-tracker/internal/spotify"
 )
 
 // slowSource answers after delay, as a slow Spotify request.
@@ -159,5 +160,40 @@ func TestMidpoint(t *testing.T) {
 	a := time.Date(2026, 11, 27, 10, 0, 0, 0, time.FixedZone("x", 3600))
 	if got := midpoint(a, a.Add(500*time.Millisecond)); !got.Equal(a.Add(250*time.Millisecond)) || got.Location() != time.UTC {
 		t.Errorf("midpoint = %v", got)
+	}
+}
+
+// timedFake reports its own request time, as *spotify.Player does.
+type timedFake struct {
+	pb *domain.Playback
+	rt spotify.RequestTime
+}
+
+func (f *timedFake) CurrentlyPlaying(context.Context) (*domain.Playback, error) { return f.pb, nil }
+func (f *timedFake) CurrentlyPlayingTimed(context.Context) (*domain.Playback, spotify.RequestTime, error) {
+	time.Sleep(200 * time.Millisecond) // a slow token refresh before the request
+	return f.pb, f.rt, nil
+}
+
+// The poller uses the source's request timing, not the time around the
+// whole call (which includes token lookups and retries).
+func TestFetchedAtUsesSourceRequestTime(t *testing.T) {
+	sent := time.Now().Add(-time.Second)
+	rt := spotify.RequestTime{Sent: sent, Received: sent.Add(100 * time.Millisecond)}
+	src := &timedFake{pb: &domain.Playback{Track: domain.Track{ID: "t1"}, IsPlaying: true}, rt: rt}
+	ing := &stampIngest{}
+	p := New(src, ing, time.Second, nopHeartbeat{}, slog.New(slog.DiscardHandler))
+	if _, err := p.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ing.records) != 1 || !ing.records[0].Equal(rt.Mid()) {
+		t.Errorf("record fetched_at = %v, want %v", ing.records, rt.Mid())
+	}
+	src.pb = nil
+	if _, err := p.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ing.clears) != 1 || !ing.clears[0].Equal(rt.Mid()) {
+		t.Errorf("clear fetched_at = %v, want %v", ing.clears, rt.Mid())
 	}
 }

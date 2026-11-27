@@ -63,36 +63,6 @@ lives in the single-row `listen_state` table. It is read with
 decide and save are atomic: a database error writes nothing, and concurrent
 or retried snapshots are decided one at a time.
 
-A snapshot's `fetched_at` is the midpoint of the Spotify request (the time
-halfway between sending it and getting the answer), for a clear too. Spotify
-reads `progress_ms` somewhere during the request, so the midpoint keeps most
-of the request time out of the position the public page and `/listen`
-estimate from it.
-
-Spotify's `timestamp` is the time of the last playback state change (play,
-resume, pause, seek, skip), not the response time: while a song plays it
-stays fixed. The snapshot serves it as `changed_at` (null when Spotify sent
-none; history keeps using it as the listen's `played_at`). The poller uses it
-to smooth `progress_ms` (`internal/poller/anchor.go`):
-
-- Within one state (same track, `changed_at` and play state), each poll gives
-  `base = progress_ms - (fetched_at - changed_at)`. Measured, it is nearly
-  constant: about ±25 ms over 9 polls after a seek, and -5..+9 ms after a
-  skip (the song start). Raw `progress_ms` with the midpoint alone wobbles by
-  ±60..140 ms, because the Spotify response time varies (114..282 ms
-  measured).
-- The poller publishes the median base of the last 15 polls plus the time
-  since the change, clamped to the song length. Any clock offset between the
-  poller and Spotify is constant and cancels out.
-- The samples restart when the state changes, and when a raw value is more
-  than 1 s away from the smoothed one (a change Spotify did not report); that
-  poll publishes the raw value.
-- Paused snapshots, snapshots with no `changed_at`, and progress that does not
-  advance while "playing" publish the raw value. Spotify can report
-  `is_playing` for a while with `progress_ms` stuck at the old song's end
-  (measured: 30 s after a play command); the past-the-end rule makes that
-  idle.
-
 1. **A listen counts once**, when at least `PLAY_COUNT_MIN_FRACTION` (30%,
    at most 90%) of the song has been heard, less up to 3 s for the unseen
    end of the song (so a play counts slightly before the exact fraction),
@@ -132,6 +102,39 @@ writes that Redis key any more.
 
 The `(track_id, played_at)` unique key keeps ingestion and imports
 idempotent.
+
+### Snapshot time and position
+
+A snapshot's `fetched_at` is the midpoint of the HTTP request that answered
+(the time halfway between sending it and getting the response), for a clear
+too. A token refresh or a retry after a 401 is not part of it. Spotify
+reads `progress_ms` somewhere during the request, so the midpoint keeps most
+of the request time out of the position the public page and `/listen`
+estimate from it.
+
+Spotify's `timestamp` is the time of the last playback state change (play,
+resume, pause, seek, skip), not the response time: while a song plays it
+stays fixed. The snapshot serves it as `changed_at` (null when Spotify sent
+none; history keeps using it as the listen's `played_at`). The poller uses it
+to smooth `progress_ms` (`internal/poller/anchor.go`):
+
+- Within one state (same track, `changed_at` and play state), each poll gives
+  `base = progress_ms - (fetched_at - changed_at)`. Measured, it is nearly
+  constant: about ±25 ms over 9 polls after a seek, and -5..+9 ms after a
+  skip (the song start). Raw `progress_ms` with the midpoint alone wobbles by
+  ±60..140 ms, because the Spotify response time varies (114..282 ms
+  measured).
+- The poller publishes the median base of the last 15 polls plus the time
+  since the change, clamped to the song length. Any clock offset between the
+  poller and Spotify is constant and cancels out.
+- The samples restart when the state changes, and when a raw value is more
+  than 1 s away from the smoothed one (a change Spotify did not report); that
+  poll publishes the raw value.
+- Paused snapshots, snapshots with no `changed_at`, and progress that does not
+  advance while "playing" publish the raw value. Spotify can report
+  `is_playing` for a while with `progress_ms` stuck at the old song's end
+  (measured: 30 s after a play command); the past-the-end rule makes that
+  idle.
 
 ## Enrichment
 
@@ -942,12 +945,13 @@ has a small account control:
 
 Redirect rules:
 
-- Clerk always returns to the page itself: it never sends people to a
-  Clerk-hosted page or to `/admin`.
+- Clerk always returns to the public page that opened it: sign-in never
+  lands on a Clerk-hosted page or under `/admin`.
 - An invitation link (`/listen?__clerk_ticket=…&__clerk_status=sign_up`)
   opens sign-up on `/listen` and stays there.
 - A `redirect_url` or `return_to` parameter is used only when it is a
-  same-origin path: it starts with `/` and not with `//` or `/\`. Anything
+  same-origin path of the public site: it starts with `/`, not with `//`,
+  has no `\` or control characters, and is not under `/admin`. Anything
   else is ignored.
 - Sign out stays on the current page: `/listen` shows its sign-in card, `/`
   stays `/`.
@@ -1103,10 +1107,10 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
 - Sign-in from `/` follows only same-origin `redirect_url` / `return_to`
-  paths (a leading `/`, never `//` or `/\`), so it cannot be used as an open
-  redirect. Clerk is allowed in the CSP of `/` only when listen along is on,
-  and it loads only on demand: visitors with no sign-in cookie fetch no Clerk
-  code.
+  paths (a leading `/`, never `//`, a `\`, control characters or `/admin`),
+  so it cannot be used as an open redirect. Clerk is allowed in the CSP of
+  `/` only when listen along is on, and it loads only on demand: visitors
+  with no sign-in cookie fetch no Clerk code.
 - Listen along (`/listen`): the `listeners` table, not the Clerk role,
   decides access, and it is read on every request, so a revoke cuts access on
   the next request. An audio URL that was already issued keeps working until

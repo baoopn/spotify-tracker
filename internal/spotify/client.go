@@ -123,55 +123,80 @@ type externalURLs struct {
 
 // CurrentlyPlaying returns the user's current track, or nil when nothing is
 // playing (HTTP 204, an empty item, or non-track content such as podcasts).
+// FetchedAt is the midpoint of the HTTP request that answered.
 func (p *Player) CurrentlyPlaying(ctx context.Context) (*domain.Playback, error) {
+	pb, _, err := p.CurrentlyPlayingTimed(ctx)
+	return pb, err
+}
+
+// RequestTime is when the HTTP request that answered was sent and when its
+// response headers arrived. A token lookup or a retry after a 401 is not
+// part of it.
+type RequestTime struct{ Sent, Received time.Time }
+
+// Mid is the midpoint of the request, in UTC (zero when not measured).
+func (t RequestTime) Mid() time.Time {
+	if t.Sent.IsZero() {
+		return time.Time{}
+	}
+	return t.Sent.Add(t.Received.Sub(t.Sent) / 2).UTC()
+}
+
+// CurrentlyPlayingTimed is CurrentlyPlaying plus the timing of the request
+// that answered (also when nothing is playing).
+func (p *Player) CurrentlyPlayingTimed(ctx context.Context) (*domain.Playback, RequestTime, error) {
 	force := false
 	for attempt := 0; attempt < 2; attempt++ {
-		pb, unauthorized, err := p.currentlyPlaying(ctx, force)
+		pb, rt, unauthorized, err := p.currentlyPlaying(ctx, force)
 		if unauthorized {
 			force = true
 			continue
 		}
-		return pb, err
+		return pb, rt, err
 	}
-	return nil, errors.New("spotify: unauthorized after token refresh")
+	return nil, RequestTime{}, errors.New("spotify: unauthorized after token refresh")
 }
 
-func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Playback, bool, error) {
+func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Playback, RequestTime, bool, error) {
+	var rt RequestTime
 	tok, err := p.tokens.AccessToken(ctx, force)
 	if err != nil {
-		return nil, false, err
+		return nil, rt, false, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.apiBase+"/me/player/currently-playing", nil)
 	if err != nil {
-		return nil, false, err
+		return nil, rt, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
+	// Time only the request itself: Spotify reads progress_ms during it.
+	rt.Sent = time.Now()
 	resp, err := p.http.Do(req)
+	rt.Received = time.Now()
 	if err != nil {
-		return nil, false, fmt.Errorf("spotify: currently-playing: %w", err)
+		return nil, rt, false, fmt.Errorf("spotify: currently-playing: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	observability.UpstreamRequests.WithLabelValues("spotify", strconv.Itoa(resp.StatusCode)).Inc()
-	fetchedAt := time.Now().UTC()
+	fetchedAt := rt.Mid()
 
 	switch {
 	case resp.StatusCode == http.StatusNoContent:
-		return nil, false, nil
+		return nil, rt, false, nil
 	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, true, nil
+		return nil, rt, true, nil
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return nil, false, rateLimitFrom(resp)
+		return nil, rt, false, rateLimitFrom(resp)
 	case resp.StatusCode != http.StatusOK:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, false, fmt.Errorf("spotify: currently-playing failed (%d): %s", resp.StatusCode, truncate(body))
+		return nil, rt, false, fmt.Errorf("spotify: currently-playing failed (%d): %s", resp.StatusCode, truncate(body))
 	}
 
 	var cp currentlyPlayingResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&cp); err != nil {
-		return nil, false, fmt.Errorf("spotify: decode currently-playing: %w", err)
+		return nil, rt, false, fmt.Errorf("spotify: decode currently-playing: %w", err)
 	}
 	if cp.Item == nil || cp.Item.ID == "" || (cp.Type != "" && cp.Type != "track") {
-		return nil, false, nil
+		return nil, rt, false, nil
 	}
 	e := cp.Item.entry()
 	pb := &domain.Playback{
@@ -189,7 +214,7 @@ func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Play
 		at := time.UnixMilli(cp.Timestamp).UTC()
 		pb.PlayedAt, pb.ChangedAt = at, &at
 	}
-	return pb, false, nil
+	return pb, rt, false, nil
 }
 
 func rateLimitFrom(resp *http.Response) error {

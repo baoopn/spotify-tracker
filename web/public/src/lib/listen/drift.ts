@@ -10,6 +10,8 @@
 //   "playing"); after such a stall the next measure seeks once.
 // - Snapshot jitter: a new now-playing snapshot that moves the target by less
 //   than JITTER_MS keeps the running estimate.
+// - Owner actions: a new `changed_at` for the same song (Bao seeked, paused or
+//   resumed) skips the jitter filter, resets the EMA and seeks at once.
 
 import { estimatePositionMs } from '../playback.ts';
 import { IDLE_MAX_AGE_MS, seekTarget, type SyncSnapshot } from './sync.ts';
@@ -77,7 +79,32 @@ export class DriftState {
 }
 
 /** A running target estimate: the position at `atMs`, moving while playing. */
-export type TargetEstimate = { trackId: string; ms: number; atMs: number; playing: boolean };
+export type TargetEstimate = {
+	trackId: string;
+	ms: number;
+	atMs: number;
+	playing: boolean;
+	/** The snapshot's `changed_at` (null when unknown). */
+	changedAt: string | null;
+};
+
+/**
+ * Bao acted on the same song (seek, pause, resume): `changed_at` moved. Null on
+ * either side (unknown, or an older API) is never an action.
+ */
+export function isOwnerAction(
+	prev: TargetEstimate | null,
+	trackId: string,
+	changedAt: string | null | undefined
+): boolean {
+	return (
+		!!prev &&
+		prev.trackId === trackId &&
+		prev.changedAt != null &&
+		changedAt != null &&
+		prev.changedAt !== changedAt
+	);
+}
 
 export function estimateAt(e: TargetEstimate, nowMs: number): number {
 	return e.ms + (e.playing ? Math.max(0, nowMs - e.atMs) : 0);
@@ -93,17 +120,19 @@ export function smoothTarget(
 	trackId: string,
 	targetMs: number,
 	playing: boolean,
-	nowMs: number
+	nowMs: number,
+	changedAt: string | null = null
 ): TargetEstimate {
 	if (
 		prev &&
+		!isOwnerAction(prev, trackId, changedAt) &&
 		prev.trackId === trackId &&
 		prev.playing === playing &&
 		Math.abs(estimateAt(prev, nowMs) - targetMs) < JITTER_MS
 	) {
 		return prev;
 	}
-	return { trackId, ms: targetMs, atMs: nowMs, playing };
+	return { trackId, ms: targetMs, atMs: nowMs, playing, changedAt };
 }
 
 /**
@@ -116,6 +145,13 @@ export class DriftController {
 	#est: TargetEstimate | null = null;
 	#stalled = false;
 	#reseek = false;
+	/** Bao acted (a new changed_at): seek on the next measure. */
+	#ownerAction = false;
+
+	/** Bao acted on this song: the next measure seeks (also for tests). */
+	get seekPending(): boolean {
+		return this.#ownerAction;
+	}
 
 	/** The owner's position now, jitter-filtered (null: nothing to follow). */
 	target(np: SyncSnapshot | null, serverNowMs: number, durationMs: number): number | null {
@@ -127,7 +163,12 @@ export class DriftController {
 		}
 		const fresh = estimatePositionMs(np, serverNowMs, durationMs);
 		if (fresh == null) return null;
-		this.#est = smoothTarget(this.#est, id, fresh, np.is_playing, serverNowMs);
+		const changedAt = np.changed_at ?? null;
+		if (isOwnerAction(this.#est, id, changedAt)) {
+			this.#ownerAction = true;
+			this.#state.reset();
+		}
+		this.#est = smoothTarget(this.#est, id, fresh, np.is_playing, serverNowMs, changedAt);
 		const at = estimateAt(this.#est, serverNowMs);
 		return durationMs > 0 ? Math.min(at, durationMs) : at;
 	}
@@ -149,6 +190,7 @@ export class DriftController {
 		const onEmptied = () => {
 			this.#stalled = false;
 			this.#reseek = false;
+			this.#ownerAction = false;
 			this.#state.reset();
 		};
 		const events: [string, () => void][] = [
@@ -161,7 +203,8 @@ export class DriftController {
 		const timer = setInterval(() => {
 			const target = el.paused ? null : follow();
 			const buffering = el.readyState < HAVE_FUTURE_DATA || el.seeking || this.#stalled;
-			if (target != null && !buffering && this.#reseek) {
+			if (target != null && (this.#ownerAction || (!buffering && this.#reseek))) {
+				this.#ownerAction = false;
 				this.#reseek = false;
 				this.#seek(el, target, onSeek);
 				return;

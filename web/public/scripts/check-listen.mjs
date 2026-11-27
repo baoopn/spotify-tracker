@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+	DriftController,
 	DriftState,
 	HARD_SEEK_MS,
 	JITTER_MS,
@@ -10,6 +11,7 @@ import {
 	SOFT_START_MS,
 	SOFT_STOP_MS,
 	estimateAt,
+	isOwnerAction,
 	rateFor,
 	smoothTarget
 } from '../src/lib/listen/drift.ts';
@@ -398,6 +400,56 @@ near(rateFor(-30), 1.01, 'rounded to 0.005 (1.0075)');
 	const paused = smoothTarget(e0, id, 11_000, false, 1000);
 	assert.notEqual(paused, e0, 'pause rebases');
 	assert.equal(estimateAt(paused, 9000), 11_000, 'paused stays put');
+}
+
+// Owner actions: a new changed_at for the same song (Bao seeked, paused or
+// resumed) skips the jitter filter and asks for a seek; the same changed_at
+// with small jitter is filtered; null keeps the old behaviour.
+{
+	const id = '4uLU6hMCjMI75M1A2tKUQC';
+	const T = Date.parse('2026-11-27T12:00:00Z');
+	/** @param {number} progress @param {number} fetchedOffset @param {string | null | undefined} changed */
+	const np = (progress, fetchedOffset, changed) => ({
+		is_playing: true,
+		progress_ms: progress,
+		fetched_at: new Date(T + fetchedOffset).toISOString(),
+		changed_at: changed,
+		track: { id }
+	});
+	const A = '2026-11-27T11:59:00.000Z';
+	const B = '2026-11-27T12:00:02.500Z';
+
+	const e = smoothTarget(null, id, 10_000, true, 0, A);
+	assert.equal(isOwnerAction(e, id, A), false, 'same changed_at');
+	assert.equal(isOwnerAction(e, id, B), true, 'new changed_at');
+	assert.equal(isOwnerAction(e, id, null), false, 'null now');
+	assert.equal(
+		isOwnerAction(smoothTarget(null, id, 10_000, true, 0, null), id, B),
+		false,
+		'null before'
+	);
+	assert.equal(
+		isOwnerAction(e, 'other0track0id00000000', B),
+		false,
+		'another song is a track change'
+	);
+	assert.notEqual(smoothTarget(e, id, 10_100, true, 0, B), e, 'action skips the jitter filter');
+	assert.equal(smoothTarget(e, id, 10_100, true, 0, A), e, 'same changed_at: jitter filtered');
+
+	const c = new DriftController();
+	assert.equal(c.target(np(10_000, 0, A), T, 200_000), 10_000);
+	// 100 ms of poll jitter, same changed_at: the running estimate stays.
+	assert.equal(c.target(np(11_100, 1000, A), T + 1000, 200_000), 11_000);
+	assert.equal(c.seekPending, false);
+	// Bao seeked (only 100 ms, under the jitter limit): taken at once, seek requested.
+	assert.equal(c.target(np(10_900, 2000, B), T + 2000, 200_000), 10_900);
+	assert.equal(c.seekPending, true, 'seek right away');
+
+	// Null changed_at (an older API): only the jitter rule applies.
+	const n = new DriftController();
+	n.target(np(10_000, 0, null), T, 200_000);
+	assert.equal(n.target(np(11_100, 1000, null), T + 1000, 200_000), 11_000);
+	assert.equal(n.seekPending, false);
 }
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears

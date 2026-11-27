@@ -1,7 +1,20 @@
 import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, type ProxyOptions } from 'vite';
+import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
+
+// @clerk/ui (lazy-loaded by /listen) ships React "use client" directives; they
+// are meaningless in this static site and only produce bundler warnings.
+function stripUseClient(): Plugin {
+	return {
+		name: 'strip-use-client',
+		enforce: 'pre',
+		transform(code, id) {
+			if (!id.includes('node_modules') || !/^['"]use client['"];?/.test(code)) return null;
+			return { code: code.replace(/^['"]use client['"];?/, ''), map: null };
+		}
+	};
+}
 
 const API_TARGET = process.env.PUBLIC_API_TARGET ?? 'http://127.0.0.1:8080';
 
@@ -42,6 +55,7 @@ const apiProxy: Record<string, ProxyOptions> = {
 
 export default defineConfig({
 	plugins: [
+		stripUseClient(),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {
@@ -102,6 +116,9 @@ export default defineConfig({
 		proxy: apiProxy
 	},
 	build: {
+		// Clerk's prebuilt UI (@clerk/ui + React) is one lazy chunk that only /listen
+		// loads, after /api/v1/listen/config; our own chunks stay far below this.
+		chunkSizeWarningLimit: 1600,
 		rolldownOptions: {
 			checks: { pluginTimings: false }
 		}

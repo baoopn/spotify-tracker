@@ -1,6 +1,7 @@
 // Post-build: adapter-static empties build/ on every build, so restore the
 // .gitkeep the Go embed relies on, and print the CSP hashes of the inline
-// scripts (the Go server computes the same hashes at startup).
+// scripts (the Go server computes the same hashes at startup). listen.html
+// (/listen) gets its own CSP from its own inline scripts.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const buildDir = fileURLToPath(new URL('../build/', import.meta.url));
 writeFileSync(`${buildDir}.gitkeep`, '');
 
-for (const file of ['index.html', '404.html']) {
+for (const file of ['index.html', '404.html', 'listen.html']) {
 	const path = `${buildDir}${file}`;
 	if (!existsSync(path)) {
 		console.error(`postbuild: missing build/${file}`);

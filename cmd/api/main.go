@@ -192,6 +192,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Checks: checks, MCP: mcpInfo(cfg), Listen: listenInfo(cfg),
 	}}
 
+	attachPresence(adminAPI, cfg, rdb)
 	topCfg := topPlaylistsConfig(cfg, log)
 	var topRunner *topplaylists.Runner
 	if topCfg.Enabled() {

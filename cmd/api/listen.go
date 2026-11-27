@@ -61,6 +61,9 @@ func listenOptions(cfg config.API, st *store.Store, rdb *redis.Client, auth *adm
 	if st != nil {
 		o.Plays = st
 	}
+	if p := listenPresence(cfg, rdb); p != nil {
+		o.Presence = p
+	}
 	// Left nil (not a typed nil) without storage: the audio endpoint then
 	// answers storage_unconfigured.
 	if loc := listen.NewLocator(cfg.Listen, rdb, log.With(slog.String("component", "listen"))); loc != nil {
@@ -80,6 +83,23 @@ func invitedListener(ctx context.Context) (httpapi.ListenerIdentity, bool) {
 		return httpapi.ListenerIdentity{}, false
 	}
 	return httpapi.ListenerIdentity{ID: l.ID, Email: l.Email}, true
+}
+
+// listenPresence is the Redis store of who is on /listen, or nil when
+// listen along is off.
+func listenPresence(cfg config.API, rdb *redis.Client) *listen.PresenceStore {
+	if !cfg.Listen.Enabled || rdb == nil {
+		return nil
+	}
+	return listen.NewPresenceStore(rdb)
+}
+
+// attachPresence lets the admin show who is listening now (left nil, not
+// a typed nil, when listen along is off).
+func attachPresence(a *admin.API, cfg config.API, rdb *redis.Client) {
+	if p := listenPresence(cfg, rdb); p != nil {
+		a.Presence = p
+	}
 }
 
 // listenInfo describes listen along for the admin Listeners page.

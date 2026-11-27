@@ -41,6 +41,7 @@ type listenerAdminStore interface {
 // email addresses, so they are never part of ReadOnlyHandler.
 func (a *API) mountListeners(r chi.Router) {
 	r.Get("/listeners", a.listListeners)
+	r.Get("/listeners/live", a.listenersLive)
 	r.Post("/listeners", a.inviteListener)
 	r.Post("/listeners/{id}/resend", a.resendListener)
 	r.Post("/listeners/{id}/revoke", a.revokeListener)
@@ -312,6 +313,7 @@ func (a *API) revokeListener(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	a.dropPresence(r.Context(), l.ID)
 	cleanup := a.cleanupListener(r.Context(), l)
 	a.audit(r, "listener.revoked", map[string]any{"id": l.ID, "email": l.Email, "clerk_cleanup": cleanup})
 	writeJSON(w, http.StatusOK, map[string]any{"data": toListenerView(l), "clerk_cleanup": cleanup})

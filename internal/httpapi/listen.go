@@ -30,6 +30,8 @@ type ListenOptions struct {
 	Listener func(ctx context.Context) (ListenerIdentity, bool)
 	// Plays stores and reads listen-along history; nil stores nothing.
 	Plays ListenPlayStore
+	// Presence records who is on /listen right now; nil stores nothing.
+	Presence PresenceWriter
 }
 
 // ListenerIdentity is the invited listener making a request.
@@ -100,6 +102,7 @@ func (h *Handler) mountListen(r chi.Router) {
 			r.Get("/audio", h.listenAudio)
 			r.Post("/progress", h.listenProgress)
 			r.Get("/history", h.listenHistory)
+			r.Post("/presence", h.listenPresence)
 		})
 	})
 }

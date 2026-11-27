@@ -71,6 +71,8 @@ type Deps struct {
 	LyricsNudge func()
 	// Listen describes listen along for the Listeners page.
 	Listen ListenInfo
+	// Presence is who is on /listen right now (nil: nobody is shown).
+	Presence ListenPresence
 }
 
 // TranslationInfo describes the lyrics translator for the admin API.
@@ -98,6 +100,7 @@ type API struct {
 	invalidate     func(context.Context)
 	listeners      listenerAdminStore
 	clerkInv       listenerClerk
+	liveLookup     liveStore
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).

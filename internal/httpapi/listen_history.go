@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/baoopn/spotify-tracker/internal/listen"
 	"github.com/baoopn/spotify-tracker/internal/store"
 )
 
@@ -101,6 +102,8 @@ func (h *Handler) listenProgress(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, r, err)
 		return
 	}
+	// A missed presence ping must not drop someone who is playing.
+	h.touchPresence(r, l, listen.StateListening, &in.TrackID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

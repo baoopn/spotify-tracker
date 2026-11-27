@@ -278,6 +278,7 @@ type Listener = {
 | POST | `/admin/api/listeners/{id}/resend` | – | `{ data: Listener }`: revokes the old Clerk invitation and sends a new one |
 | POST | `/admin/api/listeners/{id}/revoke` | – | `{ data: Listener, clerk_cleanup: "ok" \| "failed" \| "skipped" }` |
 | GET | `/admin/api/listeners/{id}/history?limit=&cursor=` | – | `{ data: ListenPlay[], next_cursor: string \| null }`: the listener's counted plays (any status, revoked too), newest first; `limit` 1 to 100, default 50 |
+| GET | `/admin/api/listeners/live` | – | `{ data: LivePresence[] }`: who is on `/listen` right now (presence lasts 90 s after the last ping), listening first, then following, then idle, each by `since`; revoked listeners are left out |
 
 `listen_enabled` mirrors `LISTEN_ENABLED`, `audio_configured` reports whether
 the S3 settings are complete, and `listen_url` is `PUBLIC_URL + "/listen"`.
@@ -294,6 +295,22 @@ type ListenPlay = {
 ```
 
 `next_cursor` is opaque: pass it back as `cursor` for the next page.
+
+```ts
+type LivePresence = {
+  listener_id: number
+  email: string
+  state: "listening" | "following" | "idle"
+  country: string | null              // ISO 3166-1 alpha-2 from Cloudflare, null when unknown
+  device: string                      // mobile | desktop, as in page stats
+  browser: string                     // Chrome, Safari, Firefox, Edge, Opera, Other
+  since: string                       // first seen while the presence lived
+  updated_at: string
+  track: { id: string; name: string; artists: { id: string; name: string }[] } | null
+}
+```
+
+No IP address is stored or returned. Reading the list is not audited.
 
 Errors:
 

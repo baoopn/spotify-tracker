@@ -774,6 +774,8 @@ so the MCP server cannot reach them):
   heard since the last report (1 to 20000 ms), answers 204. See History below.
 - `GET /api/v1/listen/history?limit=&cursor=`: the caller's own counted plays,
   newest first, `{ data, next_cursor }` (`limit` 1 to 100, default 50).
+- `POST /api/v1/listen/presence`: `{ state, track_id }`, answers 204. See
+  Listening now below.
 
 With listen along off, every route but `/config` answers 404 `listen_disabled`;
 without Clerk they answer 503 `listen_unavailable`. A person who is not
@@ -825,6 +827,19 @@ song in `listener_plays`:
 Listeners see their own history on `/listen`. The admin sees each listener's
 history, read-only, on the Listeners page. Deleting a listener row deletes
 their plays; a revoke keeps them.
+
+**Listening now.** The admin Listeners page shows who is on `/listen` right
+now. The page sends its state on load, on every change and every 30 s while
+visible: `listening` (joined, audio in sync), `following` (open and allowed,
+not hearing audio) or `idle` (tab hidden or session ended). Each progress
+report also counts as `listening`, so a missed ping does not drop someone who
+is playing. The API keeps one Redis key per listener
+(`listen:presence:<listener_id>`) for 90 s after the last ping, with the
+email, state, track, country, device, browser, first-seen time and last
+update. No Postgres row and no IP address: the country is Cloudflare's
+`CF-IPCountry` and the device and browser come from the User-Agent, with the
+same rules as page stats. A revoke deletes the key, and the admin list leaves
+out revoked listeners. Nothing is stored for an admin previewing the page.
 
 **CSP.** The public site's CSP adds `media-src 'self'`. `/listen` has its own
 CSP: the hashes of its own inline scripts, Clerk's hosts for scripts, frames
@@ -979,6 +994,9 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   it expires: at most `LISTEN_AUDIO_URL_TTL` or the rest of the song plus a
   minute, never more than an hour. The page checks access every 60 s and stops
   the audio on 403. The `listener` role never grants admin access.
+- Listening now stores no IP address: only the country from Cloudflare, the
+  device and browser family from the User-Agent, and the listener's email and
+  state, in Redis for 90 s.
 - Audio URLs are presigned for the current track only, so listeners cannot
   ask for other songs. Presigned URLs carry a credential: they are never
   logged, and lookup errors drop the URL. The S3 keys are read once

@@ -43,6 +43,9 @@ const (
 	// KeyListenAudioPrefix prefixes the listen-along audio lookup cache:
 	// which file extension a track's audio has in S3, or that it has none.
 	KeyListenAudioPrefix = prefix + "listen:audio:"
+	// KeyListenPresencePrefix prefixes who is on /listen right now, one key
+	// per listener ID (JSON, 90 s TTL).
+	KeyListenPresencePrefix = prefix + "listen:presence:"
 )
 
 // BumpCache invalidates every cached API response by moving to a new cache

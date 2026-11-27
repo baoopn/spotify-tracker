@@ -189,7 +189,7 @@ func wire(ctx context.Context, cfg config.API, pool *pgxpool.Pool, rdb *redis.Cl
 		Analytics: recorder, Redis: rdb, Log: log.With(slog.String("component", "admin")),
 		Version: app.Version, ClerkPublishableKey: cfg.Admin.ClerkPublishableKey,
 		RedirectURI: cfg.Spotify.RedirectURI, TokenLifetimeDays: cfg.Spotify.TokenLifetimeDays,
-		Checks: checks, MCP: mcpInfo(cfg),
+		Checks: checks, MCP: mcpInfo(cfg), Listen: listenInfo(cfg),
 	}}
 
 	topCfg := topPlaylistsConfig(cfg, log)
@@ -362,13 +362,14 @@ func newHTTPServer(cfg config.API, st *store.Store, rdb *redis.Client, recorder 
 				admin.Mount(r, adminAPI, auth)
 				admin.MountSPA(r, adminui.FS(), cfg.Admin.ClerkPublishableKey)
 			},
-			Site:                  staticsite.New(publicui.FS(), publicSiteOptions()),
+			Site:                  staticsite.New(publicui.FS(), publicSiteOptions(cfg)),
 			MCP:                   newMCP(cfg, adminAPI, log),
 			MCPRateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
 			Translation:           cfg.Translate.Enabled,
 			TranslationCaps:       store.TranslationCaps{Daily: cfg.Translate.DailyCap, Monthly: cfg.Translate.MonthlyCap},
 			LyricsLookup:          cfg.Lyrics.Enabled,
 			LyricsWarmer:          warmer,
+			Listen:                listenOptions(cfg, st, rdb, auth, log),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -406,20 +407,6 @@ func mcpInfo(cfg config.API) admin.MCPInfo {
 		EndpointURL:        strings.TrimRight(cfg.PublicURL, "/") + "/mcp",
 		EnvTokenConfigured: cfg.MCP.AdminToken != "",
 		RateLimitPerMinute: cfg.MCP.RateLimitPerMinute,
-	}
-}
-
-// publicSiteOptions configures the public page: its CSP also allows the
-// Spotify embed player used for the top playlists, and the live footer credit
-// (fetched from baoopn.com, logo served from media.baoopn.com).
-func publicSiteOptions() staticsite.Options {
-	return staticsite.Options{
-		ExtraCSP: map[string]string{
-			"frame-src":   "https://open.spotify.com",
-			"connect-src": "https://baoopn.com",
-			"img-src":     "https://media.baoopn.com",
-		},
-		Placeholder: "The public page was not built. Run <code>pnpm --dir web/public build</code>.",
 	}
 }
 

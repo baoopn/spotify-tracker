@@ -26,8 +26,8 @@ func TestExportedClientHelpers(t *testing.T) {
 }
 
 func TestHashIP(t *testing.T) {
-	a, b := HashIP("salt", "x", "203.0.113.9"), HashIP("salt2", "x", "203.0.113.9")
-	if a == b || len(a) != 32 || a != HashIP("salt", "x", "203.0.113.9") || a == HashIP("salt", "y", "203.0.113.9") {
+	a, b := HashIP("salt", "x", "10.0.0.9"), HashIP("salt2", "x", "10.0.0.9")
+	if a == b || len(a) != 32 || a != HashIP("salt", "x", "10.0.0.9") || a == HashIP("salt", "y", "10.0.0.9") {
 		t.Errorf("hashes = %s %s", a, b)
 	}
 }

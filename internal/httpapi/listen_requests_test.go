@@ -32,7 +32,7 @@ func TestListenRequestEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/listen/requests",
 		strings.NewReader(`{"name":"  Ann\u0000 ","email":" Ann@Example.com ","message":"hi\r\nthere"}`))
 	req.Header.Set("CF-IPCountry", "VN")
-	req.RemoteAddr = "203.0.113.9:4000"
+	req.RemoteAddr = "10.0.0.9:4000"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 202 || strings.TrimSpace(rec.Body.String()) != `{"ok":true}` || rec.Header().Get("Cache-Control") != "no-store" {

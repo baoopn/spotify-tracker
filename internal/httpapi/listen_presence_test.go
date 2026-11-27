@@ -27,7 +27,7 @@ func TestListenPresence(t *testing.T) {
 		strings.NewReader(`{"state":"following","track_id":"`+trackID+`"}`))
 	req.Header.Set("CF-IPCountry", "vn")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0 Safari/537.36")
-	req.RemoteAddr = "203.0.113.9:1234"
+	req.RemoteAddr = "10.0.0.9:1234"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 204 || rec.Header().Get("Cache-Control") != "no-store" {

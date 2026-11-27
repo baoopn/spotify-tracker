@@ -2,6 +2,8 @@
 	import { onMount, tick } from 'svelte';
 	import { ListenApiError, postListenRequest } from '#lib/listen/api.js';
 	import { errorMessage } from '#lib/api.js';
+	import { listenAuth } from '#lib/listen/auth.svelte.js';
+	import { loadTurnstile, turnstileTheme, type TurnstileApi } from '#lib/account/turnstile.js';
 
 	/** Prefill (the signed-in email in the "not invited" state). */
 	let { email: initialEmail = '' }: { email?: string } = $props();
@@ -38,6 +40,50 @@
 		anchor?.querySelector<HTMLInputElement>('input')?.focus();
 	});
 
+	// Cloudflare Turnstile, when the server has a site key: Send waits for a token.
+	const siteKey = $derived(listenAuth.turnstileSiteKey);
+	let token = $state<string | null>(null);
+	let checkError = $state<string | null>(null);
+	let widget: { api: TurnstileApi; id: string } | null = null;
+
+	function turnstile(key: string) {
+		return (node: HTMLDivElement) => {
+			let gone = false;
+			loadTurnstile().then(
+				(api) => {
+					if (gone) return;
+					const id = api.render(node, {
+						sitekey: key,
+						theme: turnstileTheme(document.documentElement.dataset.theme),
+						size: 'flexible',
+						action: 'listen-request',
+						callback: (t) => {
+							token = t;
+							checkError = null;
+						},
+						'expired-callback': () => resetCheck(),
+						'error-callback': () => (token = null),
+						'timeout-callback': () => resetCheck()
+					});
+					if (id) widget = { api, id };
+				},
+				(err: unknown) => (checkError = errorMessage(err))
+			);
+			return () => {
+				gone = true;
+				if (widget) widget.api.remove(widget.id);
+				widget = null;
+				token = null;
+			};
+		};
+	}
+
+	/** A token is single use: a fresh check after each submit or expiry. */
+	function resetCheck() {
+		token = null;
+		if (widget) widget.api.reset(widget.id);
+	}
+
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		const errs: Record<string, string> = {};
@@ -53,7 +99,8 @@
 				name: name.trim(),
 				email: email.trim(),
 				message: message.trim() || undefined,
-				website
+				website,
+				turnstile_token: siteKey ? (token ?? '') : undefined
 			});
 			sent = true;
 		} catch (err) {
@@ -67,6 +114,7 @@
 			}
 		} finally {
 			busy = false;
+			if (siteKey && !sent) resetCheck();
 		}
 	}
 </script>
@@ -162,10 +210,19 @@
 				</div>
 			</div>
 
+			{#if siteKey}
+				<div class="mt-4">
+					<div {@attach turnstile(siteKey)} class="min-h-[65px]"></div>
+					{#if fields.turnstile || checkError}
+						<p class="err" role="alert">{fields.turnstile ?? checkError}</p>
+					{/if}
+				</div>
+			{/if}
+
 			{#if formError}<p class="err mt-4" role="alert">{formError}</p>{/if}
 
 			<div class="mt-5 flex flex-wrap gap-3">
-				<button type="submit" class="btn btn-primary" disabled={busy}>
+				<button type="submit" class="btn btn-primary" disabled={busy || (!!siteKey && !token)}>
 					{busy ? 'Sending…' : 'Send request'}
 				</button>
 				<button

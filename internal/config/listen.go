@@ -118,7 +118,7 @@ func (s *S3) validate(dev bool) error {
 	switch {
 	case err != nil || u.Host == "":
 		return fmt.Errorf("S3_ENDPOINT must be an absolute https URL")
-	case u.Scheme != "https" && !(dev && u.Scheme == "http"):
+	case u.Scheme != "https" && (!dev || u.Scheme != "http"):
 		return fmt.Errorf("S3_ENDPOINT must use https (http only when APP_ENV=development)")
 	case u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery:
 		return fmt.Errorf("S3_ENDPOINT must be a scheme and host only, with no path, query or fragment")

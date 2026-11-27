@@ -16,6 +16,7 @@
 		Palette,
 		ScrollText,
 		SquarePlay,
+		UsersRound,
 		X
 	} from '@lucide/svelte';
 	import { page } from '$app/state';
@@ -40,7 +41,8 @@
 			label: 'Listen',
 			items: [
 				{ href: resolve(''), label: 'Overview', brand: 'headphones', exact: true },
-				{ href: resolve('player'), label: 'Player', icon: SquarePlay, exact: false }
+				{ href: resolve('player'), label: 'Player', icon: SquarePlay, exact: false },
+				{ href: resolve('listeners'), label: 'Listeners', icon: UsersRound, exact: false }
 			]
 		},
 		{

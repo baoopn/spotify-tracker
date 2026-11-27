@@ -65,7 +65,7 @@
 		</div>
 	{/if}
 
-	<div class="grid items-start gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+	<div class="grid items-start gap-4 2xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
 		<InviteCard listenUrl={s.listen_url} />
 		<ListenersTable listeners={s.data} />
 	</div>

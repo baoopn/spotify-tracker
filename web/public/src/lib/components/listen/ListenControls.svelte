@@ -32,7 +32,10 @@
 	const label = $derived(
 		p.joined ? labels[p.status] : p.ready && inSync ? 'Ready' : labels[p.status]
 	);
-	const showJoin = $derived(!p.joined && p.status !== 'access-ended' && p.status !== 'off');
+	// Join only makes sense when this song has audio to play.
+	const showJoin = $derived(
+		!p.joined && !['access-ended', 'off', 'no-audio', 'cant-play'].includes(p.status)
+	);
 	const percent = $derived(Math.round(p.volume * 100));
 	const hint = $derived(
 		p.note ?? (p.joined ? null : p.ready ? 'Press Join to hear what Bao hears.' : null)

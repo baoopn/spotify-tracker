@@ -16,10 +16,16 @@
 		"build": "vite build && node scripts/postbuild.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-time.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-credit.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-lyrics.mjs",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-time.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-credit.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-lyrics.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-listen.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint . --max-warnings 0",
 		"format": "prettier --write ."
+	},
+	"dependencies": {
+		"@clerk/clerk-js": "6.42.3",
+		"@clerk/ui": "1.42.4",
+		"react": "19.3.1",
+		"react-dom": "19.3.1"
 	},
 	"devDependencies": {
 		"@eslint/js": "10.0.1",

@@ -40,6 +40,9 @@ const (
 	// KeyCacheGeneration is part of every response-cache key; bumping it
 	// (BumpCache) makes all cached responses stale at once.
 	KeyCacheGeneration = prefix + "cache-gen"
+	// KeyListenAudioPrefix prefixes the listen-along audio lookup cache:
+	// which file extension a track's audio has in S3, or that it has none.
+	KeyListenAudioPrefix = prefix + "listen:audio:"
 )
 
 // BumpCache invalidates every cached API response by moving to a new cache

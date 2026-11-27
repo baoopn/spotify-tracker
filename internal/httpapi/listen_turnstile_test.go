@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestListenRequestTurnstile(t *testing.T) {
 	on := listenRouter(&ListenOptions{Enabled: true, Requests: sub, TurnstileSiteKey: testSiteKey}, nil)
 
 	if rec := post(on, "/api/v1/listen/requests", body); rec.Code != 202 || len(sub.got) != 1 ||
-		sub.got[0].TurnstileToken != "tok-1" || sub.got[0].RemoteIP != "192.0.2.1" {
+		sub.got[0].TurnstileToken != "tok-1" || sub.got[0].RemoteIP != strings.Split(httptest.NewRequest(http.MethodGet, "/", nil).RemoteAddr, ":")[0] {
 		t.Fatalf("pass = %d %s %+v", rec.Code, rec.Body, sub.got)
 	}
 	// Missing or empty token: 422 before anything is submitted.

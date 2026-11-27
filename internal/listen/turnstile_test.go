@@ -56,10 +56,10 @@ func TestTurnstileVerify(t *testing.T) {
 	srv := fakeSiteverify(t, "listening.example.com", http.StatusOK, &got)
 	ctx := context.Background()
 
-	if err := testTurnstile(srv, passSecret, "listening.example.com").Verify(ctx, "tok-1", "203.0.113.9"); err != nil {
+	if err := testTurnstile(srv, passSecret, "listening.example.com").Verify(ctx, "tok-1", "10.0.0.9"); err != nil {
 		t.Errorf("pass = %v", err)
 	}
-	if len(got) != 1 || got[0]["response"] != "tok-1" || got[0]["remoteip"] != "203.0.113.9" || got[0]["secret"] != passSecret {
+	if len(got) != 1 || got[0]["response"] != "tok-1" || got[0]["remoteip"] != "10.0.0.9" || got[0]["secret"] != passSecret {
 		t.Errorf("form = %v", got)
 	}
 	if err := testTurnstile(srv, failSecret, "listening.example.com").Verify(ctx, "tok", ""); !errors.Is(err, ErrTurnstileFailed) {
@@ -126,11 +126,11 @@ func TestRequestsTurnstileOrder(t *testing.T) {
 	v := &fakeVerifier{err: ErrTurnstileFailed}
 	q.WithTurnstile(v)
 	ctx := context.Background()
-	in := RequestInput{Name: "Ann", Email: "ann@example.com", ClientHash: "h", TurnstileToken: "tok", RemoteIP: "203.0.113.9"}
+	in := RequestInput{Name: "Ann", Email: "ann@example.com", ClientHash: "h", TurnstileToken: "tok", RemoteIP: "10.0.0.9"}
 	if err := q.Submit(ctx, in); !errors.Is(err, ErrTurnstileFailed) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(db.pending) != 0 || len(m.sent) != 0 || len(v.calls) != 1 || v.calls[0] != "tok@203.0.113.9" {
+	if len(db.pending) != 0 || len(m.sent) != 0 || len(v.calls) != 1 || v.calls[0] != "tok@10.0.0.9" {
 		t.Errorf("stored %v, sent %d, calls %v", db.pending, len(m.sent), v.calls)
 	}
 	v.err = nil

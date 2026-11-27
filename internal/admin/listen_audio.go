@@ -25,7 +25,7 @@ type AudioSyncer interface {
 type audioAdminStore interface {
 	AudioFiles(ctx context.Context, search string, limit, offset int) ([]store.AudioFileRow, int64, error)
 	AudioSummary(ctx context.Context) (store.AudioSummary, error)
-	MissingAudio(ctx context.Context, limit, offset int) ([]store.MissingAudioRow, int64, error)
+	MissingAudio(ctx context.Context, search string, limit, offset int) ([]store.MissingAudioRow, int64, error)
 }
 
 // mountListenAudio registers the Audio files routes. They are never part
@@ -101,7 +101,7 @@ func (a *API) missingAudio(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, total, err := a.audioDB().MissingAudio(r.Context(), limit, offset)
+	rows, total, err := a.audioDB().MissingAudio(r.Context(), r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
 		a.internal(w, r, err)
 		return

@@ -404,7 +404,7 @@ type AudioFile = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/admin/api/listen/audio?q=&limit=&offset=` | – | `{ data: AudioFile[], total, summary: { files, total_bytes, tracks_in_catalog, last_sync_at, last_error, sync_interval_s } }`: newest `last_modified` first; `q` searches the track and artist names; `limit` 1 to 100, default 50 |
-| GET | `/admin/api/listen/audio/missing?limit=&offset=` | – | `{ data: [{ track: AudioTrack, owner_plays, last_played_at }], total }`: the owner's most-played tracks (all time) with no file |
+| GET | `/admin/api/listen/audio/missing?q=&limit=&offset=` | – | `{ data: [{ track: AudioTrack, owner_plays, last_played_at }], total }`: the owner's most-played tracks (all time) with no file; `q` searches like the `q` of `GET /admin/api/tracks` (track, album or artist name, ISRC, or a Spotify ID, URI or URL, ignoring accents and case), and `total` counts the matches |
 | POST | `/admin/api/listen/audio/sync` | – | `{ files, added, removed, took_ms }` after a sync (at most 60 s) |
 
 `last_sync_at` is the last attempt and `last_error` its error (`null` when it

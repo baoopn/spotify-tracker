@@ -285,17 +285,25 @@ func (q *Queries) AudioFiles(ctx context.Context, search string, limit, offset i
 }
 
 // MissingAudio lists the owner's most-played tracks (all time) that have no
-// audio file.
-func (q *Queries) MissingAudio(ctx context.Context, limit, offset int) ([]MissingAudioRow, int64, error) {
-	const base = `FROM listening_history h
-		WHERE NOT EXISTS (SELECT 1 FROM track_audio a WHERE a.track_id = h.track_id)
+// audio file, optionally searched like the admin tracks list (trackSearch).
+// total counts the matching tracks.
+func (q *Queries) MissingAudio(ctx context.Context, search string, limit, offset int) ([]MissingAudioRow, int64, error) {
+	filter, args := trackSearch(search, 0)
+	if filter != "" {
+		filter = "AND " + filter
+	}
+	base := `FROM listening_history h
+		JOIN tracks t ON t.id = h.track_id
+		LEFT JOIN albums al ON al.id = t.album_id
+		WHERE NOT EXISTS (SELECT 1 FROM track_audio au WHERE au.track_id = h.track_id) ` + filter + `
 		GROUP BY h.track_id`
 	var total int64
-	if err := q.db.QueryRow(ctx, `SELECT COUNT(*) FROM (SELECT h.track_id `+base+`) x`).Scan(&total); err != nil {
+	if err := q.db.QueryRow(ctx, `SELECT COUNT(*) FROM (SELECT h.track_id `+base+`) x`, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("missing audio count: %w", err)
 	}
-	rows, err := q.db.Query(ctx, `SELECT h.track_id, SUM(h.replay_count)::bigint AS plays, MAX(h.played_at) AS last `+base+`
-		ORDER BY plays DESC, last DESC, h.track_id LIMIT $1 OFFSET $2`, limit, offset)
+	args = append(args, limit, offset)
+	rows, err := q.db.Query(ctx, `SELECT h.track_id, SUM(h.replay_count)::bigint AS plays, MAX(h.played_at) AS last `+base+
+		fmt.Sprintf(` ORDER BY plays DESC, last DESC, h.track_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("missing audio: %w", err)
 	}

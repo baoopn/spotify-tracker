@@ -78,7 +78,7 @@ func TestPGTrackAudio(t *testing.T) {
 		t.Errorf("summary = %+v %v", sum, err)
 	}
 
-	missing, n, err := st.MissingAudio(ctx, 50, 0)
+	missing, n, err := st.MissingAudio(ctx, "", 50, 0)
 	if err != nil || n != 1 || len(missing) != 1 || missing[0].Track.ID != "a3" || missing[0].OwnerPlays != 1 {
 		t.Errorf("missing = %+v %d %v", missing, n, err)
 	}
@@ -119,5 +119,46 @@ func TestPGListenStorageStats(t *testing.T) {
 		Plays30dWithAudio: 3, Added7d: 2}
 	if s != want {
 		t.Errorf("stats = %+v, want %+v", s, want)
+	}
+}
+
+func TestPGMissingAudioSearch(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	exec(t, pool, `TRUNCATE track_audio`)
+	exec(t, pool, `INSERT INTO artists (id, name) VALUES ('ms_ar', 'Sơn Tùng') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`)
+	exec(t, pool, `INSERT INTO tracks (id, name, duration_ms) VALUES ('m1', 'Ngày Rời', 1000), ('m2', 'Other', 1000),
+		('m3', 'Lạc Trôi', 1000), ('m4', 'Has File', 1000)`)
+	exec(t, pool, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('m2', 'ms_ar', 0), ('m3', 'ms_ar', 0)`)
+	exec(t, pool, `INSERT INTO listening_history (track_id, played_at, updated_at, duration_ms, replay_count) VALUES
+		('m1', now() - interval '1 hour', now(), 1000, 1), ('m2', now() - interval '2 hours', now(), 1000, 5),
+		('m3', now() - interval '3 hours', now(), 1000, 3), ('m4', now() - interval '4 hours', now(), 1000, 9)`)
+	exec(t, pool, `INSERT INTO track_audio (track_id, ext, size_bytes) VALUES ('m4', 'mp3', 1)`)
+
+	ids := func(rows []store.MissingAudioRow) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.Track.ID
+		}
+		return out
+	}
+	// Accent- and case-insensitive track name.
+	if rows, n, err := st.MissingAudio(ctx, "ngay roi", 50, 0); err != nil || n != 1 || !slices.Equal(ids(rows), []string{"m1"}) {
+		t.Errorf("name = %v %d %v", ids(rows), n, err)
+	}
+	// Artist name; ordering by plays is kept; total counts all matches.
+	rows, n, err := st.MissingAudio(ctx, "son tung", 1, 0)
+	if err != nil || n != 2 || !slices.Equal(ids(rows), []string{"m2"}) {
+		t.Errorf("artist page 1 = %v %d %v", ids(rows), n, err)
+	}
+	if rows, n, _ := st.MissingAudio(ctx, "son tung", 1, 1); n != 2 || !slices.Equal(ids(rows), []string{"m3"}) {
+		t.Errorf("artist page 2 = %v %d", ids(rows), n)
+	}
+	// A track with a file never shows; no match is an empty page.
+	if rows, n, _ := st.MissingAudio(ctx, "has file", 50, 0); n != 0 || len(rows) != 0 {
+		t.Errorf("with file = %v %d", ids(rows), n)
+	}
+	if rows, n, _ := st.MissingAudio(ctx, "", 50, 0); n != 3 || !slices.Equal(ids(rows), []string{"m2", "m3", "m1"}) {
+		t.Errorf("all = %v %d", ids(rows), n)
 	}
 }

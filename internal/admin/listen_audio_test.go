@@ -52,7 +52,8 @@ func (f *fakeAudioStore) AudioSummary(context.Context) (store.AudioSummary, erro
 	return store.AudioSummary{Files: 3, TotalBytes: 3000, TracksInCatalog: 2}, nil
 }
 
-func (f *fakeAudioStore) MissingAudio(context.Context, int, int) ([]store.MissingAudioRow, int64, error) {
+func (f *fakeAudioStore) MissingAudio(_ context.Context, q string, limit, offset int) ([]store.MissingAudioRow, int64, error) {
+	f.search, f.page = q, [2]int{limit, offset}
 	return f.missing, int64(len(f.missing)), nil
 }
 
@@ -90,6 +91,10 @@ func TestAudioFilesRoute(t *testing.T) {
 	if code, out := h.do(t, "GET", "/admin/api/listen/audio/missing", ``); code != 200 || !strings.Contains(string(out["data"]), `"owner_plays":9`) ||
 		!strings.Contains(string(out["data"]), `"last_played_at"`) {
 		t.Errorf("missing = %d %s", code, out)
+	}
+	if code, _ := h.do(t, "GET", "/admin/api/listen/audio/missing?q=ngay+roi&limit=5&offset=10", ``); code != 200 ||
+		st.search != "ngay roi" || st.page != [2]int{5, 10} {
+		t.Errorf("missing search = %d %q %v", code, st.search, st.page)
 	}
 	if code, _ := h.do(t, "GET", "/admin/api/listen/audio?limit=0", ``); code != 400 {
 		t.Errorf("bad limit = %d", code)

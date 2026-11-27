@@ -170,6 +170,28 @@ func (q *Queries) AdminHistory(ctx context.Context, limit int, before time.Time,
 	return out, q.hydrate(ctx, views...)
 }
 
+// trackSearch is the tracks search condition over t (tracks) and al
+// (albums): an accent- and case-insensitive match of the track, album or an
+// artist name, the ISRC, or a Spotify track/album/artist ID, URI or URL. Its
+// parameters start after the n already bound; it returns "" for an empty
+// search. AdminTrackList and MissingAudio share it.
+func trackSearch(search string, n int) (string, []any) {
+	if strings.TrimSpace(search) == "" {
+		return "", nil
+	}
+	args := []any{likePattern(search)}
+	p := n + 1
+	ids := ""
+	if kind, id, ok := spotifyRef(search); ok {
+		args = append(args, id)
+		ids = orIDs(trackIDMatch(kind, n+len(args)))
+	}
+	return `(` + foldMatch("t.name", p) + fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, p) +
+		foldMatch("al.name", p) + ` OR EXISTS (
+			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
+			WHERE ta.track_id = t.id AND ` + foldMatch("a.name", p) + `)` + ids + `)`, args
+}
+
 // AdminTracks lists tracks with play counters, enrichment and lyrics status.
 // lyrics is "" or one of the LyricsFilter constants (an unknown value adds no
 // filter; callers validate it with ValidLyricsFilter).
@@ -193,18 +215,9 @@ func (q *Queries) AdminTrackList(ctx context.Context, tq TrackQuery) ([]TrackRow
 	}
 	where := []string{"true"}
 	args := []any{}
-	if strings.TrimSpace(search) != "" {
-		args = append(args, likePattern(search))
-		n := len(args)
-		ids := ""
-		if kind, id, ok := spotifyRef(search); ok {
-			args = append(args, id)
-			ids = orIDs(trackIDMatch(kind, len(args)))
-		}
-		where = append(where, `(`+foldMatch("t.name", n)+fmt.Sprintf(` OR t.isrc ILIKE $%d OR `, n)+
-			foldMatch("al.name", n)+` OR EXISTS (
-			SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id
-			WHERE ta.track_id = t.id AND `+foldMatch("a.name", n)+`)`+ids+`)`)
+	if cond, more := trackSearch(search, len(args)); cond != "" {
+		args = append(args, more...)
+		where = append(where, cond)
 	}
 	if status != "" {
 		args = append(args, status)

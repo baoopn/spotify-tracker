@@ -406,7 +406,7 @@ func (im *Importer) importCurrent(ctx context.Context, st *Stats) error {
 		}
 	}
 	err := im.tx(ctx, func(q *store.Queries) error {
-		return q.SetCurrentPlayback(ctx, relationID(d.TrackID), false, d.ProgressMS.ptr32(), at)
+		return q.SetCurrentPlayback(ctx, relationID(d.TrackID), false, d.ProgressMS.ptr32(), at, nil)
 	})
 	st.CurrentPlayback = err == nil
 	return err

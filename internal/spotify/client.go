@@ -185,7 +185,9 @@ func (p *Player) currentlyPlaying(ctx context.Context, force bool) (*domain.Play
 		pb.Context = &domain.PlaybackContext{Type: c.Type, URI: c.URI, ExternalURL: c.ExternalURLs.Spotify}
 	}
 	if cp.Timestamp > 0 {
-		pb.PlayedAt = time.UnixMilli(cp.Timestamp).UTC()
+		// The last playback state change, not the response time.
+		at := time.UnixMilli(cp.Timestamp).UTC()
+		pb.PlayedAt, pb.ChangedAt = at, &at
 	}
 	return pb, false, nil
 }

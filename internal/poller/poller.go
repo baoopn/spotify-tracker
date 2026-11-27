@@ -47,6 +47,8 @@ type Poller struct {
 	prefetch    *prefetcher // nil = queue prefetch off
 	wasPlaying  bool
 	lastTrackID string
+	// anchor smooths progress_ms within one playback state (anchor.go).
+	anchor anchor
 }
 
 // New creates a Poller.
@@ -131,6 +133,7 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	fetchedAt := midpoint(start, time.Now())
 	if pb == nil {
 		observability.PollCycles.WithLabelValues("idle").Inc()
+		p.anchor.reset()
 		if p.wasPlaying || p.lastTrackID != "" {
 			if _, err := p.ingest.ClearPlayback(cctx, &trackerv1.ClearPlaybackRequest{
 				FetchedAt: timestamppb.New(fetchedAt),
@@ -148,6 +151,12 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 
 	observability.PollCycles.WithLabelValues("playing").Inc()
 	pb.FetchedAt = fetchedAt
+	if pb.ChangedAt == nil {
+		// No Spotify timestamp: the tracker reads played_at == fetched_at as
+		// unknown, so keep them equal.
+		pb.PlayedAt = fetchedAt
+	}
+	pb.ProgressMS = p.anchor.smooth(pb.Track.ID, pb.ChangedAt, pb.IsPlaying, pb.ProgressMS, pb.Track.DurationMS, fetchedAt)
 	res, err := p.ingest.RecordPlayback(cctx, &trackerv1.RecordPlaybackRequest{Playback: grpcapi.PlaybackToProto(*pb)})
 	if err != nil {
 		return "", fmt.Errorf("record playback: %w", err)

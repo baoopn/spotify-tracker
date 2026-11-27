@@ -445,7 +445,7 @@ func (a *API) testSpotify(w http.ResponseWriter, r *http.Request) {
 	if pb != nil {
 		resp["status"] = http.StatusOK
 		resp["now_playing"] = domain.NowPlaying{
-			IsPlaying: pb.IsPlaying, ProgressMS: pb.ProgressMS, FetchedAt: pb.FetchedAt,
+			IsPlaying: pb.IsPlaying, ProgressMS: pb.ProgressMS, FetchedAt: pb.FetchedAt, ChangedAt: pb.ChangedAt,
 			Track: &domain.TrackView{Track: pb.Track, Album: &pb.Album, Artists: pb.Artists},
 		}
 	}

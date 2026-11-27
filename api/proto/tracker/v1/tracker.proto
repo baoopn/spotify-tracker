@@ -104,6 +104,9 @@ message Playback {
   google.protobuf.Timestamp fetched_at = 7;
   // What the track is played from (playlist, album, artist, show), if any.
   PlaybackContext context = 8;
+  // Spotify's timestamp: the last playback state change (play, pause,
+  // seek, skip). Unset when Spotify sent none.
+  google.protobuf.Timestamp changed_at = 9;
 }
 
 message PlaybackContext {

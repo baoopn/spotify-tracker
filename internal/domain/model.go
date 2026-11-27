@@ -117,7 +117,10 @@ type Playback struct {
 	ProgressMS *int32
 	PlayedAt   time.Time
 	FetchedAt  time.Time
-	Context    *PlaybackContext
+	// ChangedAt is Spotify's timestamp: the last playback state change
+	// (play, pause, seek, skip); nil when Spotify sent none.
+	ChangedAt *time.Time
+	Context   *PlaybackContext
 }
 
 // PlaybackContext is what a track is played from.
@@ -163,10 +166,13 @@ type RecentPlaylist struct {
 
 // NowPlaying is the public view of the current playback state.
 type NowPlaying struct {
-	IsPlaying  bool       `json:"is_playing"`
-	ProgressMS *int32     `json:"progress_ms"`
-	FetchedAt  time.Time  `json:"fetched_at"`
-	Track      *TrackView `json:"track"`
+	IsPlaying  bool      `json:"is_playing"`
+	ProgressMS *int32    `json:"progress_ms"`
+	FetchedAt  time.Time `json:"fetched_at"`
+	// ChangedAt is the last playback state change Spotify reported (play,
+	// pause, seek, skip), or null.
+	ChangedAt *time.Time `json:"changed_at"`
+	Track     *TrackView `json:"track"`
 }
 
 // HistoryEntry is one listening history row.

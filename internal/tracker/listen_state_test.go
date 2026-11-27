@@ -41,7 +41,7 @@ func (f *fakeTx) SaveListenState(_ context.Context, st store.ListenState) error 
 	return nil
 }
 
-func (f *fakeTx) SetCurrentPlayback(_ context.Context, trackID string, _ bool, _ *int32, _ time.Time) error {
+func (f *fakeTx) SetCurrentPlayback(_ context.Context, trackID string, _ bool, _ *int32, _ time.Time, _ *time.Time) error {
 	f.current = trackID
 	return nil
 }

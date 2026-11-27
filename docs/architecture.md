@@ -69,6 +69,30 @@ reads `progress_ms` somewhere during the request, so the midpoint keeps most
 of the request time out of the position the public page and `/listen`
 estimate from it.
 
+Spotify's `timestamp` is the time of the last playback state change (play,
+resume, pause, seek, skip), not the response time: while a song plays it
+stays fixed. The snapshot serves it as `changed_at` (null when Spotify sent
+none; history keeps using it as the listen's `played_at`). The poller uses it
+to smooth `progress_ms` (`internal/poller/anchor.go`):
+
+- Within one state (same track, `changed_at` and play state), each poll gives
+  `base = progress_ms - (fetched_at - changed_at)`. Measured, it is nearly
+  constant: about ±25 ms over 9 polls after a seek, and -5..+9 ms after a
+  skip (the song start). Raw `progress_ms` with the midpoint alone wobbles by
+  ±60..140 ms, because the Spotify response time varies (114..282 ms
+  measured).
+- The poller publishes the median base of the last 15 polls plus the time
+  since the change, clamped to the song length. Any clock offset between the
+  poller and Spotify is constant and cancels out.
+- The samples restart when the state changes, and when a raw value is more
+  than 1 s away from the smoothed one (a change Spotify did not report); that
+  poll publishes the raw value.
+- Paused snapshots, snapshots with no `changed_at`, and progress that does not
+  advance while "playing" publish the raw value. Spotify can report
+  `is_playing` for a while with `progress_ms` stuck at the old song's end
+  (measured: 30 s after a play command); the past-the-end rule makes that
+  idle.
+
 1. **A listen counts once**, when at least `PLAY_COUNT_MIN_FRACTION` (30%,
    at most 90%) of the song has been heard, less up to 3 s for the unseen
    end of the song (so a play counts slightly before the exact fraction),

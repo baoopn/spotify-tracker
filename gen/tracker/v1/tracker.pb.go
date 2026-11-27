@@ -421,7 +421,10 @@ type Playback struct {
 	// When the poller fetched the snapshot.
 	FetchedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=fetched_at,json=fetchedAt,proto3" json:"fetched_at,omitempty"`
 	// What the track is played from (playlist, album, artist, show), if any.
-	Context       *PlaybackContext `protobuf:"bytes,8,opt,name=context,proto3" json:"context,omitempty"`
+	Context *PlaybackContext `protobuf:"bytes,8,opt,name=context,proto3" json:"context,omitempty"`
+	// Spotify's timestamp: the last playback state change (play, pause,
+	// seek, skip). Unset when Spotify sent none.
+	ChangedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=changed_at,json=changedAt,proto3" json:"changed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -508,6 +511,13 @@ func (x *Playback) GetFetchedAt() *timestamppb.Timestamp {
 func (x *Playback) GetContext() *PlaybackContext {
 	if x != nil {
 		return x.Context
+	}
+	return nil
+}
+
+func (x *Playback) GetChangedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ChangedAt
 	}
 	return nil
 }
@@ -1562,7 +1572,7 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\vdisc_number\x18\t \x01(\x05H\x01R\n" +
 	"discNumber\x88\x01\x01B\x0f\n" +
 	"\r_track_numberB\x0e\n" +
-	"\f_disc_number\"\x8a\x03\n" +
+	"\f_disc_number\"\xc5\x03\n" +
 	"\bPlayback\x12'\n" +
 	"\x05track\x18\x01 \x01(\v2\x11.tracker.v1.TrackR\x05track\x12'\n" +
 	"\x05album\x18\x02 \x01(\v2\x11.tracker.v1.AlbumR\x05album\x12,\n" +
@@ -1574,7 +1584,9 @@ const file_tracker_v1_tracker_proto_rawDesc = "" +
 	"\tplayed_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bplayedAt\x129\n" +
 	"\n" +
 	"fetched_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tfetchedAt\x125\n" +
-	"\acontext\x18\b \x01(\v2\x1b.tracker.v1.PlaybackContextR\acontextB\x0e\n" +
+	"\acontext\x18\b \x01(\v2\x1b.tracker.v1.PlaybackContextR\acontext\x129\n" +
+	"\n" +
+	"changed_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tchangedAtB\x0e\n" +
 	"\f_progress_ms\"Z\n" +
 	"\x0fPlaybackContext\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x10\n" +
@@ -1718,35 +1730,36 @@ var file_tracker_v1_tracker_proto_depIdxs = []int32{
 	23, // 4: tracker.v1.Playback.played_at:type_name -> google.protobuf.Timestamp
 	23, // 5: tracker.v1.Playback.fetched_at:type_name -> google.protobuf.Timestamp
 	6,  // 6: tracker.v1.Playback.context:type_name -> tracker.v1.PlaybackContext
-	5,  // 7: tracker.v1.RecordPlaybackRequest.playback:type_name -> tracker.v1.Playback
-	23, // 8: tracker.v1.ClearPlaybackRequest.fetched_at:type_name -> google.protobuf.Timestamp
-	4,  // 9: tracker.v1.UpcomingTrack.track:type_name -> tracker.v1.Track
-	3,  // 10: tracker.v1.UpcomingTrack.album:type_name -> tracker.v1.Album
-	2,  // 11: tracker.v1.UpcomingTrack.artists:type_name -> tracker.v1.Artist
-	11, // 12: tracker.v1.PrefetchUpcomingRequest.tracks:type_name -> tracker.v1.UpcomingTrack
-	23, // 13: tracker.v1.PrefetchUpcomingRequest.fetched_at:type_name -> google.protobuf.Timestamp
-	14, // 14: tracker.v1.ListPendingTracksResponse.tracks:type_name -> tracker.v1.PendingTrack
-	18, // 15: tracker.v1.SubmitTrackFeaturesRequest.features:type_name -> tracker.v1.AudioFeatures
-	17, // 16: tracker.v1.SubmitTrackFeaturesRequest.genres:type_name -> tracker.v1.Genre
-	7,  // 17: tracker.v1.IngestService.RecordPlayback:input_type -> tracker.v1.RecordPlaybackRequest
-	9,  // 18: tracker.v1.IngestService.ClearPlayback:input_type -> tracker.v1.ClearPlaybackRequest
-	12, // 19: tracker.v1.IngestService.PrefetchUpcoming:input_type -> tracker.v1.PrefetchUpcomingRequest
-	15, // 20: tracker.v1.EnrichmentService.ListPendingTracks:input_type -> tracker.v1.ListPendingTracksRequest
-	19, // 21: tracker.v1.EnrichmentService.SubmitTrackFeatures:input_type -> tracker.v1.SubmitTrackFeaturesRequest
-	21, // 22: tracker.v1.EnrichmentService.ReportEnrichmentFailure:input_type -> tracker.v1.ReportEnrichmentFailureRequest
-	0,  // 23: tracker.v1.SpotifyService.GetAccessToken:input_type -> tracker.v1.GetAccessTokenRequest
-	8,  // 24: tracker.v1.IngestService.RecordPlayback:output_type -> tracker.v1.RecordPlaybackResponse
-	10, // 25: tracker.v1.IngestService.ClearPlayback:output_type -> tracker.v1.ClearPlaybackResponse
-	13, // 26: tracker.v1.IngestService.PrefetchUpcoming:output_type -> tracker.v1.PrefetchUpcomingResponse
-	16, // 27: tracker.v1.EnrichmentService.ListPendingTracks:output_type -> tracker.v1.ListPendingTracksResponse
-	20, // 28: tracker.v1.EnrichmentService.SubmitTrackFeatures:output_type -> tracker.v1.SubmitTrackFeaturesResponse
-	22, // 29: tracker.v1.EnrichmentService.ReportEnrichmentFailure:output_type -> tracker.v1.ReportEnrichmentFailureResponse
-	1,  // 30: tracker.v1.SpotifyService.GetAccessToken:output_type -> tracker.v1.GetAccessTokenResponse
-	24, // [24:31] is the sub-list for method output_type
-	17, // [17:24] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	23, // 7: tracker.v1.Playback.changed_at:type_name -> google.protobuf.Timestamp
+	5,  // 8: tracker.v1.RecordPlaybackRequest.playback:type_name -> tracker.v1.Playback
+	23, // 9: tracker.v1.ClearPlaybackRequest.fetched_at:type_name -> google.protobuf.Timestamp
+	4,  // 10: tracker.v1.UpcomingTrack.track:type_name -> tracker.v1.Track
+	3,  // 11: tracker.v1.UpcomingTrack.album:type_name -> tracker.v1.Album
+	2,  // 12: tracker.v1.UpcomingTrack.artists:type_name -> tracker.v1.Artist
+	11, // 13: tracker.v1.PrefetchUpcomingRequest.tracks:type_name -> tracker.v1.UpcomingTrack
+	23, // 14: tracker.v1.PrefetchUpcomingRequest.fetched_at:type_name -> google.protobuf.Timestamp
+	14, // 15: tracker.v1.ListPendingTracksResponse.tracks:type_name -> tracker.v1.PendingTrack
+	18, // 16: tracker.v1.SubmitTrackFeaturesRequest.features:type_name -> tracker.v1.AudioFeatures
+	17, // 17: tracker.v1.SubmitTrackFeaturesRequest.genres:type_name -> tracker.v1.Genre
+	7,  // 18: tracker.v1.IngestService.RecordPlayback:input_type -> tracker.v1.RecordPlaybackRequest
+	9,  // 19: tracker.v1.IngestService.ClearPlayback:input_type -> tracker.v1.ClearPlaybackRequest
+	12, // 20: tracker.v1.IngestService.PrefetchUpcoming:input_type -> tracker.v1.PrefetchUpcomingRequest
+	15, // 21: tracker.v1.EnrichmentService.ListPendingTracks:input_type -> tracker.v1.ListPendingTracksRequest
+	19, // 22: tracker.v1.EnrichmentService.SubmitTrackFeatures:input_type -> tracker.v1.SubmitTrackFeaturesRequest
+	21, // 23: tracker.v1.EnrichmentService.ReportEnrichmentFailure:input_type -> tracker.v1.ReportEnrichmentFailureRequest
+	0,  // 24: tracker.v1.SpotifyService.GetAccessToken:input_type -> tracker.v1.GetAccessTokenRequest
+	8,  // 25: tracker.v1.IngestService.RecordPlayback:output_type -> tracker.v1.RecordPlaybackResponse
+	10, // 26: tracker.v1.IngestService.ClearPlayback:output_type -> tracker.v1.ClearPlaybackResponse
+	13, // 27: tracker.v1.IngestService.PrefetchUpcoming:output_type -> tracker.v1.PrefetchUpcomingResponse
+	16, // 28: tracker.v1.EnrichmentService.ListPendingTracks:output_type -> tracker.v1.ListPendingTracksResponse
+	20, // 29: tracker.v1.EnrichmentService.SubmitTrackFeatures:output_type -> tracker.v1.SubmitTrackFeaturesResponse
+	22, // 30: tracker.v1.EnrichmentService.ReportEnrichmentFailure:output_type -> tracker.v1.ReportEnrichmentFailureResponse
+	1,  // 31: tracker.v1.SpotifyService.GetAccessToken:output_type -> tracker.v1.GetAccessTokenResponse
+	25, // [25:32] is the sub-list for method output_type
+	18, // [18:25] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_tracker_v1_tracker_proto_init() }

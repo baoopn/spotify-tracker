@@ -8,6 +8,7 @@
 	const labels: Record<ListenStatus, string> = {
 		waiting: 'Waiting for a song',
 		loading: 'Getting in sync',
+		preparing: 'Loading',
 		'in-sync': 'In sync',
 		'paused-by-owner': 'Bao paused',
 		'no-audio': 'No audio',
@@ -19,6 +20,7 @@
 	const spots: Record<ListenStatus, string> = {
 		waiting: '--spot-butter',
 		loading: '--spot-sky',
+		preparing: '--spot-sky',
 		'in-sync': '--spot-mint',
 		'paused-by-owner': '--spot-butter',
 		'no-audio': '--spot-rose',
@@ -29,8 +31,16 @@
 	};
 
 	const inSync = $derived(p.status === 'in-sync');
+	// Not joined, "Getting in sync" never shows (the player sets "loading" at a
+	// track change before the next tick turns it into "preparing").
 	const label = $derived(
-		p.joined ? labels[p.status] : p.ready && inSync ? 'Ready' : labels[p.status]
+		p.joined
+			? labels[p.status]
+			: p.ready && inSync
+				? 'Ready'
+				: p.status === 'loading'
+					? labels.preparing
+					: labels[p.status]
 	);
 	// Join only makes sense when this song has audio to play.
 	const showJoin = $derived(

@@ -130,6 +130,8 @@ export function parseVolume(raw: string | null | undefined): number {
 export type ListenStatus =
 	| 'waiting'
 	| 'loading'
+	/** Not joined, and the audio's metadata is still loading (Join waits for it). */
+	| 'preparing'
 	| 'in-sync'
 	| 'paused-by-owner'
 	| 'no-audio'
@@ -155,15 +157,18 @@ export type StatusInput = {
 	driftMs: number;
 };
 
-/** The status after a sync tick. Not joined, "in-sync" means ready to join. */
+/**
+ * The status after a sync tick. Not joined (also right after Stop streaming)
+ * it is never "loading" (getting in sync): "in-sync" means ready to join, and
+ * "preparing" means the metadata is still on its way.
+ */
 export function nextStatus(s: StatusInput): ListenStatus {
 	if (s.current === 'no-audio' || s.current === 'cant-play') return s.current;
 	if (!s.hasTrack || s.targetMs == null) return 'waiting';
 	if (s.current === 'ended' && s.paused) return 'ended';
 	if (!s.ownerPlaying) return 'paused-by-owner';
-	if (!s.hasSource || !s.joined) {
-		return s.hasSource && s.readyState >= HAVE_METADATA ? 'in-sync' : 'loading';
-	}
+	if (!s.joined) return s.hasSource && s.readyState >= HAVE_METADATA ? 'in-sync' : 'preparing';
+	if (!s.hasSource) return 'loading';
 	return !s.paused && s.readyState >= HAVE_FUTURE_DATA && s.driftMs < DRIFT_MS
 		? 'in-sync'
 		: 'loading';

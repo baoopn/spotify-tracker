@@ -13,12 +13,40 @@ import (
 )
 
 type fakeStorage struct {
-	s   store.ListenStorage
-	err error
+	s     store.ListenStorage
+	err   error
+	calls int
 }
 
 func (f *fakeStorage) ListenStorageStats(context.Context) (store.ListenStorage, error) {
+	f.calls++
 	return f.s, f.err
+}
+
+func TestListenStorageCached(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	st := &fakeStorage{s: store.ListenStorage{Files: 1}}
+	a := &API{Deps: Deps{Log: slog.New(slog.DiscardHandler), AudioSync: &fakeSyncer{}}, storage: st,
+		now: func() time.Time { return now }}
+	a.listenStorage(context.Background())
+	now = now.Add(59 * time.Second)
+	st.s.Files = 2
+	if v := a.listenStorage(context.Background()); v.Files != 1 || st.calls != 1 {
+		t.Errorf("within a minute: files %d, calls %d", v.Files, st.calls)
+	}
+	now = now.Add(2 * time.Second)
+	if v := a.listenStorage(context.Background()); v.Files != 2 || st.calls != 2 {
+		t.Errorf("after a minute: files %d, calls %d", v.Files, st.calls)
+	}
+	// Errors are not cached.
+	st.err = errors.New("db down")
+	now = now.Add(2 * time.Minute)
+	a.listenStorage(context.Background())
+	st.err = nil
+	a.listenStorage(context.Background())
+	if st.calls != 4 {
+		t.Errorf("error cached: calls %d", st.calls)
+	}
 }
 
 func TestListenStorage(t *testing.T) {
@@ -44,8 +72,8 @@ func TestListenStorage(t *testing.T) {
 	}
 
 	// An error never fails the overview: null.
-	st.err = errors.New("db down")
-	if v := a.listenStorage(context.Background()); v != nil {
+	a2 := &API{Deps: Deps{Log: slog.New(slog.DiscardHandler), AudioSync: sync}, storage: &fakeStorage{err: errors.New("db down")}}
+	if v := a2.listenStorage(context.Background()); v != nil {
 		t.Errorf("error = %+v", v)
 	}
 	// Listen along or S3 off: null, no query.

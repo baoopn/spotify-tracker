@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/baoopn/spotify-tracker/internal/logging"
@@ -27,6 +28,35 @@ type listenStorageView struct {
 	Added7d           int64      `json:"added_7d"`
 }
 
+// storageStatsTTL is how long the storage stats are reused: the overview is
+// polled every 15 s (and read by MCP), and the query scans the history.
+const storageStatsTTL = time.Minute
+
+// storageMemo caches the last storage stats in process.
+type storageMemo struct {
+	mu sync.Mutex
+	at time.Time
+	v  store.ListenStorage
+}
+
+// storageStats returns the stats, from the memo when younger than a minute.
+// Errors are not cached.
+func (a *API) storageStats(ctx context.Context) (store.ListenStorage, error) {
+	m := &a.storageMemo
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := a.clock()
+	if !m.at.IsZero() && now.Sub(m.at) < storageStatsTTL {
+		return m.v, nil
+	}
+	v, err := a.storageDB().ListenStorageStats(ctx)
+	if err != nil {
+		return v, err
+	}
+	m.v, m.at = v, now
+	return v, nil
+}
+
 func (a *API) storageDB() storageStore {
 	if a.storage != nil {
 		return a.storage
@@ -41,7 +71,7 @@ func (a *API) listenStorage(ctx context.Context) *listenStorageView {
 	if a.AudioSync == nil {
 		return nil
 	}
-	s, err := a.storageDB().ListenStorageStats(ctx)
+	s, err := a.storageStats(ctx)
 	if err != nil {
 		a.Log.WarnContext(ctx, "overview: listen storage stats failed", logging.Err(err))
 		return nil

@@ -106,6 +106,7 @@ type API struct {
 	audioStore     audioAdminStore
 	requests       requestAdminStore
 	storage        storageStore
+	storageMemo    storageMemo
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).

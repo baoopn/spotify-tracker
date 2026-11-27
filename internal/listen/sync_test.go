@@ -257,17 +257,38 @@ func TestSyncNowLockAndCooldown(t *testing.T) {
 	if _, err := s.SyncNow(context.Background()); !errors.Is(err, ErrSyncRunning) {
 		t.Errorf("locked err = %v", err)
 	}
-	// Still running inside the cooldown: running wins.
-	if _, err := s.SyncNow(context.Background()); !errors.Is(err, ErrSyncRunning) {
-		t.Errorf("locked in cooldown err = %v", err)
+	// A refused attempt does not start the cooldown.
+	if _, ok := kv.m["spotify-tracker:listen:audio-sync:cooldown"]; ok {
+		t.Error("cooldown set without the lock")
 	}
 	delete(kv.m, "spotify-tracker:listen:audio-sync:lock")
+	if _, err := s.SyncNow(context.Background()); err != nil {
+		t.Errorf("first sync err = %v", err)
+	}
 	if _, err := s.SyncNow(context.Background()); !errors.Is(err, ErrSyncCooldown) {
 		t.Errorf("cooldown err = %v", err)
+	}
+	if _, ok := kv.m["spotify-tracker:listen:audio-sync:lock"]; ok {
+		t.Error("lock kept after a cooldown refusal")
 	}
 	delete(kv.m, "spotify-tracker:listen:audio-sync:cooldown")
 	if _, err := s.SyncNow(context.Background()); err != nil {
 		t.Errorf("after cooldown err = %v", err)
+	}
+}
+
+// A sync whose context ran out still records its error.
+func TestSyncTimeoutRecordsError(t *testing.T) {
+	b := &bucketStub{pages: [][]string{{"audio/" + id1 + ".mp3"}}}
+	s, db, _ := newTestSyncer(t, b)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.sync(ctx); err == nil {
+		t.Fatal("sync with a done context succeeded")
+	}
+	st, ok := s.Status(context.Background())
+	if !ok || st.LastError == "" || st.LastSyncAt == nil || db.calls != 0 {
+		t.Errorf("status = %+v %v, store calls %d", st, ok, db.calls)
 	}
 }
 

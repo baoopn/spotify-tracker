@@ -29,7 +29,9 @@ const (
 	syncFirstDelay  = 30 * time.Second
 	syncMaxPages    = 1000 // 1M keys at 1000 per page
 	listPageTimeout = 20 * time.Second
-	cacheDelBatch   = 500
+	// syncAfterTimeout bounds saving the result and clearing the cache.
+	syncAfterTimeout = 10 * time.Second
+	cacheDelBatch    = 500
 )
 
 var (
@@ -124,7 +126,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 			return nil
 		case <-t.C:
 		}
-		if _, err := s.locked(ctx, syncRunTimeout); err != nil && !errors.Is(err, ErrSyncRunning) {
+		if _, err := s.locked(ctx, syncRunTimeout, nil); err != nil && !errors.Is(err, ErrSyncRunning) {
 			s.log.WarnContext(ctx, "audio sync failed", logging.Err(err))
 		}
 		t.Reset(s.interval)
@@ -132,20 +134,19 @@ func (s *Syncer) Run(ctx context.Context) error {
 }
 
 // SyncNow runs a sync at once (at most 60 s). ErrSyncRunning when a sync
-// holds the lock; ErrSyncCooldown within 30 s of the last SyncNow.
+// holds the lock; ErrSyncCooldown within 30 s of the last SyncNow that ran.
+// The cooldown starts only once the lock is taken.
 func (s *Syncer) SyncNow(ctx context.Context) (SyncResult, error) {
-	ok, err := s.kv.setNX(ctx, redisx.KeyListenAudioSyncCooldown, syncCooldown)
-	if err != nil {
-		return SyncResult{}, fmt.Errorf("audio sync cooldown: %w", err)
-	}
-	if !ok {
-		// A running sync answers "running" rather than "too soon".
-		if running, _ := s.kv.get(ctx, redisx.KeyListenAudioSyncLock); running != nil {
-			return SyncResult{}, ErrSyncRunning
+	return s.locked(ctx, syncNowTimeout, func() error {
+		ok, err := s.kv.setNX(ctx, redisx.KeyListenAudioSyncCooldown, syncCooldown)
+		switch {
+		case err != nil:
+			return fmt.Errorf("audio sync cooldown: %w", err)
+		case !ok:
+			return ErrSyncCooldown
 		}
-		return SyncResult{}, ErrSyncCooldown
-	}
-	return s.locked(ctx, syncNowTimeout)
+		return nil
+	})
 }
 
 // Status returns the last sync, or false when none was recorded.
@@ -158,8 +159,9 @@ func (s *Syncer) Status(ctx context.Context) (SyncStatus, bool) {
 	return st, true
 }
 
-// locked takes the lock and syncs within timeout.
-func (s *Syncer) locked(parent context.Context, timeout time.Duration) (SyncResult, error) {
+// locked takes the lock, runs check (nil for none; its error stops the
+// sync) and syncs within timeout.
+func (s *Syncer) locked(parent context.Context, timeout time.Duration, check func() error) (SyncResult, error) {
 	ok, err := s.kv.setNX(parent, redisx.KeyListenAudioSyncLock, syncLockTTL)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("audio sync lock: %w", err)
@@ -167,9 +169,14 @@ func (s *Syncer) locked(parent context.Context, timeout time.Duration) (SyncResu
 	if !ok {
 		return SyncResult{}, ErrSyncRunning
 	}
+	defer func() { _ = s.kv.del(context.WithoutCancel(parent), redisx.KeyListenAudioSyncLock) }()
+	if check != nil {
+		if err := check(); err != nil {
+			return SyncResult{}, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
 	defer cancel()
-	defer func() { _ = s.kv.del(context.WithoutCancel(parent), redisx.KeyListenAudioSyncLock) }()
 	return s.sync(ctx)
 }
 
@@ -183,15 +190,19 @@ func (s *Syncer) sync(ctx context.Context) (SyncResult, error) {
 	if err == nil {
 		added, removed, err = s.db.ReplaceTrackAudio(ctx, files)
 	}
+	// The sync's ctx may have run out (a timeout is a common failure): record
+	// the result and clear the cache with a fresh, short one.
+	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncAfterTimeout)
+	defer cancel()
 	at := start.UTC().Truncate(time.Second)
 	st := SyncStatus{LastSyncAt: &at, Files: prev.Files}
 	if err != nil {
 		st.LastError = err.Error()
-		s.saveStatus(ctx, st)
+		s.saveStatus(done, st)
 		return SyncResult{}, err
 	}
 	st.Files = len(files)
-	s.saveStatus(ctx, st)
+	s.saveStatus(done, st)
 	// Found files may have a cached "no file" answer, removed ones a cached
 	// "found" one: drop both.
 	keys := make([]string, 0, len(files)+len(removed))
@@ -202,8 +213,8 @@ func (s *Syncer) sync(ctx context.Context) (SyncResult, error) {
 		keys = append(keys, redisx.KeyListenAudioPrefix+id)
 	}
 	for i := 0; i < len(keys); i += cacheDelBatch {
-		if err := s.kv.del(ctx, keys[i:min(i+cacheDelBatch, len(keys))]...); err != nil {
-			s.log.WarnContext(ctx, "audio sync: clearing the lookup cache failed", logging.Err(err))
+		if err := s.kv.del(done, keys[i:min(i+cacheDelBatch, len(keys))]...); err != nil {
+			s.log.WarnContext(done, "audio sync: clearing the lookup cache failed", logging.Err(err))
 			break
 		}
 	}

@@ -115,7 +115,7 @@ const upsertTrackAudio = `
 	ON CONFLICT (track_id) DO UPDATE SET ext = EXCLUDED.ext, size_bytes = EXCLUDED.size_bytes,
 		content_type = EXCLUDED.content_type, etag = EXCLUDED.etag, last_modified = EXCLUDED.last_modified,
 		last_seen_at = now()
-	RETURNING (xmax = 0)`
+	RETURNING track_id, (xmax = 0)`
 
 func upsertArgs(files []TrackAudio) []any {
 	ids, exts, types, etags := make([]string, len(files)), make([]string, len(files)), make([]*string, len(files)), make([]*string, len(files))
@@ -151,17 +151,17 @@ func (s *Store) ReplaceTrackAudio(ctx context.Context, files []TrackAudio) (adde
 			if err != nil {
 				return fmt.Errorf("upsert track audio: %w", err)
 			}
-			i := 0
+			// RETURNING order is not guaranteed: each row names its track.
 			for rows.Next() {
+				var id string
 				var inserted bool
-				if err := rows.Scan(&inserted); err != nil {
+				if err := rows.Scan(&id, &inserted); err != nil {
 					rows.Close()
 					return err
 				}
-				if inserted && i < len(ids) {
-					added = append(added, ids[i])
+				if inserted {
+					added = append(added, id)
 				}
-				i++
 			}
 			if err := rows.Err(); err != nil {
 				return fmt.Errorf("upsert track audio: %w", err)

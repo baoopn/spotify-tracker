@@ -60,6 +60,9 @@ type Options struct {
 	// LyricsWarmer, when set, is connected to this router so queue
 	// prefetch can warm the now-playing lyrics cache for upcoming tracks.
 	LyricsWarmer *LyricsWarmer
+	// Listen, when set, serves listen along at /api/v1/listen/* (signed-in
+	// listeners only; never reachable through V1Handler).
+	Listen *ListenOptions
 }
 
 // Handler serves the public API.
@@ -141,6 +144,9 @@ func NewRouter(st *store.Store, rdb *redis.Client, log *slog.Logger, opts Option
 			h.v1Routes(r)
 			// Deliberately not in v1Routes: never reachable through V1Handler (MCP).
 			r.Get("/now-playing/lyrics", h.nowPlayingLyrics)
+			if opts.Listen != nil {
+				h.mountListen(r)
+			}
 			if opts.Events != nil {
 				r.Post("/events", opts.Events)
 			}

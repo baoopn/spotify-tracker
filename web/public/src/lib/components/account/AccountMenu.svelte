@@ -95,7 +95,7 @@
 				class="avatar btn btn-secondary btn-icon overflow-hidden p-0!"
 				aria-haspopup="menu"
 				aria-expanded={open}
-				aria-controls={menuId}
+				aria-controls={open ? menuId : undefined}
 				aria-label="Account: {label}"
 				title={label}
 				onclick={() => (open ? close() : show())}

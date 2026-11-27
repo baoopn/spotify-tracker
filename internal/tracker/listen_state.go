@@ -15,7 +15,7 @@ import (
 type playbackTx interface {
 	LockListenState(ctx context.Context) (store.ListenState, error)
 	SaveListenState(ctx context.Context, st store.ListenState) error
-	SetCurrentPlayback(ctx context.Context, trackID string, isPlaying bool, progressMS *int32, fetchedAt time.Time) error
+	SetCurrentPlayback(ctx context.Context, trackID string, isPlaying bool, progressMS *int32, fetchedAt time.Time, changedAt *time.Time) error
 	InsertHistory(ctx context.Context, trackID string, playedAt, updatedAt time.Time, durationMS int32, replayCount int32, pc *domain.PlaybackContext) (bool, error)
 	IncrementReplayAt(ctx context.Context, trackID string, playedAt, at time.Time) (bool, error)
 	LatestHistory(ctx context.Context) (id, trackID string, err error)
@@ -53,7 +53,7 @@ func recordListen(ctx context.Context, q playbackTx, legacy legacyLoader, pb dom
 		TrackID: pb.Track.ID, ProgressMS: pb.ProgressMS, DurationMS: pb.Track.DurationMS,
 		IsPlaying: pb.IsPlaying, PlayedAt: playedAt, At: pb.FetchedAt,
 	}, rules)
-	if err := q.SetCurrentPlayback(ctx, pb.Track.ID, pb.IsPlaying, pb.ProgressMS, pb.FetchedAt); err != nil {
+	if err := q.SetCurrentPlayback(ctx, pb.Track.ID, pb.IsPlaying, pb.ProgressMS, pb.FetchedAt, pb.ChangedAt); err != nil {
 		return Listen{}, false, err
 	}
 	if err := applyHistory(ctx, q, pb, d, res); err != nil {

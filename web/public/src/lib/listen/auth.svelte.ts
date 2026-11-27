@@ -3,15 +3,32 @@
 // Boot: GET /listen/config -> disabled, or load Clerk with the publishable key
 // -> with a Clerk session, GET /listen/me asks the API whether this person is
 // invited. Clerk (`@clerk/clerk-js` + `@clerk/ui`) is imported lazily, so the
-// `/` bundle never includes it.
+// `/` bundle never includes it. /listen boots in full (init); other pages only
+// peek(): Clerk loads there when a session cookie exists, or on Sign in.
+// Redirect rules: see ../account/redirect.ts.
 
 import type { Clerk } from '@clerk/clerk-js';
 import { goto } from '$app/navigation';
 import { ApiError, errorMessage } from '../api';
 import { fetchListenConfig, fetchListenMe } from './api';
 import type { ListenMe } from './types';
+import { LISTEN_PATH, hasClerkSession, safeRedirect, signInTarget } from '../account/redirect';
 
-export const LISTEN_PATH = '/listen';
+export { LISTEN_PATH };
+
+/** The signed-in person, for the account menu (Clerk's user is not reactive). */
+export type AccountProfile = { name: string; email: string; imageUrl: string | null };
+
+/** A sign-in started from the menu moves on to /listen only within this time. */
+const SIGN_IN_WINDOW_MS = 10 * 60_000;
+
+/** Hide account deletion in Clerk's profile: listeners keep their account. */
+const PROFILE_APPEARANCE = { elements: { profileSection__danger: { display: 'none' } } };
+
+/** The current page as a same-origin path (where sign-out stays). */
+function herePath(): string {
+	return safeRedirect(window.location.pathname + window.location.search, '/');
+}
 
 export type ListenAuthStatus =
 	| 'idle'
@@ -63,13 +80,23 @@ export function clerkAppearance() {
 
 /** Navigate within the site when same-origin, otherwise do a full page load. */
 async function navigateTo(to: string, replaceState = false): Promise<void> {
-	const url = new URL(to, window.location.href);
-	if (url.origin !== window.location.origin) {
-		window.location.href = url.href;
+	let url: URL;
+	try {
+		url = new URL(to, window.location.href);
+	} catch {
 		return;
 	}
-	// eslint-disable-next-line svelte/no-navigation-without-resolve -- `to` is already an absolute site path
-	await goto(url.pathname + url.search + url.hash, { replaceState });
+	// Only single-slash same-origin paths (never another site or /admin).
+	const path =
+		url.origin === window.location.origin
+			? safeRedirect(url.pathname + url.search + url.hash, null)
+			: null;
+	if (path === null) {
+		console.warn('listen: refused a sign-in redirect off this site');
+		return;
+	}
+	// eslint-disable-next-line svelte/no-navigation-without-resolve -- `path` is a checked site path
+	await goto(path, { replaceState });
 }
 
 class ListenAuth {
@@ -77,7 +104,13 @@ class ListenAuth {
 	me = $state<ListenMe | null>(null);
 	error = $state<string | null>(null);
 	clerk = $state.raw<Clerk | null>(null);
+	/** Listen along is on (null until /listen/config answered). */
+	enabled = $state<boolean | null>(null);
+	profile = $state<AccountProfile | null>(null);
 
+	#configPromise: Promise<string | null> | null = null;
+	/** Sign in was started from the account menu: move on to /listen once allowed. */
+	#afterSignInUntil = 0;
 	#initPromise: Promise<void> | null = null;
 	/** The last token Clerk gave us, for sends that cannot wait (page hide). */
 	#lastToken: string | null = null;
@@ -93,6 +126,75 @@ class ListenAuth {
 		return this.#initPromise;
 	}
 
+	/**
+	 * Light boot for pages other than /listen: only the config, and Clerk only
+	 * when a Clerk session cookie says someone is likely signed in.
+	 */
+	async peek(): Promise<void> {
+		if (this.#initPromise) return this.#initPromise;
+		try {
+			if ((await this.#config()) === null) return;
+		} catch {
+			this.enabled = false; // no account control without the config
+			return;
+		}
+		if (this.#initPromise) return this.#initPromise;
+		if (hasClerkSession(document.cookie)) return this.init();
+		if (this.status === 'idle') this.status = 'signed-out';
+	}
+
+	/** Sign in in a Clerk modal; invited listeners then move on to /listen. */
+	async openSignIn(): Promise<void> {
+		// Clerk has no close callback: the flag expires if the modal is dismissed.
+		this.#afterSignInUntil = Date.now() + SIGN_IN_WINDOW_MS;
+		if (this.status === 'error' && !this.clerk) await this.retry();
+		else await this.init();
+		const clerk = this.clerk;
+		if (!clerk) return;
+		if (clerk.user) return this.refresh();
+		const to = signInTarget(window.location.pathname, window.location.search);
+		clerk.openSignIn({
+			forceRedirectUrl: to,
+			fallbackRedirectUrl: to,
+			signUpForceRedirectUrl: to,
+			signUpFallbackRedirectUrl: to
+		});
+	}
+
+	/** Clerk's profile (name, photo, emails, devices), without account deletion. */
+	openUserProfile(): void {
+		this.clerk?.openUserProfile({ appearance: PROFILE_APPEARANCE });
+	}
+
+	/** The publishable key, or null when listen along is off. Fetched once. */
+	#config(): Promise<string | null> {
+		this.#configPromise ??= fetchListenConfig().then((cfg) => {
+			this.enabled = cfg.enabled;
+			if (!cfg.enabled) {
+				this.status = 'disabled';
+				return null;
+			}
+			if (!cfg.clerk_publishable_key) {
+				throw new Error("Sign-in isn't set up on the server yet.");
+			}
+			return cfg.clerk_publishable_key;
+		});
+		// A failed request may be retried later.
+		this.#configPromise.catch(() => (this.#configPromise = null));
+		return this.#configPromise;
+	}
+
+	#syncProfile(): void {
+		const u = this.clerk?.user;
+		this.profile = u
+			? {
+					name: u.fullName ?? u.username ?? '',
+					email: u.primaryEmailAddress?.emailAddress ?? '',
+					imageUrl: u.hasImage ? u.imageUrl : null
+				}
+			: null;
+	}
+
 	/** Retry after a boot or check error. */
 	retry(): Promise<void> {
 		if (this.clerk) return this.refresh();
@@ -104,31 +206,29 @@ class ListenAuth {
 	async #boot(): Promise<void> {
 		this.status = 'loading';
 		try {
-			const cfg = await fetchListenConfig();
-			if (!cfg.enabled) {
-				this.status = 'disabled';
-				return;
-			}
-			if (!cfg.clerk_publishable_key) {
-				throw new Error("Sign-in isn't set up on the server yet.");
-			}
+			const key = await this.#config();
+			if (key === null) return;
 			const [{ Clerk }, { ui }] = await Promise.all([
 				import('@clerk/clerk-js'),
 				import('@clerk/ui')
 			]);
-			const clerk = new Clerk(cfg.clerk_publishable_key);
+			const clerk = new Clerk(key);
 			await clerk.load({
 				ui,
 				appearance: clerkAppearance(),
 				signInUrl: LISTEN_PATH,
 				signUpUrl: LISTEN_PATH,
-				afterSignOutUrl: LISTEN_PATH,
+				// Per-call redirects (openSignIn, ClerkMount, signOut) are set where
+				// they are used, so they never go stale after an in-app navigation.
+				afterSignOutUrl: '/',
 				routerPush: (to: string) => navigateTo(to),
 				routerReplace: (to: string) => navigateTo(to, true)
 			});
 			this.clerk = clerk;
 			this.#clerkUserId = clerk.user?.id ?? null;
+			this.#syncProfile();
 			clerk.addListener(({ user }) => {
+				this.#syncProfile(); // also after profile edits (name, photo)
 				const id = user?.id ?? null;
 				if (id !== this.#clerkUserId) {
 					this.#clerkUserId = id;
@@ -151,10 +251,13 @@ class ListenAuth {
 		}
 		if (this.status !== 'allowed') this.status = 'checking';
 		const res = await this.#me();
+		const moveOn = Date.now() < this.#afterSignInUntil;
+		this.#afterSignInUntil = 0;
 		if (res.ok) {
 			this.me = res.me;
 			this.status = 'allowed';
 			this.error = null;
+			if (moveOn && window.location.pathname !== LISTEN_PATH) void navigateTo(LISTEN_PATH);
 			return;
 		}
 		this.me = null;
@@ -208,7 +311,7 @@ class ListenAuth {
 		this.me = null;
 		this.#lastToken = null;
 		try {
-			await this.clerk?.signOut();
+			await this.clerk?.signOut({ redirectUrl: herePath() });
 		} catch {
 			// the sign-in form shows either way
 		}
@@ -239,8 +342,10 @@ class ListenAuth {
 
 	async signOut(): Promise<void> {
 		this.me = null;
+		this.profile = null;
 		this.#lastToken = null;
-		if (this.clerk) await this.clerk.signOut({ redirectUrl: LISTEN_PATH });
+		// Sign-out stays on the current page (/ or /listen).
+		if (this.clerk) await this.clerk.signOut({ redirectUrl: herePath() });
 		this.status = 'signed-out';
 	}
 }

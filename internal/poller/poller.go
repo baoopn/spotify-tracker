@@ -25,6 +25,13 @@ type Source interface {
 	CurrentlyPlaying(ctx context.Context) (*domain.Playback, error)
 }
 
+// timedSource also reports when the HTTP request that answered was sent and
+// received (*spotify.Player does), so a token refresh or a retry after a 401
+// does not move the midpoint.
+type timedSource interface {
+	CurrentlyPlayingTimed(ctx context.Context) (*domain.Playback, spotify.RequestTime, error)
+}
+
 // Heartbeat publishes the poller status (implemented by *heartbeat.Reporter).
 type Heartbeat interface {
 	OK(ctx context.Context, detail string)
@@ -47,6 +54,8 @@ type Poller struct {
 	prefetch    *prefetcher // nil = queue prefetch off
 	wasPlaying  bool
 	lastTrackID string
+	// anchor smooths progress_ms within one playback state (anchor.go).
+	anchor anchor
 }
 
 // New creates a Poller.
@@ -119,15 +128,20 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	pb, err := p.src.CurrentlyPlaying(cctx)
+	// Spotify reads progress_ms somewhere during the request: the midpoint
+	// is the best guess, and removes most of the request time from the
+	// listeners' position estimate (stamping the response time made the
+	// progress look older than it is).
+	pb, fetchedAt, err := p.fetch(cctx)
 	if err != nil {
 		return "", err
 	}
 	if pb == nil {
 		observability.PollCycles.WithLabelValues("idle").Inc()
+		p.anchor.reset()
 		if p.wasPlaying || p.lastTrackID != "" {
 			if _, err := p.ingest.ClearPlayback(cctx, &trackerv1.ClearPlaybackRequest{
-				FetchedAt: timestamppb.Now(),
+				FetchedAt: timestamppb.New(fetchedAt),
 			}); err != nil {
 				return "", fmt.Errorf("clear playback: %w", err)
 			}
@@ -141,6 +155,13 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 	}
 
 	observability.PollCycles.WithLabelValues("playing").Inc()
+	pb.FetchedAt = fetchedAt
+	if pb.ChangedAt == nil {
+		// No Spotify timestamp: the tracker reads played_at == fetched_at as
+		// unknown, so keep them equal.
+		pb.PlayedAt = fetchedAt
+	}
+	pb.ProgressMS = p.anchor.smooth(pb.Track.ID, pb.ChangedAt, pb.IsPlaying, pb.ProgressMS, pb.Track.DurationMS, fetchedAt)
 	res, err := p.ingest.RecordPlayback(cctx, &trackerv1.RecordPlaybackRequest{Playback: grpcapi.PlaybackToProto(*pb)})
 	if err != nil {
 		return "", fmt.Errorf("record playback: %w", err)
@@ -159,6 +180,29 @@ func (p *Poller) cycle(ctx context.Context) (string, error) {
 		p.prefetch.kick(ctx, pb.Track.ID)
 	}
 	return state + ": " + pb.Track.Name, nil
+}
+
+// fetch reads the current playback and the midpoint of the request: the
+// source's own timing of the HTTP request when it has one, else the time
+// around the whole call.
+func (p *Poller) fetch(ctx context.Context) (*domain.Playback, time.Time, error) {
+	if ts, ok := p.src.(timedSource); ok {
+		pb, rt, err := ts.CurrentlyPlayingTimed(ctx)
+		if mid := rt.Mid(); err == nil && !mid.IsZero() {
+			return pb, mid, nil
+		}
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	start := time.Now()
+	pb, err := p.src.CurrentlyPlaying(ctx)
+	return pb, midpoint(start, time.Now()), err
+}
+
+// midpoint is the time halfway between start and end, in UTC.
+func midpoint(start, end time.Time) time.Time {
+	return start.Add(end.Sub(start) / 2).UTC()
 }
 
 // holdUntil pauses queue reads until t; it never shortens a pause.

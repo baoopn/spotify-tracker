@@ -31,6 +31,8 @@ export type NowPlaying = {
 	is_playing: boolean;
 	progress_ms: number | null;
 	fetched_at: string;
+	/** Spotify's time of the last playback change (play, pause, seek, skip); null when unknown. */
+	changed_at?: string | null;
 	track: TrackView | null;
 };
 

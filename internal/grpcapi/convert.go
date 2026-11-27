@@ -27,6 +27,10 @@ func PlaybackFromProto(p *trackerv1.Playback) domain.Playback {
 	if p.GetFetchedAt() != nil {
 		out.FetchedAt = p.GetFetchedAt().AsTime()
 	}
+	if p.GetChangedAt() != nil {
+		t := p.GetChangedAt().AsTime()
+		out.ChangedAt = &t
+	}
 	if c := p.GetContext(); c.GetUri() != "" {
 		out.Context = &domain.PlaybackContext{Type: c.GetType(), URI: c.GetUri(), ExternalURL: c.GetExternalUrl()}
 	}
@@ -45,6 +49,9 @@ func PlaybackToProto(p domain.Playback) *trackerv1.Playback {
 	}
 	if p.ProgressMS != nil {
 		out.ProgressMs = proto.Int32(*p.ProgressMS)
+	}
+	if p.ChangedAt != nil {
+		out.ChangedAt = timestamppb.New(*p.ChangedAt)
 	}
 	if p.Context != nil {
 		out.Context = &trackerv1.PlaybackContext{Type: p.Context.Type, Uri: p.Context.URI, ExternalUrl: p.Context.ExternalURL}

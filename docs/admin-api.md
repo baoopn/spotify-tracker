@@ -53,7 +53,9 @@ type Copyright = { text: string; type: "C" | "P" | string }  // C copyright, P s
 type TrackView = { id: string; name: string; uri?: string; isrc?: string; duration_ms: number; explicit: boolean;
                    external_url?: string; track_number?: number; disc_number?: number
                    album?: Album; artists: Artist[] }
-type NowPlaying = { is_playing: boolean; progress_ms: number | null; fetched_at: string; track: TrackView | null }
+type NowPlaying = { is_playing: boolean; progress_ms: number | null; fetched_at: string
+                    changed_at: string | null  // Spotify's last state change (play, pause, seek, skip)
+                    track: TrackView | null }
 type EnrichmentStatus = "pending" | "enriched" | "unavailable" | "failed"
 type AudioFeatures = { acousticness, danceability, energy, instrumentalness, liveness, loudness,
                        speechiness, tempo, valence: number | null; key, mode, time_signature: number | null }
@@ -67,6 +69,12 @@ only by the track detail endpoints (`GET /admin/api/tracks/{id}`,
 `admin_track`). Lists leave them out. `details_fetched_at` is admin only:
 `GET /admin/api/tracks/{id}` and `admin_track` return it, the public
 endpoint and `track_details` do not.
+
+`NowPlaying` is the same on the public API (`GET /api/v1/now-playing`, the
+SSE stream) and the MCP `now_playing` tool. `changed_at` is Spotify's
+`timestamp`, the time of the last playback state change (RFC 3339 UTC), or
+null when Spotify sent none: a new value for the same track means the owner
+played, paused, resumed or seeked.
 
 ---
 

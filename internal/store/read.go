@@ -101,7 +101,7 @@ func (q *Queries) NowPlaying(ctx context.Context) (domain.NowPlaying, error) {
 	var tid *string
 	var al albumScan
 	err := q.db.QueryRow(ctx, `
-		SELECT cp.is_playing, cp.progress_ms, cp.fetched_at, cp.track_id,
+		SELECT cp.is_playing, cp.progress_ms, cp.fetched_at, cp.changed_at, cp.track_id,
 			COALESCE(t.id, ''), COALESCE(t.name, ''), COALESCE(t.uri, ''), COALESCE(t.isrc, ''),
 			COALESCE(t.duration_ms, 0), COALESCE(t.explicit, false), COALESCE(t.external_url, ''),
 			COALESCE(t.album_id, ''), t.track_number, t.disc_number,
@@ -110,13 +110,17 @@ func (q *Queries) NowPlaying(ctx context.Context) (domain.NowPlaying, error) {
 		FROM current_playback cp
 		LEFT JOIN tracks t ON t.id = cp.track_id
 		LEFT JOIN albums al ON al.id = t.album_id
-		WHERE cp.id`).Scan(append(append([]any{&np.IsPlaying, &np.ProgressMS, &np.FetchedAt, &tid},
+		WHERE cp.id`).Scan(append(append([]any{&np.IsPlaying, &np.ProgressMS, &np.FetchedAt, &np.ChangedAt, &tid},
 		scanTrack(&tv)...), al.targets()...)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return np, domain.ErrNotFound
 	}
 	if err != nil {
 		return np, fmt.Errorf("now playing: %w", err)
+	}
+	if np.ChangedAt != nil {
+		t := np.ChangedAt.UTC()
+		np.ChangedAt = &t
 	}
 	if tid != nil {
 		tv.Album = al.album()

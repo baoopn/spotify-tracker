@@ -112,17 +112,19 @@ func (q *Queries) EnsureTrackFeatures(ctx context.Context, trackID, isrc string)
 	return tag.RowsAffected() > 0, nil
 }
 
-// SetCurrentPlayback upserts the singleton playback row.
-func (q *Queries) SetCurrentPlayback(ctx context.Context, trackID string, isPlaying bool, progressMS *int32, fetchedAt time.Time) error {
+// SetCurrentPlayback upserts the singleton playback row. changedAt is
+// Spotify's last state change (nil when unknown).
+func (q *Queries) SetCurrentPlayback(ctx context.Context, trackID string, isPlaying bool, progressMS *int32, fetchedAt time.Time, changedAt *time.Time) error {
 	_, err := q.db.Exec(ctx, `
-		INSERT INTO current_playback (id, track_id, is_playing, progress_ms, fetched_at)
-		VALUES (true, $1, $2, $3, $4)
+		INSERT INTO current_playback (id, track_id, is_playing, progress_ms, fetched_at, changed_at)
+		VALUES (true, $1, $2, $3, $4, $5)
 		ON CONFLICT (id) DO UPDATE SET
 			track_id = EXCLUDED.track_id,
 			is_playing = EXCLUDED.is_playing,
 			progress_ms = EXCLUDED.progress_ms,
-			fetched_at = EXCLUDED.fetched_at`,
-		nullIfEmpty(trackID), isPlaying, progressMS, fetchedAt)
+			fetched_at = EXCLUDED.fetched_at,
+			changed_at = EXCLUDED.changed_at`,
+		nullIfEmpty(trackID), isPlaying, progressMS, fetchedAt, changedAt)
 	if err != nil {
 		return fmt.Errorf("set current playback: %w", err)
 	}

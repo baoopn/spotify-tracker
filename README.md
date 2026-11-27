@@ -66,7 +66,7 @@ make test lint # quality gates (same as CI)
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/v1/now-playing` | Current playback (track, album, artists, progress). |
+| `GET /api/v1/now-playing` | Current playback (track, album, artists, progress), with `fetched_at` and `changed_at` (Spotify's last play, pause, seek or skip; `null` when unknown). |
 | `GET /api/v1/now-playing/stream` | Server-Sent Events, `event: now-playing` on every poll. |
 | `GET /api/v1/now-playing/lyrics` | The full lyrics of the track playing now: `{ track_id, status, synced, instrumental, lines: [{ start_ms, text }], plain, credit, translation }`, synced lines when there are any, else the plain text. `status` is found, instrumental or pending (looked up soon); `translation` holds the English and Vietnamese Claude translation when enabled, with the translated song title and album name as `title` / `album: { en, vi }`. `null` when nothing plays or no lyrics were found (a paused track keeps its lyrics). |
 | `GET /api/v1/history?limit=&cursor=` | Listening history, newest first, cursor pagination. |

@@ -91,3 +91,54 @@ func TestMerge(t *testing.T) {
 		t.Errorf("merge(nil) = %v", got)
 	}
 }
+
+func TestIndexPageCSP(t *testing.T) {
+	dist := fstest.MapFS{
+		"index.html":  {Data: []byte("<script>home()</script>")},
+		"404.html":    {Data: []byte("<script>lost()</script>")},
+		"listen.html": {Data: []byte("<script>listen()</script>")},
+	}
+	opts := Options{
+		ExtraCSP: map[string]string{"connect-src": "https://baoopn.com"},
+		PageCSP: map[string]map[string]string{
+			"index.html":  {"connect-src": "https://clerk.example.com", "img-src": "https://img.clerk.com"},
+			"listen.html": {"connect-src": "https://clerk.example.com", "media-src": "https://s3.example.com"},
+		},
+	}
+	s := New(dist, opts)
+	home := cspFor(t, s, "/")
+	if home["connect-src"] != "'self' https://baoopn.com https://clerk.example.com" || !strings.Contains(home["img-src"], "https://img.clerk.com") ||
+		home["media-src"] != "'self'" || !strings.Contains(home["script-src"], hash("home()")) {
+		t.Errorf("/ = %v", home)
+	}
+	if idx := cspFor(t, s, "/index.html"); idx["connect-src"] != home["connect-src"] {
+		t.Errorf("/index.html = %v", idx)
+	}
+	// The 404 page keeps the site CSP.
+	if nf := cspFor(t, s, "/nope"); nf["connect-src"] != "'self' https://baoopn.com" || nf["script-src"] != home["script-src"] {
+		t.Errorf("404 = %v", nf)
+	}
+	// /listen keeps its own CSP.
+	if l := cspFor(t, s, "/listen"); l["media-src"] != "'self' https://s3.example.com" || l["script-src"] != "'self' "+hash("listen()") {
+		t.Errorf("/listen = %v", l)
+	}
+	// Without an index entry, / is unchanged.
+	delete(opts.PageCSP, "index.html")
+	if plain := cspFor(t, New(dist, opts), "/"); plain["connect-src"] != "'self' https://baoopn.com" {
+		t.Errorf("/ without entry = %v", plain)
+	}
+	// A missing build serves the placeholder with the site CSP.
+	opts.PageCSP["index.html"] = map[string]string{"connect-src": "https://clerk.example.com"}
+	if ph := cspFor(t, New(fstest.MapFS{}, opts), "/"); ph["connect-src"] != "'self' https://baoopn.com" {
+		t.Errorf("placeholder = %v", ph)
+	}
+}
+
+// The SPA fallback serves index.html, so it gets the index CSP.
+func TestIndexPageCSPSPAFallback(t *testing.T) {
+	s := New(fstest.MapFS{"index.html": {Data: []byte("<p>app</p>")}}, Options{SPA: true,
+		PageCSP: map[string]map[string]string{"index.html": {"frame-src": "https://clerk.example.com"}}})
+	if got := cspFor(t, s, "/some/route"); got["frame-src"] != "https://clerk.example.com" {
+		t.Errorf("fallback = %v", got)
+	}
+}

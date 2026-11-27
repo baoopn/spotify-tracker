@@ -78,6 +78,10 @@ func TestCurrentlyPlayingMapsTrack(t *testing.T) {
 	if !pb.PlayedAt.Equal(time.UnixMilli(1762300000000)) {
 		t.Errorf("played_at = %v", pb.PlayedAt)
 	}
+	// Spotify's timestamp is the last state change.
+	if pb.ChangedAt == nil || !pb.ChangedAt.Equal(time.UnixMilli(1762300000000)) || pb.ChangedAt.Location() != time.UTC {
+		t.Errorf("changed_at = %v", pb.ChangedAt)
+	}
 	if pb.Track.TrackNumber == nil || *pb.Track.TrackNumber != 3 || pb.Track.DiscNumber == nil || *pb.Track.DiscNumber != 1 {
 		t.Errorf("track numbers mapped wrong: %v %v", pb.Track.TrackNumber, pb.Track.DiscNumber)
 	}
@@ -103,6 +107,9 @@ func TestCurrentlyPlayingUnknownMetadata(t *testing.T) {
 	}
 	if pb.Album.AlbumType != "" || pb.Album.ReleaseDatePrecision != "" {
 		t.Errorf("unknown values kept: %+v", pb.Album)
+	}
+	if pb.ChangedAt != nil {
+		t.Errorf("changed_at without a timestamp = %v", pb.ChangedAt)
 	}
 }
 

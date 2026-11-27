@@ -9,7 +9,9 @@
 	import { onMount } from 'svelte';
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import ThemeSwitcher from '#lib/components/ThemeSwitcher.svelte';
+	import AccountMenu from '#lib/components/account/AccountMenu.svelte';
 	import { CONTACT_URL } from '#lib/links.js';
 	import { theme } from '#lib/theme.svelte.js';
 	import { zone } from '#lib/zone.svelte.js';
@@ -86,6 +88,8 @@
 					</svg>
 					<span class="max-[22.5rem]:sr-only">Contact</span>
 				</a>
+				<!-- Not on the error page: 404.html's CSP has no Clerk sources. -->
+				{#if !page.error}<AccountMenu />{/if}
 				<ThemeSwitcher />
 			</div>
 		</header>

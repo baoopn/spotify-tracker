@@ -18,7 +18,8 @@ func TestPlaybackRoundTripMetadata(t *testing.T) {
 			Track: domain.Track{ID: "t1", Name: "Song", TrackNumber: proto.Int32(3), DiscNumber: proto.Int32(1)},
 			Album: domain.Album{ID: "al1", Name: "Album", AlbumType: "single", TotalTracks: proto.Int32(2),
 				ReleaseDatePrecision: "year"},
-			Artists: []domain.Artist{{ID: "a1", Name: "A"}}, PlayedAt: at, FetchedAt: at,
+			Artists: []domain.Artist{{ID: "a1", Name: "A"}}, PlayedAt: at, FetchedAt: at.Add(150 * time.Millisecond),
+			ChangedAt: &at,
 		},
 		"unset": {
 			Track: domain.Track{ID: "t1", Name: "Song"}, Album: domain.Album{ID: "al1", Name: "Album"},

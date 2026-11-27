@@ -105,6 +105,7 @@ type API struct {
 	liveLookup     liveStore
 	audioStore     audioAdminStore
 	requests       requestAdminStore
+	storage        storageStore
 	now            func() time.Time
 
 	// live is the Spotify player built on first use (see playerClient).
@@ -281,6 +282,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		"services":       services,
 		"version":        a.Version,
 		"up_next":        a.upNext(ctx),
+		"listen_storage": a.listenStorage(ctx),
 	})
 }
 

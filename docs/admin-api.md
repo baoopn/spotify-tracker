@@ -97,7 +97,8 @@ Sign-out is done client-side with Clerk (`clerk.signOut()`).
     { "name": "postgres", "status": "…" }, { "name": "redis", "status": "…" }
   ],
   "version": "1.2.3",
-  "up_next": UpNext | null
+  "up_next": UpNext | null,
+  "listen_storage": ListenStorage | null
 }
 ```
 `Summary = { total_plays, unique_tracks, unique_artists, listening_ms, first_played_at, last_played_at, enriched_tracks }`.
@@ -116,6 +117,22 @@ type UpNext = {
   for_track_id: string;   // the song playing then
   items: { position: number; track_id: string; name: string; duration_ms: number;
     artists: { id: string; name: string }[]; album_name: string; cover_image_url: string }[];
+};
+```
+
+`listen_storage` sums up the listen-along audio files (one query over
+`track_audio` and the history). It is null when listen along or the S3
+storage is off, and null on an error (logged): the overview never fails
+because of it.
+
+```ts
+type ListenStorage = {
+  files: number; total_bytes: number;              // recorded audio files
+  tracks_played: number;                           // distinct tracks in the history
+  tracks_with_audio: number;                       // of those, with a file
+  plays_30d: number; plays_30d_with_audio: number; // the owner's plays in the last 30 days, and of tracks with a file
+  last_sync_at: string | null; last_error: string | null; sync_interval_s: number;
+  added_7d: number;                                // files first seen in the last 7 days
 };
 ```
 

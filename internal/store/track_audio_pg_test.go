@@ -98,3 +98,26 @@ func TestPGTrackAudio(t *testing.T) {
 		t.Errorf("empty listing removed %v %v", removed, err)
 	}
 }
+
+func TestPGListenStorageStats(t *testing.T) {
+	st, pool := pgStore(t)
+	ctx := context.Background()
+	exec(t, pool, `TRUNCATE track_audio`)
+	exec(t, pool, `INSERT INTO tracks (id, name, duration_ms) VALUES ('s1', 'One', 1000), ('s2', 'Two', 1000), ('s3', 'Three', 1000)`)
+	exec(t, pool, `INSERT INTO listening_history (track_id, played_at, updated_at, duration_ms, replay_count) VALUES
+		('s1', now() - interval '1 day', now(), 1000, 3),
+		('s1', now() - interval '40 days', now(), 1000, 7),
+		('s2', now() - interval '2 days', now(), 1000, 2)`)
+	exec(t, pool, `INSERT INTO track_audio (track_id, ext, size_bytes, first_seen_at) VALUES
+		('s1', 'mp3', 100, now() - interval '1 day'), ('s3', 'mp3', 50, now() - interval '30 days'),
+		('nocat', 'mp3', 10, now())`)
+	s, err := st.ListenStorageStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.ListenStorage{Files: 3, TotalBytes: 160, TracksPlayed: 2, TracksWithAudio: 1, Plays30d: 5,
+		Plays30dWithAudio: 3, Added7d: 2}
+	if s != want {
+		t.Errorf("stats = %+v, want %+v", s, want)
+	}
+}

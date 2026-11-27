@@ -330,3 +330,38 @@ func (q *Queries) MissingAudio(ctx context.Context, limit, offset int) ([]Missin
 	}
 	return out, total, nil
 }
+
+// ListenStorage is the listen-along storage summary for the admin overview.
+type ListenStorage struct {
+	Files             int64
+	TotalBytes        int64
+	TracksPlayed      int64 // distinct tracks in the owner's history
+	TracksWithAudio   int64 // of those, with an audio file
+	Plays30d          int64 // the owner's plays in the last 30 days
+	Plays30dWithAudio int64 // of those, of a track with an audio file
+	Added7d           int64 // files first seen in the last 7 days
+}
+
+// ListenStorageStats computes ListenStorage in one query.
+func (q *Queries) ListenStorageStats(ctx context.Context) (ListenStorage, error) {
+	var s ListenStorage
+	err := q.db.QueryRow(ctx, `
+		WITH played AS (SELECT DISTINCT track_id FROM listening_history),
+		recent AS (
+			SELECT h.replay_count, EXISTS (SELECT 1 FROM track_audio a WHERE a.track_id = h.track_id) AS has_audio
+			FROM listening_history h WHERE h.played_at >= now() - interval '30 days'
+		)
+		SELECT
+			(SELECT COUNT(*) FROM track_audio),
+			(SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM track_audio),
+			(SELECT COUNT(*) FROM played),
+			(SELECT COUNT(*) FROM played p JOIN track_audio a ON a.track_id = p.track_id),
+			(SELECT COALESCE(SUM(replay_count), 0)::bigint FROM recent),
+			(SELECT COALESCE(SUM(replay_count) FILTER (WHERE has_audio), 0)::bigint FROM recent),
+			(SELECT COUNT(*) FROM track_audio WHERE first_seen_at >= now() - interval '7 days')`).
+		Scan(&s.Files, &s.TotalBytes, &s.TracksPlayed, &s.TracksWithAudio, &s.Plays30d, &s.Plays30dWithAudio, &s.Added7d)
+	if err != nil {
+		return s, fmt.Errorf("listen storage stats: %w", err)
+	}
+	return s, nil
+}

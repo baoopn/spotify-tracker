@@ -776,6 +776,9 @@ is in the catalog.
   cached "no file" answer ends at once.
 - The last sync time, the file count and the last error are kept in Redis.
 - The admin can sync now from the Audio files page (at most every 30 s).
+- The admin overview shows the storage: files and size, how many played
+  songs have a file, the share of the last 30 days of plays that had one,
+  and the files added this week.
 
 The audio lookup checks `track_audio` first: a recorded file is signed at
 once, with no request to the bucket. Without a row it sends the HEAD requests

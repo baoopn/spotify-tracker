@@ -1,6 +1,5 @@
-// The listen-along player: one persistent <audio> that follows the owner's
-// Spotify playback (see sync.ts for the rules). Listeners can only join, mute
-// and set the volume; Bao's position decides everything else.
+// The listen-along player: one persistent <audio> that follows Bao's Spotify
+// playback (rules: sync.ts, drift.ts). Listeners only join, stop, mute and set the volume.
 
 import { untrack } from 'svelte';
 import { ApiError } from '../api';
@@ -8,6 +7,7 @@ import { live } from '../live.svelte';
 import type { NowPlaying } from '../types';
 import { listenAuth } from './auth.svelte';
 import { fetchListenAudio, postListenProgress } from './api';
+import { DriftController } from './drift';
 import { ProgressTracker } from './progress';
 import { presenceTrackId } from './presence';
 import {
@@ -24,8 +24,7 @@ import {
 	parseVolume,
 	seekTarget,
 	shouldRefreshUrl,
-	syncAction,
-	targetMs
+	syncAction
 } from './sync.ts';
 import {
 	applyVolume,
@@ -77,12 +76,9 @@ class ListenPlayer {
 	#progress = new ProgressTracker((track_id, heard_ms, keepalive) =>
 		listenAuth.withToken(keepalive, (t) => postListenProgress(t, { track_id, heard_ms }, keepalive))
 	);
+	#drift = new DriftController();
 
-	/**
-	 * Attachment for the page's <audio>: wires events and the sync loop.
-	 * Untracked: an attachment re-runs (and tears down) when state it read
-	 * changes, and this one reads volume and mute.
-	 */
+	/** The <audio> attachment, untracked: reading volume or mute must not re-run it. */
 	attach = (el: HTMLAudioElement) => untrack(() => this.#attach(el));
 
 	#attach(el: HTMLAudioElement): () => void {
@@ -106,6 +102,12 @@ class ListenPlayer {
 			// History: only time heard while joined and in sync counts.
 			this.#progress.attach(el, () =>
 				this.joined && this.status === 'in-sync' ? presenceTrackId(this.#trackId) : null
+			),
+			// Small gaps: a gentle playbackRate nudge; big ones still seek.
+			this.#drift.attach(
+				el,
+				() => (this.joined && this.#np?.is_playing ? this.#target() : null),
+				() => (this.#lastSeek = Date.now())
 			)
 		];
 		this.#loop = setInterval(() => this.#tick(), CHECK_MS);
@@ -155,8 +157,7 @@ class ListenPlayer {
 			el.currentTime = at / 1000;
 			this.#lastSeek = Date.now();
 		}
-		// Always play in the gesture (unlocks the element on iOS); the next tick
-		// pauses again if Bao is paused.
+		// Play in the gesture (unlocks iOS); the next tick pauses again if Bao is paused.
 		el.play().then(
 			() => this.#tick(),
 			(err) => this.#onPlayRejected(err)
@@ -191,7 +192,7 @@ class ListenPlayer {
 
 	#target(): number | null {
 		const np = this.#np;
-		return targetMs(np, live.serverNow(), np?.track?.duration_ms ?? 0);
+		return this.#drift.target(np, live.serverNow(), np?.track?.duration_ms ?? 0);
 	}
 
 	#changeTrack(id: string | null): void {
@@ -292,8 +293,6 @@ class ListenPlayer {
 		this.#later(() => void this.#loadAudio(gen, 0, andPlay), UNAVAILABLE_RETRY_MS);
 	}
 
-	// ---------- sync loop ----------
-
 	#tick(): void {
 		const el = this.#audio;
 		if (!el || !this.#enabled || this.#accessEnded) return;
@@ -383,8 +382,7 @@ class ListenPlayer {
 			return;
 		}
 		if (!el || el.ended) return;
-		// Paused by the OS, a headset or the lock screen while Bao plays: leave,
-		// and show Join again.
+		// Paused by the OS, a headset or the lock screen while Bao plays: leave.
 		if (this.joined && this.#np?.is_playing) {
 			this.joined = false;
 			this.#stopAccessChecks();

@@ -3,6 +3,17 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+	DriftState,
+	HARD_SEEK_MS,
+	JITTER_MS,
+	RATE_MIN_INTERVAL_MS,
+	SOFT_START_MS,
+	SOFT_STOP_MS,
+	estimateAt,
+	rateFor,
+	smoothTarget
+} from '../src/lib/listen/drift.ts';
+import {
 	hasClerkSession,
 	initials,
 	safeRedirect,
@@ -311,6 +322,83 @@ assert.equal(initials('Ada Lovelace', 'ada@example.com'), 'AL');
 assert.equal(initials('Ada', null), 'AD');
 assert.equal(initials('', 'ada@example.com'), 'A');
 assert.equal(initials(null, null), '?');
+
+// rateFor: behind speeds up, ahead slows down, at most ±5 %, 0.005 steps.
+const near = (/** @type {number} */ x, /** @type {number} */ y, msg = '') =>
+	assert.ok(Math.abs(x - y) < 1e-9, `${msg} ${x} != ${y}`);
+near(rateFor(0), 1);
+near(rateFor(-1000), 1.05, 'behind 1 s: 1 + 1000/4000 clamped to 1.05');
+near(rateFor(-100), 1.025, 'behind 100 ms');
+near(rateFor(100), 0.975, 'ahead 100 ms');
+near(rateFor(200), 0.95);
+near(rateFor(5000), 0.95, 'clamped ahead');
+near(rateFor(-5000), 1.05, 'clamped behind');
+near(rateFor(-30), 1.01, 'rounded to 0.005 (1.0075)');
+
+// DriftState: hysteresis, hard seek, EMA reset, buffering.
+{
+	const d = new DriftState();
+	let t = 0;
+	/** @param {number | null} drift @param {boolean} [buffering] */
+	const step = (drift, buffering = false) => d.step(drift, buffering, (t += RATE_MIN_INTERVAL_MS));
+	assert.deepEqual(step(100), { seek: false, rate: 1 }, 'under the start threshold');
+	assert.equal(d.correcting, false);
+	// Drive the EMA above 120 ms: correcting starts and the rate moves.
+	for (let i = 0; i < 10; i++) step(-400);
+	assert.equal(d.correcting, true);
+	assert.ok(d.rate > 1, 'behind: faster');
+	// Between stop (40) and start (120): keeps correcting (hysteresis).
+	for (let i = 0; i < 20; i++) step(-80);
+	assert.equal(d.correcting, true, 'still correcting at 80 ms');
+	for (let i = 0; i < 20; i++) step(-10);
+	assert.equal(d.correcting, false, 'stops under 40 ms');
+	assert.equal(d.rate, 1, 'back to exactly 1');
+	assert.ok(SOFT_STOP_MS < SOFT_START_MS);
+
+	// Hard seek over 1.5 s (smoothed): one measure of 6 s is enough.
+	const h = new DriftState();
+	assert.equal(h.step(HARD_SEEK_MS - 1, false, 0).seek, false, 'just under');
+	h.reset();
+	assert.equal(h.step(HARD_SEEK_MS + 1, false, 0).seek, true, 'just over');
+	assert.equal(h.ema, null, 'EMA reset after the seek');
+	assert.equal(h.step(6000, false, 1000).seek, true);
+
+	// EMA smoothing: a single spike does not trigger a seek.
+	const e = new DriftState();
+	e.step(0, false, 0);
+	assert.equal(e.step(3000, false, 500).seek, false, '0.3 * 3000 = 900 ms smoothed');
+
+	// Buffering: no correction, rate 1, the drift is not counted.
+	const b = new DriftState();
+	for (let i = 0; i < 10; i++) b.step(-400, false, i * 500);
+	assert.ok(b.rate > 1);
+	assert.deepEqual(b.step(-400, true, 6000), { seek: false, rate: 1 });
+	assert.equal(b.ema, null, 'not counted while buffering');
+	assert.deepEqual(b.step(null, false, 7000), { seek: false, rate: 1 }, 'nothing to follow');
+
+	// Rate changes at most every 500 ms.
+	const r = new DriftState();
+	r.step(-400, false, 0);
+	const first = r.step(-400, false, 1000).rate;
+	r.step(-1000, false, 1100);
+	assert.equal(r.rate, first, 'no change within 500 ms');
+}
+
+// smoothTarget: keep the running estimate for jitter under 250 ms.
+{
+	const id = '4uLU6hMCjMI75M1A2tKUQC';
+	const e0 = smoothTarget(null, id, 10_000, true, 0);
+	assert.equal(estimateAt(e0, 1000), 11_000);
+	const e1 = smoothTarget(e0, id, 11_000 + JITTER_MS - 1, true, 1000);
+	assert.equal(e1, e0, 'jitter kept out');
+	const e2 = smoothTarget(e0, id, 30_000, true, 1000);
+	assert.notEqual(e2, e0, 'Bao seeked: take the new value');
+	assert.equal(estimateAt(e2, 1000), 30_000);
+	assert.notEqual(smoothTarget(e0, 'other0track0id00000000', 11_000, true, 1000), e0, 'new song');
+	const paused = smoothTarget(e0, id, 11_000, false, 1000);
+	assert.notEqual(paused, e0, 'pause rebases');
+	assert.equal(estimateAt(paused, 9000), 11_000, 'paused stays put');
+}
 
 // The <audio> attachment must not track state: Svelte re-runs (and tears
 // down) an attachment when state it read changes, so a mute or volume change

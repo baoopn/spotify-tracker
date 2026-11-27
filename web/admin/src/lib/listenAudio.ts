@@ -60,7 +60,8 @@ export const AUDIO_FILTER_LABELS: Record<AudioFilter, string> = {
 const BASE = `${ADMIN_API}/listen/audio`;
 type Signal = { signal?: AbortSignal };
 export type AudioListParams = { q: string; limit: number; offset: number };
-export type MissingParams = { limit: number; offset: number };
+/** `q` searches the track name and artist. */
+export type MissingParams = { q: string; limit: number; offset: number };
 
 export const listenAudioApi = {
 	files: (p: AudioListParams, { signal }: Signal = {}) =>

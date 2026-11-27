@@ -155,6 +155,12 @@
 			<h3 class="eyebrow border-t border-border px-6 pt-4 pb-2">Dismissed</h3>
 			{#if dismissedList.isPending}
 				<div class="px-6 pb-6"><Skeleton class="h-14" /></div>
+			{:else if dismissedList.isError && !dismissedList.data}
+				<ErrorState
+					title="Could not load dismissed requests"
+					message={errorMessage(dismissedList.error)}
+					onretry={() => dismissedList.refetch()}
+				/>
 			{:else if (dismissedList.data?.data.length ?? 0) === 0}
 				<p class="px-6 pb-4 text-sm text-muted">No dismissed requests.</p>
 			{:else}

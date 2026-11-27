@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { PartyPopper } from '@lucide/svelte';
+	import { PartyPopper, SearchX } from '@lucide/svelte';
 	import CopyButton from '#lib/components/CopyButton.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import Pagination from '#lib/components/Pagination.svelte';
 	import RelTime from '#lib/components/RelTime.svelte';
+	import SearchInput from '#lib/components/SearchInput.svelte';
 	import Skeleton from '#lib/components/Skeleton.svelte';
 	import { errorMessage } from '#lib/api.js';
 	import { num } from '#lib/format.js';
@@ -15,20 +16,33 @@
 		data,
 		error,
 		dimmed,
+		q,
 		offset,
 		limit,
+		onsearch,
 		onpage,
 		onretry
 	}: {
 		data: MissingAudioList | undefined;
 		error: unknown;
 		dimmed: boolean;
+		q: string;
 		offset: number;
 		limit: number;
+		onsearch: (q: string) => void;
 		onpage: (offset: number) => void;
 		onretry: () => void;
 	} = $props();
 </script>
+
+<div class="mb-4 flex flex-wrap items-center gap-3">
+	<SearchInput
+		value={q}
+		placeholder="Search song or artist"
+		label="Search missing songs"
+		{onsearch}
+	/>
+</div>
 
 <p class="mb-4 text-sm text-muted">
 	Your most-played songs with no file yet. The track id is the file name to upload.
@@ -42,11 +56,15 @@
 			{#each { length: 6 }, i (i)}<Skeleton class="h-10" />{/each}
 		</div>
 	{:else if data.data.length === 0}
-		<EmptyState
-			icon={PartyPopper}
-			title="Nothing missing"
-			message="Every song you have played has an audio file."
-		/>
+		{#if q}
+			<EmptyState icon={SearchX} title="No songs match" message="Try a different search." />
+		{:else}
+			<EmptyState
+				icon={PartyPopper}
+				title="Nothing missing"
+				message="Every song you have played has an audio file."
+			/>
+		{/if}
 	{:else}
 		<div class={['overflow-x-auto transition-opacity', dimmed && 'opacity-60']}>
 			<table class="data-table">

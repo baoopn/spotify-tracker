@@ -14,12 +14,13 @@
 	let tab = $state<'uploaded' | 'missing'>('uploaded');
 	let q = $state('');
 	let offset = $state(0);
+	let missingQ = $state('');
 	let missingOffset = $state(0);
 
 	// The files query also carries the summary, so it stays on in both tabs.
 	const files = createQuery(() => audioFilesQuery({ q, limit: LIMIT, offset }));
 	const missing = createQuery(() => ({
-		...missingAudioQuery({ limit: LIMIT, offset: missingOffset }),
+		...missingAudioQuery({ q: missingQ, limit: LIMIT, offset: missingOffset }),
 		enabled: tab === 'missing'
 	}));
 	const manual = new ManualRefetch(() =>
@@ -77,8 +78,13 @@
 		data={missing.data}
 		error={missing.isError ? missing.error : null}
 		dimmed={missing.isPlaceholderData || manual.active}
+		q={missingQ}
 		offset={missingOffset}
 		limit={LIMIT}
+		onsearch={(v) => {
+			missingQ = v;
+			missingOffset = 0;
+		}}
 		onpage={(o) => (missingOffset = o)}
 		onretry={() => manual.run()}
 	/>

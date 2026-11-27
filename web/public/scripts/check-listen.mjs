@@ -173,8 +173,16 @@ assert.equal(
 assert.equal(nextStatus({ ...st, current: 'ended', paused: true }), 'ended');
 // Not joined (also after Stop streaming): ready once the metadata is in.
 assert.equal(nextStatus({ ...st, joined: false, paused: true, readyState: 1 }), 'in-sync');
-assert.equal(nextStatus({ ...st, joined: false, paused: true, readyState: 0 }), 'loading');
-assert.equal(nextStatus({ ...st, hasSource: false }), 'loading');
+assert.equal(nextStatus({ ...st, joined: false, paused: true, readyState: 0 }), 'preparing');
+// Right after Stop streaming: not joined, metadata reloading, the last status
+// was "in-sync" or "loading". Never "loading" (getting in sync) while not joined.
+for (const current of /** @type {const} */ (['in-sync', 'loading'])) {
+	for (const hasSource of [true, false]) {
+		const s = nextStatus({ ...st, current, joined: false, paused: true, hasSource, readyState: 0 });
+		assert.equal(s, 'preparing', `stopped: ${current}, source ${hasSource}`);
+	}
+}
+assert.equal(nextStatus({ ...st, hasSource: false }), 'loading', 'joined, no source yet');
 
 // playedDelta: currentTime steps count; seeks and steps back do not.
 assert.equal(playedDelta(null, 10), 0, 'first reading');

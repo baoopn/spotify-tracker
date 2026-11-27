@@ -28,6 +28,9 @@ const (
 	// listenSlackMS is how much a report may exceed the time since the last
 	// one (network delay, timer drift).
 	listenSlackMS = 5_000
+	// listenCapSlackMS: a play never holds more than the time since it
+	// started plus this (one report's worth), however many reports come.
+	listenCapSlackMS = 20_000
 )
 
 // ErrBadCursor means a history cursor could not be decoded.
@@ -71,19 +74,22 @@ func listenThreshold(durationMS int64) int64 {
 // RecordListenerProgress adds deltaMS of heard audio to the listener's
 // current play of trackID: the play heard within the last two minutes, else
 // a new one. An extension adds at most the time since the last report plus
-// 5 s, so repeated reports cannot inflate a play. The play counts once
-// heard_ms reaches 30 s, or half of a song shorter than a minute. Reports of
-// one listener are serialized (the listener row is locked), so concurrent
-// reports never double count. A track missing from the catalog is ignored.
+// 5 s, and a play never holds more than the time since it started plus 20 s,
+// so repeated reports cannot inflate it. The play counts once heard_ms
+// reaches 30 s, or half of a song shorter than a minute. Reports of one
+// listener are serialized (the listener row is locked), so concurrent
+// reports never double count. A track missing from the catalog and a
+// revoked listener are ignored.
 func (s *Store) RecordListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS, durationMS int64) error {
 	return s.recordProgress(ctx, listenerID, trackID, deltaMS, &durationMS, ListenRejoinWindow, true)
 }
 
 // ExtendListenerProgress adds a late report for a song that is no longer
 // playing (the last flush arrives just after the track changed): it extends
-// the listener's play of trackID heard within the last 30 s, with the same
-// clamp and count rule, and never starts a new play. The song's length
-// comes from the catalog.
+// the listener's play of trackID last reported as current within 30 s, with
+// the same clamp, cap and count rule, and never starts a new play. It keeps
+// last_heard_at, so late reports cannot keep a skipped song open. The song's
+// length comes from the catalog.
 func (s *Store) ExtendListenerProgress(ctx context.Context, listenerID int64, trackID string, deltaMS int64) error {
 	return s.recordProgress(ctx, listenerID, trackID, deltaMS, nil, ListenLateWindow, false)
 }
@@ -97,7 +103,7 @@ func (s *Store) recordProgress(ctx context.Context, listenerID int64, trackID st
 	}
 	return s.InTx(ctx, func(q *Queries) error {
 		var one int
-		err := q.db.QueryRow(ctx, `SELECT 1 FROM listeners WHERE id = $1 FOR UPDATE`, listenerID).Scan(&one)
+		err := q.db.QueryRow(ctx, `SELECT 1 FROM listeners WHERE id = $1 AND status <> 'revoked' FOR UPDATE`, listenerID).Scan(&one)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -116,18 +122,23 @@ func (s *Store) recordProgress(ctx context.Context, listenerID int64, trackID st
 			durationMS = &d
 		}
 		threshold := listenThreshold(*durationMS)
+		// The new total: the clamped delta, capped at the time since the play
+		// started plus 20 s, never less than before. A late report (create is
+		// false) keeps last_heard_at, so its window does not slide.
 		tag, err := q.db.Exec(ctx, `
-			UPDATE listener_plays p SET
-				heard_ms = p.heard_ms + LEAST($3::bigint,
-					GREATEST(0, (EXTRACT(EPOCH FROM now() - p.last_heard_at) * 1000)::bigint) + $5::bigint)::integer,
-				counted = p.counted OR p.heard_ms + LEAST($3::bigint,
-					GREATEST(0, (EXTRACT(EPOCH FROM now() - p.last_heard_at) * 1000)::bigint) + $5::bigint) >= $4::bigint,
-				last_heard_at = now()
-			WHERE p.id = (
-				SELECT id FROM listener_plays
+			UPDATE listener_plays p SET heard_ms = n.heard, counted = p.counted OR n.heard >= $4::bigint,
+				last_heard_at = CASE WHEN $7::boolean THEN now() ELSE p.last_heard_at END
+			FROM (
+				SELECT id, GREATEST(heard_ms::bigint, LEAST(
+					heard_ms + LEAST($3::bigint, GREATEST(0, (EXTRACT(EPOCH FROM now() - last_heard_at) * 1000)::bigint) + $5::bigint),
+					GREATEST(0, (EXTRACT(EPOCH FROM now() - started_at) * 1000)::bigint) + $8::bigint)) AS heard
+				FROM listener_plays
 				WHERE listener_id = $1 AND track_id = $2 AND last_heard_at > now() - $6::bigint * interval '1 second'
-				ORDER BY last_heard_at DESC LIMIT 1)`,
-			listenerID, trackID, deltaMS, threshold, int64(listenSlackMS), int64(window/time.Second))
+				ORDER BY last_heard_at DESC LIMIT 1
+			) n
+			WHERE p.id = n.id`,
+			listenerID, trackID, deltaMS, threshold, int64(listenSlackMS), int64(window/time.Second), create,
+			int64(listenCapSlackMS))
 		if err != nil {
 			return fmt.Errorf("extend listener play: %w", err)
 		}

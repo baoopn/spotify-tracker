@@ -82,7 +82,7 @@ make test lint # quality gates (same as CI)
 | `GET /api/v1/listen/config` | Listen along: `{ enabled, clerk_publishable_key }` for the `/listen` page. |
 | `GET /api/v1/listen/me` | Listen along, signed-in invited listeners only (Clerk Bearer token): `{ email, name, image_url, admin }`. Not in MCP. |
 | `GET /api/v1/listen/audio` | Listen along, signed-in invited listeners only: a short-lived presigned URL for the audio of the track playing now, `{ track_id, url, expires_at, content_type, reason }`. Not in MCP (see `docs/architecture.md`). |
-| `POST /api/v1/listen/progress` | Listen along, signed-in invited listeners only: `{ track_id, heard_ms }`, audio time heard of the track playing now (204). Not in MCP. |
+| `POST /api/v1/listen/progress` | Listen along, signed-in invited listeners only: `{ track_id, heard_ms }`, audio time heard of the track playing now (204). A report that arrives just after the track changed still extends that song's play when it was reported within the last 30 s. Not in MCP. |
 | `GET /api/v1/listen/history?limit=&cursor=` | Listen along, signed-in invited listeners only: the caller's own counted plays (30 s, or half a short song), newest first, `{ data, next_cursor }`. Not in MCP. |
 | `POST /api/v1/listen/presence` | Listen along, signed-in invited listeners only: `{ state, track_id }` (listening, following or idle) for the admin's "Listening now" list (204, kept 90 s, no IP stored). Not in MCP. |
 

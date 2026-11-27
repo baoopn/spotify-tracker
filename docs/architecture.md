@@ -816,11 +816,12 @@ song in `listener_plays`:
   `/listen/audio`). A report for another song answers 204 and stores nothing,
   so races at a track change are quiet. The one exception is the last flush
   of a song, which often arrives just after the track changed: it still
-  extends that song's play when it was heard in the last 30 s, but never
-  starts a new one. Nothing is stored for an admin previewing the page.
+  extends that song's play when it was reported as current in the last 30 s,
+  but never starts a new one. A late report does not move that 30 s window. Nothing is stored for an admin previewing the page.
 - A report within two minutes of the last one for the same song extends that
   play; later, a new play starts (the song played again).
-- An extension adds at most the time since the last report plus 5 s, so
+- An extension adds at most the time since the last report plus 5 s, and a
+  play never holds more than the time since it started plus 20 s, so
   repeated reports cannot inflate a play. Reports of one listener are
   serialized, so concurrent ones never count twice.
 - A play counts once 30 s are heard, or half the song when it is shorter

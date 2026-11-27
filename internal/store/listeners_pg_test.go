@@ -14,7 +14,7 @@ func ptr(s string) *string { return &s }
 func TestPGListeners(t *testing.T) {
 	st, pool := pgStore(t)
 	ctx := context.Background()
-	exec(t, pool, `TRUNCATE listeners`)
+	exec(t, pool, `TRUNCATE listeners CASCADE`)
 
 	a, err := st.CreateListener(ctx, store.NewListener{Email: " Ann@Example.com ", InvitedBy: "admin@x", ClerkInvitationID: ptr("inv_1")})
 	if err != nil {

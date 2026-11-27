@@ -71,6 +71,15 @@ type RequestInput struct {
 	Country     string // "" when unknown
 	// ClientHash is the salted hash of the client IP (never the IP itself).
 	ClientHash string
+	// TurnstileToken and RemoteIP are checked with Cloudflare when Turnstile
+	// is on; they are never stored or logged.
+	TurnstileToken string
+	RemoteIP       string
+}
+
+// turnstileVerifier checks Turnstile tokens (implemented by *Turnstile).
+type turnstileVerifier interface {
+	Verify(ctx context.Context, token, remoteIP string) error
 }
 
 // requestStore stores requests and audits (implemented by *store.Store).
@@ -112,6 +121,14 @@ type Requests struct {
 	log    *slog.Logger
 	now    func() time.Time
 	goFunc func(func()) // runs the alert (tests run it inline)
+	// turnstile checks the Turnstile token; nil when Turnstile is off.
+	turnstile turnstileVerifier
+}
+
+// WithTurnstile turns the Turnstile check on (v must not be a typed nil).
+func (q *Requests) WithTurnstile(v turnstileVerifier) *Requests {
+	q.turnstile = v
+	return q
 }
 
 // NewRequests builds the request handler. mail may be nil; email builds the
@@ -122,7 +139,8 @@ func NewRequests(db requestStore, rdb *redis.Client, mail mailer, email func(sto
 }
 
 // Submit stores a request. It answers ErrRateLimited after RequestsPerHour
-// requests from one client in the current hour. Every other outcome (a new
+// requests from one client in the current hour, and the Turnstile errors
+// (ErrTurnstileFailed, ErrTurnstileUnavailable) when the check is on. Every other outcome (a new
 // request, an update of the pending one, too many pending) returns nil, so
 // callers cannot learn anything about the email.
 func (q *Requests) Submit(ctx context.Context, in RequestInput) error {
@@ -135,6 +153,13 @@ func (q *Requests) Submit(ctx context.Context, in RequestInput) error {
 	}
 	if n > RequestsPerHour {
 		return ErrRateLimited{RetryAfter: window.Add(requestWindow).Sub(now)}
+	}
+	// After the rate limit, so a flood never reaches Cloudflare; before
+	// anything is stored.
+	if q.turnstile != nil {
+		if err := q.turnstile.Verify(ctx, in.TurnstileToken, in.RemoteIP); err != nil {
+			return err
+		}
 	}
 	nr := store.NewListenRequest{Name: in.Name, Email: in.Email}
 	if in.Message != "" {

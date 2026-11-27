@@ -754,7 +754,8 @@ that order (a Spotify rate limit at any step ends the tick):
 
 SvelteKit SPA built to static files and embedded with `go:embed`, served at
 `/admin` with a strict CSP. Script hashes are computed from `index.html` at
-startup, and the Clerk Frontend API host is derived from the publishable key.
+startup, and the Clerk Frontend API host is derived from the publishable key
+(the Clerk sources are listed under Listen along, CSP).
 Authentication is by Clerk: the SPA sends the Clerk session JWT as a Bearer
 token, and the API verifies it against Clerk's JWKS (authorized party = our
 origin) and checks an allow-list of emails / user IDs. Every sensitive action
@@ -821,7 +822,9 @@ read key needs list access for the sync.
 **Endpoints** (all `Cache-Control: no-store`, same origin, outside `v1Routes`
 so the MCP server cannot reach them):
 
-- `GET /api/v1/listen/config`: `{ enabled, clerk_publishable_key }`, no sign-in.
+- `GET /api/v1/listen/config`: `{ enabled, clerk_publishable_key,
+  turnstile_site_key }`, no sign-in. `turnstile_site_key` is null when
+  Turnstile is off.
 - `GET /api/v1/listen/me`: the signed-in listener `{ email, name, image_url, admin }`.
 - `GET /api/v1/listen/audio`: `{ track_id, url, expires_at, content_type, reason }`.
   `reason` is `null` when there is a URL, else `idle` (nothing playing, same
@@ -898,13 +901,24 @@ characters). An invite is still the admin's choice; there is no sign-up.
 - Valid input always answers 202 `{"ok": true}`: for a new email, for an
   email with a pending request (no second alert), for a listener's email and for an email dismissed before (a new
   pending request). A resubmission keeps the first name and message (it only
-  fills an empty message), so nobody can rewrite someone else's request. So the endpoint tells nobody who is invited.
+  fills an empty message), so nobody can rewrite someone else's request. So
+  the endpoint tells nobody who is invited.
 - `website` is a hidden honeypot field: when a bot fills it, the API answers
   202 and stores nothing.
 - Text is trimmed and control characters are dropped. Errors are 422
   `validation_failed`.
 - At most 3 requests per client per hour (a Redis fixed window keyed by a
   salted hash of the client IP, never the IP), then 429 with `Retry-After`.
+- Cloudflare Turnstile, when `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
+  are both set: the page shows the widget and sends `turnstile_token`. A
+  missing token is 422 with `fields.turnstile` "Complete the check". After the
+  honeypot and the rate limit, and before anything is stored, the API checks
+  the token with Cloudflare's siteverify (5 s timeout, with the client IP from
+  the trusted-proxy rules). A rejected token, or one made for a host other
+  than the `PUBLIC_URL` host (not checked in development), is 422 "The check
+  failed. Try again."; siteverify not answering (network error, timeout,
+  non-200) is 503 `turnstile_unavailable`, and nothing is stored. The token
+  and the secret are never logged or stored.
   With 100 requests pending, new ones are dropped with a log line (still
   202). The `/api/v1` limiter applies too.
 - A new request emails the alert recipients (Settings → Email) in the
@@ -963,6 +977,23 @@ and requests, `https://img.clerk.com` for images and the bucket origin for
 `media-src`. With listen along and Clerk on, `/` gets the same Clerk sources
 (not the bucket origin, since no audio plays there); the 404 page keeps the
 site CSP.
+
+The Clerk sources follow Clerk's CSP guide, the same on `/`, `/listen` and
+the admin SPA (`admin.ClerkCSPSources`):
+
+- `script-src`: the Frontend API host, `https://challenges.cloudflare.com`
+  and `https://*.protect.clerk.com`;
+- `connect-src`: the Frontend API host and `https://*.protect.clerk.com:*`
+  (any port, as the guide asks);
+- `frame-src`: the Frontend API host, `https://challenges.cloudflare.com` and
+  `https://*.protect.clerk.com`;
+- `img-src`: `https://img.clerk.com`. The base CSP already has
+  `worker-src 'self' blob:` and `style-src 'unsafe-inline'`.
+
+`*.protect.clerk.com` serves Clerk's abuse and fraud protection (Device
+Intelligence). When the CSP blocks it, those checks cannot run, and a Clerk
+Protect policy that requires them blocks sign-ups (this blocked invitation
+sign-ups once).
 
 ## MCP server
 
@@ -1106,6 +1137,10 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   only prefetched is not found on the public `GET /api/v1/tracks/{id}`
   (found once it has a play, or while it is the current track), so the queue
   cannot be probed from outside.
+- Clerk's protection hosts (`*.protect.clerk.com`) are allowed in every
+  Clerk CSP so Device Intelligence can run; without them Clerk Protect
+  rejects sign-ups that its policy requires to be checked. The CSP still
+  lists only Clerk's own hosts and Cloudflare Turnstile.
 - Sign-in from `/` follows only same-origin `redirect_url` / `return_to`
   paths (a leading `/`, never `//`, a `\`, control characters or `/admin`),
   so it cannot be used as an open redirect. Clerk is allowed in the CSP of
@@ -1121,7 +1156,9 @@ against the API origin) and its content type fits the slot (svg, png or ico).
   answers 202, whether the email is new, pending, invited or a listener. A
   honeypot field drops simple bots, a fixed window of 3 requests per hour
   per salted client IP hash (no raw IP is stored) and a cap of 100 pending
-  requests limit abuse, and the alert email escapes every value the visitor
+  requests limit abuse. With Turnstile on, Cloudflare checks each request
+  server-side before it is stored, so a script cannot submit without
+  passing the widget. The alert email escapes every value the visitor
   typed (the subject cannot add header lines). A resubmission for a pending
   email never replaces the first name and message. The `listener.requested`
   audit row keeps the requester's email after the request itself is deleted

@@ -80,6 +80,7 @@ type API struct {
 	Translate
 	Prefetch
 	Listen
+	Turnstile
 
 	EnrichMaxAttempts int `env:"ENRICH_MAX_ATTEMPTS" envDefault:"8"`
 	// ReplayResetThreshold is how far the progress must jump back on the

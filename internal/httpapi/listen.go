@@ -36,6 +36,9 @@ type ListenOptions struct {
 	// ClientHash hashes the client IP (salted, one-way) for their rate limit.
 	Requests   RequestSubmitter
 	ClientHash func(ip string) string
+	// TurnstileSiteKey, when set, turns the Turnstile check on: a request
+	// needs turnstile_token (verified by Requests).
+	TurnstileSiteKey string
 }
 
 // ListenerIdentity is the invited listener making a request.
@@ -60,6 +63,9 @@ const (
 type listenConfigBody struct {
 	Enabled             bool    `json:"enabled"`
 	ClerkPublishableKey *string `json:"clerk_publishable_key"`
+	// TurnstileSiteKey is the public Turnstile key for "Request an invite",
+	// or null when Turnstile is off.
+	TurnstileSiteKey *string `json:"turnstile_site_key"`
 }
 
 // listenAudioBody is the audio of the track playing now. Reason is null
@@ -127,6 +133,10 @@ func (h *Handler) listenConfig(w http.ResponseWriter, _ *http.Request) {
 	if o.Enabled && o.ClerkPublishableKey != "" {
 		pk := o.ClerkPublishableKey
 		body.ClerkPublishableKey = &pk
+	}
+	if o.Enabled && o.TurnstileSiteKey != "" {
+		sk := o.TurnstileSiteKey
+		body.TurnstileSiteKey = &sk
 	}
 	writeJSON(w, http.StatusOK, itemResponse[listenConfigBody]{Data: body})
 }

@@ -56,7 +56,7 @@
 			title={q ? 'No files match' : 'No audio files yet'}
 			message={q
 				? 'Try a different search.'
-				: 'Upload files named after the Spotify track id, like 4uLU6hMCjMI75M1A2tKUQC.mp3, then sync.'}
+				: 'Upload files named after the Spotify track id, like 4uLU6hMCjMI75M1A2tKUQC.m4a, then sync.'}
 		/>
 	{:else}
 		<div class={['overflow-x-auto transition-opacity', dimmed && 'opacity-60']}>
